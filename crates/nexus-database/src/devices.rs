@@ -2,17 +2,16 @@ use crate::Database;
 use nexus_common::types::{Device, Role};
 use nexus_common::{NexusError, Result, new_id, time::now_ms};
 
-const COLUMNS: &str = "id, name, device_type, public_key, network_address, is_local, last_seen, status, created_at, \n                       role, addresses, latency_ms, paired_at, version";
+const COLUMNS: &str = "id, name, device_type, public_key, network_address, is_local, last_seen, status, created_at, \n                       role, addresses, latency_ms, paired_at, version, allowed_roots";
 const LOCAL_DEVICE_KEY: &str = "local_device_id";
 
 impl Database {
     /// Returns this computer's device record, creating it on first run.
     pub async fn ensure_local_device(&self, default_name: &str, device_type: &str) -> Result<Device> {
-        if let Some(id) = self.get_setting(LOCAL_DEVICE_KEY).await? {
-            if let Ok(device) = self.get_device(&id).await {
+        if let Some(id) = self.get_setting(LOCAL_DEVICE_KEY).await?
+            && let Ok(device) = self.get_device(&id).await {
                 return Ok(device);
             }
-        }
         let device = Device {
             id: new_id(),
             name: default_name.to_string(),
@@ -28,6 +27,7 @@ impl Database {
             latency_ms: None,
             paired_at: None,
             version: None,
+            allowed_roots: None,
         };
         sqlx::query(
             "INSERT INTO devices (id, name, device_type, network_address, is_local, last_seen, status, created_at) \
@@ -191,4 +191,17 @@ pub struct NewPeer<'a> {
     pub addresses: &'a [String],
     pub role: Role,
     pub version: Option<&'a str>,
+}
+
+impl Database {
+    /// Limits a paired device to some storage locations (`None` = all).
+    pub async fn set_device_roots(&self, id: &str, roots: Option<&[String]>) -> Result<()> {
+        let json = roots.map(|r| serde_json::to_string(r).unwrap_or_else(|_| "[]".into()));
+        sqlx::query("UPDATE devices SET allowed_roots = ? WHERE id = ? AND is_local = 0")
+            .bind(json)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

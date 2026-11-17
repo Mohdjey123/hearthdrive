@@ -43,6 +43,8 @@ pub struct DeviceView {
     addresses: Vec<String>,
     /// How traffic to this device flows right now (`direct …` / `relay …`).
     route: Option<String>,
+    /// Storage locations here that this device may see (`null` = all).
+    allowed_roots: Option<Vec<String>>,
     roots: usize,
     indexed_bytes: i64,
 }
@@ -64,7 +66,8 @@ pub async fn list(State(s): State<SharedState>, _user: AuthUser) -> ApiResult<Js
             Some(key) if !device.is_local => route_label(&s, &key),
             _ => None,
         };
-        out.push(DeviceView { device, online, fingerprint, addresses, route, roots: count, indexed_bytes });
+        let allowed_roots = device.allowed_root_list();
+        out.push(DeviceView { device, online, fingerprint, addresses, route, allowed_roots, roots: count, indexed_bytes });
     }
     Ok(Json(out))
 }
@@ -73,6 +76,10 @@ pub async fn list(State(s): State<SharedState>, _user: AuthUser) -> ApiResult<Js
 pub struct UpdateDevice {
     name: Option<String>,
     role: Option<Role>,
+    /// Limit the device to these storage locations…
+    allowed_roots: Option<Vec<String>>,
+    /// …or let it see all of them again.
+    all_roots: Option<bool>,
 }
 
 /// Renames this node, or changes what a paired device may do here.
@@ -104,6 +111,31 @@ pub async fn update(
         }
         s.db.set_device_role(&id, role).await?;
         audit(&s, &user, "device.role.changed", Some(&format!("{} → {}", device.name, role.as_str()))).await;
+    }
+    if req.all_roots == Some(true) || req.allowed_roots.is_some() {
+        if device.is_local {
+            return Err(NexusError::invalid("This computer always sees its own storage").into());
+        }
+        let chosen = if req.all_roots == Some(true) { None } else { req.allowed_roots };
+        if let Some(list) = &chosen {
+            let local: Vec<String> = s
+                .db
+                .list_roots()
+                .await?
+                .into_iter()
+                .filter(|r| r.device_id == s.node.device_id)
+                .map(|r| r.id)
+                .collect();
+            if list.iter().any(|id| !local.contains(id)) {
+                return Err(NexusError::invalid("Unknown storage location").into());
+            }
+        }
+        s.db.set_device_roots(&id, chosen.as_deref()).await?;
+        let summary = match &chosen {
+            None => "all storage".to_string(),
+            Some(list) => format!("{} storage location(s)", list.len()),
+        };
+        audit(&s, &user, "device.access.changed", Some(&format!("{} → {summary}", device.name))).await;
     }
     s.events.emit(Event::DeviceChanged { device_id: id });
     Ok(StatusCode::NO_CONTENT)
@@ -157,6 +189,9 @@ pub async fn create_invite(State(s): State<SharedState>, user: AuthUser) -> ApiR
     if addresses.is_empty() && !s.net.snapshot().status.address_lookup {
         return Err(NexusError::Conflict("This computer has no network address yet. Check its network connection and try again.".into()).into());
     }
+    // Keep the link short so its QR code stays easy to scan: the relay,
+    // then a few direct addresses (the rest are learned after pairing).
+    let addresses = compact_hints(addresses);
     let code = random_code(16);
     let expires_at = now_ms() + INVITE_TTL_MS;
     let session_id = s.db.create_pairing_session(&hash_token(&code), user.user_id.as_deref(), expires_at).await?;
@@ -178,6 +213,25 @@ pub async fn create_invite(State(s): State<SharedState>, user: AuthUser) -> ApiR
         fingerprint: s.identity.fingerprint().to_string(),
         addresses,
     }))
+}
+
+/// The relay plus at most three IPv4 and one IPv6 direct address.
+fn compact_hints(hints: Vec<String>) -> Vec<String> {
+    let (mut v4, mut v6) = (0, 0);
+    hints
+        .into_iter()
+        .filter(|h| {
+            if h.starts_with("relay:") {
+                true
+            } else if h.starts_with('[') {
+                v6 += 1;
+                v6 <= 1
+            } else {
+                v4 += 1;
+                v4 <= 3
+            }
+        })
+        .collect()
 }
 
 pub async fn cancel_invite(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {

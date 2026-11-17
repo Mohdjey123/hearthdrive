@@ -19,19 +19,23 @@ export async function cachedContentUrl(id: string, prefix = '') {
 }
 
 export async function downloadFile(file: FileEntry, prefix = '') {
-  const url = await contentUrl(file.id, true, prefix)
+  await saveUrl(await contentUrl(file.id, true, prefix), file.filename)
+}
+
+/** Saves what a signed URL serves as a file named `filename`. */
+export async function saveUrl(url: string, filename: string) {
   if (isMobile()) {
     // A web view cannot save files on a phone; the app writes the file to
     // the phone's Download folder instead.
     const { invoke } = await import('@tauri-apps/api/core')
-    toast(`Downloading ${file.filename}…`)
-    const saved = await invoke<string>('save_download', { url, filename: file.filename })
+    toast(`Downloading ${filename}…`)
+    const saved = await invoke<string>('save_download', { url, filename })
     toast(`Saved to ${saved}`)
     return
   }
   const a = document.createElement('a')
   a.href = url
-  a.download = file.filename
+  a.download = filename
   a.rel = 'noopener'
   document.body.appendChild(a)
   a.click()

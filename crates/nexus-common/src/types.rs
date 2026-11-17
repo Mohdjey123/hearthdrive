@@ -86,11 +86,19 @@ pub struct Device {
     pub latency_ms: Option<i64>,
     pub paired_at: Option<i64>,
     pub version: Option<String>,
+    /// JSON array of the storage root ids this device may see; `None` = all.
+    #[serde(skip)]
+    pub allowed_roots: Option<String>,
 }
 
 impl Device {
     pub fn address_list(&self) -> Vec<String> {
         serde_json::from_str(&self.addresses).unwrap_or_default()
+    }
+
+    /// The storage locations this device is limited to, if it is limited.
+    pub fn allowed_root_list(&self) -> Option<Vec<String>> {
+        parse_root_list(self.allowed_roots.as_deref())
     }
 }
 
@@ -187,6 +195,31 @@ pub struct User {
     pub username: String,
     pub role: Role,
     pub created_at: i64,
+    /// JSON array of the storage root ids this person may see; `None` = all.
+    /// Sent as a list (or `null`).
+    #[serde(serialize_with = "root_list")]
+    pub allowed_roots: Option<String>,
+}
+
+fn root_list<S: serde::Serializer>(raw: &Option<String>, s: S) -> std::result::Result<S::Ok, S::Error> {
+    use serde::Serialize;
+    parse_root_list(raw.as_deref()).serialize(s)
+}
+
+fn parse_root_list(raw: Option<&str>) -> Option<Vec<String>> {
+    raw.map(|json| serde_json::from_str(json).unwrap_or_default())
+}
+
+impl User {
+    /// Owners and administrators manage everything, so they are never
+    /// limited; everyone else may be limited to some storage locations.
+    pub fn limited_roots(&self) -> Option<Vec<String>> {
+        if matches!(self.role, Role::Owner | Role::Administrator) {
+            None
+        } else {
+            parse_root_list(self.allowed_roots.as_deref())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

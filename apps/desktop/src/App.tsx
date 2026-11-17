@@ -1,7 +1,7 @@
 import { RefreshCw } from 'lucide-react'
 import { useRoute } from './hooks/useRoute'
 import { SessionProvider, useSession } from './stores/session'
-import { BottomNav, Sidebar, Logo } from './components/Sidebar'
+import { BottomNav, Sidebar, Logo, pageAvailable } from './components/Sidebar'
 import { isMobile } from './services/api'
 import { Toasts } from './components/Toasts'
 import { Button, Spinner } from './components/ui'
@@ -10,6 +10,9 @@ import { Files } from './pages/Files'
 import { Storage } from './pages/Storage'
 import { Devices } from './pages/Devices'
 import { Transfers } from './pages/Transfers'
+import { Sync } from './pages/Sync'
+import { Backup } from './pages/Backup'
+import { ShareInbox } from './components/ShareInbox'
 import { Settings } from './pages/Settings'
 import { Setup } from './pages/Setup'
 import { Login } from './pages/Login'
@@ -18,7 +21,7 @@ function Shell() {
   const route = useRoute()
   // A phone holds no storage of its own: it opens on the files of the
   // computers it is paired with.
-  const page = isMobile() && (route.page === 'overview' || route.page === 'storage') ? 'files' : route.page
+  const page = pageAvailable(route.page) ? route.page : isMobile() ? 'files' : 'overview'
   return (
     <div className="safe-area flex h-full flex-col md:flex-row">
       <Sidebar current={page} />
@@ -27,10 +30,13 @@ function Shell() {
         {page === 'files' && <Files route={route} />}
         {page === 'storage' && <Storage route={route} />}
         {page === 'devices' && <Devices />}
+        {page === 'sync' && <Sync />}
+        {page === 'backup' && <Backup />}
         {page === 'transfers' && <Transfers />}
         {page === 'settings' && <Settings />}
       </main>
       <BottomNav current={page} />
+      {isMobile() && <ShareInbox />}
     </div>
   )
 }

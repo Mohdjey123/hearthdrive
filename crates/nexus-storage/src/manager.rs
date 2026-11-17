@@ -1,12 +1,15 @@
 use crate::{drives, paths};
 use nexus_common::types::{DeletedFile, FileEntry, RootType, StorageRoot};
 use nexus_common::{NexusError, Result, new_id, time::now_ms};
-use nexus_database::Database;
+use nexus_database::{Database, FileVersion};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 const STAGING_DIR: &str = "staging";
 const TRASH_DIR: &str = "trash";
+const VERSIONS_DIR: &str = "versions";
+/// Earlier contents kept per file; older ones are deleted.
+const MAX_VERSIONS: usize = 10;
 /// Uploads must leave at least this much free space on the target drive.
 const MIN_FREE_MARGIN: u64 = 64 * 1024 * 1024;
 const STALE_STAGING_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -24,6 +27,26 @@ pub enum ConflictPolicy {
     Rename,
     /// Refuse with a conflict error.
     Fail,
+    /// Replace an existing file, keeping its old content as a version.
+    Replace,
+}
+
+impl ConflictPolicy {
+    pub fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("fail") => Self::Fail,
+            Some("replace") => Self::Replace,
+            _ => Self::Rename,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rename => "rename",
+            Self::Fail => "fail",
+            Self::Replace => "replace",
+        }
+    }
 }
 
 /// An upload being written to a staging file before its atomic placement.
@@ -320,6 +343,13 @@ impl StorageManager {
             Err(e) => return Err(e.into()),
         }
         self.db.remove_deleted(deleted_id).await?;
+        if !record.is_dir
+            && let Ok(versions) = self.db.list_versions(&record.id).await {
+                for v in versions {
+                    let _ = self.delete_version_file(&root, &v.id).await;
+                    let _ = self.db.delete_version(&v.id).await;
+                }
+            }
         Ok(record)
     }
 
@@ -331,29 +361,78 @@ impl StorageManager {
         name: &str,
         size: Option<u64>,
     ) -> Result<UploadTarget> {
+        self.prepare_upload_at(root_id, parent, name, size, None, false).await
+    }
+
+    /// Like [`Self::prepare_upload`], with a fixed staging file (a resumable
+    /// upload's id) and optionally creating missing parent folders.
+    pub async fn prepare_upload_at(
+        &self,
+        root_id: &str,
+        parent: &str,
+        name: &str,
+        size: Option<u64>,
+        staging_id: Option<&str>,
+        make_parents: bool,
+    ) -> Result<UploadTarget> {
         let root = self.writable_root(root_id).await?;
         let name = name.trim();
         paths::validate_name(name)?;
         let parent = paths::normalize_relative(parent)?;
+        if paths::is_hidden_internal(&parent) {
+            return Err(NexusError::PathRejected("That folder is reserved for NEXUS".into()));
+        }
         let parent_abs = self.resolve(&root, &parent)?;
+        if make_parents && tokio::fs::symlink_metadata(&parent_abs).await.is_err() {
+            tokio::fs::create_dir_all(&parent_abs).await?;
+        }
         if !tokio::fs::metadata(&parent_abs).await.map(|m| m.is_dir()).unwrap_or(false) {
             return Err(NexusError::NotFound("Destination folder".into()));
         }
-        if let (Some(size), Some(space)) = (size, drives::space_for(&parent_abs)) {
-            if size.saturating_add(MIN_FREE_MARGIN) > space.available_bytes {
+        if let (Some(size), Some(space)) = (size, drives::space_for(&parent_abs))
+            && size.saturating_add(MIN_FREE_MARGIN) > space.available_bytes {
                 return Err(NexusError::InsufficientStorage(format!(
                     "Not enough free space on {} ({} bytes needed, {} available)",
                     root.name, size, space.available_bytes
                 )));
             }
-        }
-        let staging = self.internal_dir(&root, STAGING_DIR).await?.join(format!("{}.part", new_id()));
+        let staging_name = match staging_id {
+            Some(id) if valid_id(id) => id.to_string(),
+            Some(_) => return Err(NexusError::invalid("Invalid upload id")),
+            None => new_id(),
+        };
+        let staging = self.internal_dir(&root, STAGING_DIR).await?.join(format!("{staging_name}.part"));
         Ok(UploadTarget { root, parent, name: name.to_string(), staging })
+    }
+
+    /// The staging file of a resumable upload (it may not exist yet).
+    pub fn staging_path(&self, root: &StorageRoot, upload_id: &str) -> Result<PathBuf> {
+        if !valid_id(upload_id) {
+            return Err(NexusError::invalid("Invalid upload id"));
+        }
+        Ok(Path::new(&root.absolute_path).join(paths::INTERNAL_DIR).join(STAGING_DIR).join(format!("{upload_id}.part")))
     }
 
     /// Atomically moves a finished staging file into place without ever
     /// overwriting an existing file. Returns the final relative path.
     pub async fn commit_upload(&self, target: &UploadTarget, policy: ConflictPolicy) -> Result<String> {
+        self.commit_upload_by(target, policy, None).await
+    }
+
+    /// [`Self::commit_upload`], naming who replaced a file (for its version).
+    pub async fn commit_upload_by(&self, target: &UploadTarget, policy: ConflictPolicy, by: Option<&str>) -> Result<String> {
+        if policy == ConflictPolicy::Replace {
+            let rel = paths::join(&target.parent, &target.name);
+            let destination = self.resolve(&target.root, &rel)?;
+            if let Ok(meta) = tokio::fs::symlink_metadata(&destination).await {
+                if !meta.is_file() {
+                    return Err(NexusError::Conflict(format!("A folder named \"{}\" is in the way", target.name)));
+                }
+                self.keep_version(&target.root, &rel, &destination, by).await?;
+                tokio::fs::rename(&target.staging, &destination).await?;
+                return Ok(rel);
+            }
+        }
         for n in 0..1000 {
             let rel = paths::join(&target.parent, &paths::numbered_name(&target.name, n, false));
             let destination = self.resolve(&target.root, &rel)?;
@@ -364,7 +443,7 @@ impl StorageManager {
             match placed {
                 Ok(()) => return Ok(rel),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if policy == ConflictPolicy::Fail {
+                    if policy != ConflictPolicy::Rename {
                         return Err(NexusError::Conflict(format!("\"{}\" already exists", target.name)));
                     }
                 }
@@ -372,6 +451,96 @@ impl StorageManager {
             }
         }
         Err(NexusError::Conflict("Too many files with this name".into()))
+    }
+
+    /// Moves the file at `rel` into the versions folder and records it.
+    async fn keep_version(&self, root: &StorageRoot, rel: &str, path: &Path, by: Option<&str>) -> Result<()> {
+        let existing = self.db.get_file_by_path(&root.id, rel).await?;
+        let meta = tokio::fs::metadata(path).await?;
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64);
+        let version = FileVersion {
+            id: new_id(),
+            file_id: existing.as_ref().map(|f| f.id.clone()).unwrap_or_else(new_id),
+            root_id: root.id.clone(),
+            relative_path: rel.to_string(),
+            size: meta.len() as i64,
+            modified_at: modified,
+            content_hash: existing
+                .as_ref()
+                .filter(|f| f.modified_at == modified && f.size == meta.len() as i64)
+                .and_then(|f| f.content_hash.clone()),
+            created_at: now_ms(),
+            created_by: by.map(str::to_string),
+        };
+        let dir = self.internal_dir(root, VERSIONS_DIR).await?;
+        tokio::fs::rename(path, dir.join(&version.id)).await?;
+        self.db.insert_version(&version).await?;
+        self.prune_versions(root, &version.file_id).await;
+        Ok(())
+    }
+
+    async fn prune_versions(&self, root: &StorageRoot, file_id: &str) {
+        let Ok(versions) = self.db.list_versions(file_id).await else { return };
+        for old in versions.into_iter().skip(MAX_VERSIONS) {
+            let _ = self.delete_version_file(root, &old.id).await;
+            let _ = self.db.delete_version(&old.id).await;
+        }
+    }
+
+    async fn delete_version_file(&self, root: &StorageRoot, version_id: &str) -> Result<()> {
+        match tokio::fs::remove_file(self.version_path(root, version_id)).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Where a version's bytes are stored.
+    pub fn version_path(&self, root: &StorageRoot, version_id: &str) -> PathBuf {
+        Path::new(&root.absolute_path).join(paths::INTERNAL_DIR).join(VERSIONS_DIR).join(version_id)
+    }
+
+    /// Puts an earlier version back. The current content becomes a version
+    /// itself, so restoring can always be undone.
+    pub async fn restore_version(&self, file: &FileEntry, version_id: &str, by: Option<&str>) -> Result<StorageRoot> {
+        let version = self.db.get_version(version_id).await?;
+        if version.file_id != file.id {
+            return Err(NexusError::NotFound("Version".into()));
+        }
+        let root = self.writable_root(&file.root_id).await?;
+        let stored = self.version_path(&root, &version.id);
+        if tokio::fs::metadata(&stored).await.is_err() {
+            self.db.delete_version(&version.id).await?;
+            return Err(NexusError::NotFound("The stored version on disk".into()));
+        }
+        let destination = self.resolve(&root, &file.relative_path)?;
+        // Move the version aside first so the current file is never lost.
+        let staging = self.internal_dir(&root, STAGING_DIR).await?.join(format!("{}.part", new_id()));
+        tokio::fs::rename(&stored, &staging).await?;
+        if tokio::fs::symlink_metadata(&destination).await.is_ok()
+            && let Err(e) = self.keep_version(&root, &file.relative_path, &destination, by).await {
+                let _ = tokio::fs::rename(&staging, &stored).await;
+                return Err(e);
+            }
+        tokio::fs::rename(&staging, &destination).await?;
+        self.db.delete_version(&version.id).await?;
+        Ok(root)
+    }
+
+    /// Permanently deletes one earlier version.
+    pub async fn delete_version(&self, file: &FileEntry, version_id: &str) -> Result<FileVersion> {
+        let version = self.db.get_version(version_id).await?;
+        if version.file_id != file.id {
+            return Err(NexusError::NotFound("Version".into()));
+        }
+        let root = self.writable_root(&version.root_id).await?;
+        self.delete_version_file(&root, &version.id).await?;
+        self.db.delete_version(&version.id).await?;
+        Ok(version)
     }
 
     /// Deletes abandoned staging files left by interrupted uploads.
@@ -391,6 +560,11 @@ impl StorageManager {
             }
         }
     }
+}
+
+/// Ids used as file names: letters, digits and dashes only.
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 /// Places `src` at `dst` only if `dst` does not exist. Uses a hard link

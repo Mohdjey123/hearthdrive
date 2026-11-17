@@ -7,7 +7,7 @@ use nexus_indexer::Indexer;
 use nexus_security::TicketSigner;
 use nexus_storage::StorageManager;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -40,6 +40,17 @@ pub struct AppState {
     pub throttle: Throttle,
     /// Requests this node has sent to join another node, by request id.
     pub joins: Mutex<HashMap<String, JoinState>>,
+    /// Resumable uploads being written right now.
+    pub upload_locks: Mutex<HashSet<String>>,
+    /// Copy and sync jobs.
+    pub jobs: crate::routes::transfers::Jobs,
+    pub sync: crate::routes::sync::SyncControl,
+    /// The phone's shared storage (`/storage/emulated/0`), where photos and
+    /// videos are backed up from. `None` on computers.
+    pub media_dir: Option<PathBuf>,
+    /// Files shared to the app from other apps wait here (phones).
+    pub share_inbox: Option<PathBuf>,
+    pub backup: crate::routes::backup::BackupControl,
 }
 
 impl AppState {
@@ -72,7 +83,20 @@ impl AppState {
             replay: ReplayGuard::default(),
             throttle: Throttle::default(),
             joins: Mutex::new(HashMap::new()),
+            upload_locks: Mutex::new(HashSet::new()),
+            jobs: Default::default(),
+            sync: Default::default(),
+            media_dir: None,
+            share_inbox: None,
+            backup: Default::default(),
         }
+    }
+
+    /// Sets the phone folders: its shared storage and the share inbox.
+    pub fn with_phone_dirs(mut self, media_dir: Option<PathBuf>, share_inbox: Option<PathBuf>) -> Self {
+        self.media_dir = media_dir;
+        self.share_inbox = share_inbox;
+        self
     }
 }
 

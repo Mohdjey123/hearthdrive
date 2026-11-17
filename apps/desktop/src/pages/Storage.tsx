@@ -69,7 +69,7 @@ export function Storage({ route }: { route: Route }) {
               const used = r.disk ? r.disk.total_bytes - r.disk.available_bytes : 0
               const Icon = r.root_type === 'external' ? Usb : HardDrive
               return (
-                <li key={r.id} className="grid grid-cols-[1fr_auto] gap-4 px-5 py-4">
+                <li key={r.id} className="grid grid-cols-1 gap-3 px-4 py-4 md:grid-cols-[1fr_auto] md:gap-4 md:px-5">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <Icon className="size-4 text-muted" />
@@ -79,7 +79,7 @@ export function Storage({ route }: { route: Route }) {
                       {!r.online && <Badge tone="warn">Offline</Badge>}
                     </div>
                     <div className="mt-0.5 truncate pl-6 font-mono text-[12px] text-subtle">{r.absolute_path}</div>
-                    <div className="mt-3 grid grid-cols-4 gap-4 pl-6 text-[12px]">
+                    <div className="mt-3 grid grid-cols-2 gap-4 pl-6 text-[12px] md:grid-cols-4">
                       <div>
                         <div className="text-subtle">Indexed</div>
                         <div className="mt-0.5 tabular">{formatBytes(r.stats.bytes)}</div>

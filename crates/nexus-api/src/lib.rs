@@ -10,6 +10,9 @@ pub mod net;
 pub mod p2p;
 pub mod peers;
 mod routes;
+
+pub use routes::backup::spawn as spawn_backup;
+pub use routes::sync::spawn as spawn_sync;
 mod state;
 
 pub use state::{AppState, NodeInfo, SharedState};
@@ -37,7 +40,7 @@ const ALLOWED_ORIGINS: &[&str] = &[
 ];
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{devices, files, network, storage, system};
+    use routes::{backup, devices, files, network, storage, sync, system, transfers, uploads, users};
 
     let api = Router::new()
         .route("/health", get(system::health))
@@ -68,6 +71,21 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
             "/peers/{device_id}/proxy/{*rest}",
             any(peers::proxy).layer(DefaultBodyLimit::disable()),
         )
+        .route("/transfers", get(transfers::list))
+        .route("/transfers/copy", post(transfers::copy))
+        .route("/transfers/clear", post(transfers::clear))
+        .route("/transfers/{id}/cancel", post(transfers::cancel))
+        .route("/sync", get(sync::list).post(sync::create))
+        .route("/sync/{id}", patch(sync::update).delete(sync::remove))
+        .route("/sync/{id}/run", post(sync::run))
+        .route("/backup", get(backup::get).put(backup::set).patch(backup::update).delete(backup::remove))
+        .route("/backup/run", post(backup::run))
+        .route("/shared", get(backup::shared))
+        .route("/shared/send", post(backup::send_shared))
+        .route("/shared/discard", post(backup::discard_shared))
+        .route("/users", get(users::list).post(users::create))
+        .route("/users/{id}", patch(users::update).delete(users::remove))
+        .route("/system/autostart", get(system::autostart).put(system::set_autostart))
         .route("/network", get(network::get).put(network::update))
         .route("/network/refresh", post(network::refresh))
         .route("/events", get(routes::events::events))
@@ -82,7 +100,19 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
             "/files/upload",
             post(files::upload).layer(DefaultBodyLimit::disable()),
         )
+        .route("/files/tree", get(files::tree))
+        .route("/files/uploads", post(uploads::create))
+        .route(
+            "/files/uploads/{id}",
+            get(uploads::status).put(uploads::put).delete(uploads::remove).layer(DefaultBodyLimit::disable()),
+        )
+        .route("/files/uploads/{id}/complete", post(uploads::complete))
         .route("/files/{id}", get(files::get).patch(files::update).delete(files::remove))
+        .route("/files/{id}/versions", get(files::versions))
+        .route("/files/{id}/versions/{version}", delete(files::delete_version))
+        .route("/files/{id}/versions/{version}/restore", post(files::restore_version))
+        .route("/files/{id}/versions/{version}/link", post(files::version_link))
+        .route("/files/{id}/versions/{version}/content", get(files::version_content))
         .route("/files/{id}/link", post(files::link))
         .route("/files/{id}/content", get(files::content))
         .route("/files/{id}/restore", post(files::restore))

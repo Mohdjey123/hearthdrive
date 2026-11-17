@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
-export type Page = 'overview' | 'files' | 'storage' | 'devices' | 'transfers' | 'settings'
-const PAGES: Page[] = ['overview', 'files', 'storage', 'devices', 'transfers', 'settings']
+export type Page = 'overview' | 'files' | 'storage' | 'devices' | 'sync' | 'backup' | 'transfers' | 'settings'
+const PAGES: Page[] = ['overview', 'files', 'storage', 'devices', 'sync', 'backup', 'transfers', 'settings']
 
 export interface Route {
   page: Page

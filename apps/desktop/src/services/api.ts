@@ -81,6 +81,8 @@ export interface Device {
   addresses: string[]
   /** How traffic to the device flows right now: `direct <ip:port>` or `relay <url>`. */
   route: string | null
+  /** Storage locations on this node the device may see; `null` means all. */
+  allowed_roots: string[] | null
   roots: number
   indexed_bytes: number
 }
@@ -140,7 +142,14 @@ export interface JoinState {
   created_at: number
 }
 
-export interface User { id: string; username: string; role: Role; created_at: number }
+export interface User {
+  id: string
+  username: string
+  role: Role
+  created_at: number
+  /** Storage locations (here or on paired devices) the person is limited to; `null` = all. */
+  allowed_roots: string[] | null
+}
 export interface Me { user_id: string | null; username: string; role: Role; local: boolean; device_id: string | null }
 export interface Session { token: string; expires_at: number; user: User }
 
@@ -172,6 +181,102 @@ export interface TrashItem {
   size: number
   deleted_at: number
 }
+
+/** An earlier content of a file, kept when it was replaced. */
+export interface FileVersion {
+  id: string
+  file_id: string
+  size: number
+  modified_at: number | null
+  content_hash: string | null
+  created_at: number
+  created_by: string | null
+}
+
+/** A copy or sync running on this node. */
+export interface Job {
+  id: string
+  kind: 'copy' | 'sync' | 'backup'
+  title: string
+  /** "This computer → Laptop" */
+  route: string
+  by: string
+  created_at: number
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+  files_total: number
+  files_done: number
+  bytes_total: number
+  bytes_done: number
+  current: string | null
+  errors: string[]
+  retries: number
+  started_at: number | null
+  finished_at: number | null
+}
+
+export interface Backup {
+  id: string
+  device_id: string
+  device_name: string
+  root_id: string
+  path: string
+  /** "Storage / folder" on the computer. */
+  label: string
+  sources: string[]
+  enabled: boolean
+  created_by: string
+  last_run_at: number | null
+  last_ok_at: number | null
+  last_result: string | null
+  last_error: string | null
+  created_at: number
+}
+
+export interface BackupStatus {
+  /** Whether this device has photos to back up (phones). */
+  available: boolean
+  choices: { key: string; label: string }[]
+  backup: Backup | null
+  running: boolean
+}
+
+export interface SharedFile { name: string; size: number }
+
+/** The Android app's bridge (phones only). */
+interface AndroidBridge {
+  hasMediaAccess(): boolean
+  requestMediaAccess(): void
+  openAppSettings(): void
+}
+
+export function androidBridge(): AndroidBridge | null {
+  return (window as unknown as { NexusAndroid?: AndroidBridge }).NexusAndroid ?? null
+}
+
+export type SyncMode = 'two_way' | 'upload' | 'download'
+
+export interface SyncPair {
+  id: string
+  local_root_id: string
+  local_path: string
+  local_label: string
+  device_id: string
+  device_name: string
+  remote_root_id: string
+  remote_path: string
+  remote_label: string
+  mode: SyncMode
+  enabled: boolean
+  created_by: string
+  last_run_at: number | null
+  last_ok_at: number | null
+  last_result: string | null
+  last_error: string | null
+  created_at: number
+  running: boolean
+}
+
+interface UploadProgress { id: string; offset: number; size: number }
 
 export interface ActivityEntry {
   id: string
@@ -270,6 +375,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return res.json() as Promise<T>
 }
 
+/** Like `request`, for calls that answer 202 Accepted with a body. */
+async function requestJson<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (conn.token) headers.Authorization = `Bearer ${conn.token}`
+  let res: Response
+  try {
+    res = await fetch(`${conn.baseUrl}/api/v1${path}`, { method, headers, body: JSON.stringify(body) })
+  } catch {
+    throw new ApiError(0, 'unreachable', 'The NEXUS service is not reachable')
+  }
+  const j = await res.json().catch(() => null)
+  if (!res.ok) {
+    if (res.status === 401) unauthorizedHandler?.()
+    throw new ApiError(res.status, j?.error?.code ?? 'error', j?.error?.message ?? `Request failed (${res.status})`)
+  }
+  return j as T
+}
+
 const q = (params: Record<string, string | number | boolean | undefined | null>) => {
   const s = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') s.set(k, String(v))
@@ -302,6 +425,14 @@ function createFileApi(prefix: string) {
     search: (query: string, root_id?: string) =>
       r<{ items: FoundItem[]; has_more: boolean }>('GET', `/search${q({ q: query, root_id, limit: 200 })}`),
     recent: (limit = 10) => r<FoundItem[]>('GET', `/recent${q({ limit })}`),
+    versions: (id: string) => r<FileVersion[]>('GET', `/files/${id}/versions`),
+    restoreVersion: (id: string, version: string) => r<FileDetails>('POST', `/files/${id}/versions/${version}/restore`),
+    deleteVersion: (id: string, version: string) => r<void>('DELETE', `/files/${id}/versions/${version}`),
+    /** A download URL for an earlier version (absolute, ready to fetch). */
+    versionUrl: async (id: string, version: string) => {
+      const { url } = await r<{ url: string }>('POST', `/files/${id}/versions/${version}/link`)
+      return absoluteUrl(prefix ? url.replace(/^\/api\/v1/, `/api/v1${prefix}`) : url)
+    },
   }
 }
 
@@ -336,7 +467,44 @@ export const api = {
   rescanRoot: (id: string) => request<void>('POST', `/storage/roots/${id}/scan`),
 
   devices: () => request<Device[]>('GET', '/devices'),
-  updateDevice: (id: string, b: { name?: string; role?: Role }) => request<void>('PATCH', `/devices/${id}`, b),
+  updateDevice: (id: string, b: { name?: string; role?: Role; allowed_roots?: string[]; all_roots?: boolean }) =>
+    request<void>('PATCH', `/devices/${id}`, b),
+
+  users: () => request<User[]>('GET', '/users'),
+  createUser: (b: { username: string; password: string; role: Role }) => request<User>('POST', '/users', b),
+  updateUser: (id: string, b: { role?: Role; password?: string; allowed_roots?: string[]; all_roots?: boolean }) =>
+    request<User>('PATCH', `/users/${id}`, b),
+  removeUser: (id: string) => request<void>('DELETE', `/users/${id}`),
+
+  /** Starts copying files and folders between devices ('' or undefined = this
+   *  device). Resolves at once; the copy runs in the background (see `jobs`). */
+  copyItems: (b: { from_device?: string; file_ids: string[]; to_device?: string; root_id: string; path: string }) =>
+    requestJson<Job>('POST', '/transfers/copy', b),
+  jobs: () => request<Job[]>('GET', '/transfers'),
+  cancelJob: (id: string) => request<void>('POST', `/transfers/${id}/cancel`),
+  clearJobs: () => request<void>('POST', '/transfers/clear'),
+
+  backup: () => request<BackupStatus>('GET', '/backup'),
+  setBackup: (b: { device_id: string; root_id: string; path: string; sources: string[]; enabled?: boolean }) =>
+    request<BackupStatus>('PUT', '/backup', b),
+  updateBackup: (b: { enabled: boolean }) => request<BackupStatus>('PATCH', '/backup', b),
+  removeBackup: () => request<void>('DELETE', '/backup'),
+  runBackup: () => request<void>('POST', '/backup/run'),
+
+  sharedFiles: () => request<SharedFile[]>('GET', '/shared'),
+  sendShared: (b: { names: string[]; device_id: string; root_id: string; path: string }) =>
+    requestJson<{ id: string }>('POST', '/shared/send', b),
+  discardShared: (names: string[] = []) => request<void>('POST', '/shared/discard', { names }),
+
+  syncPairs: () => request<SyncPair[]>('GET', '/sync'),
+  createSync: (b: { local_root_id: string; local_path: string; device_id: string; remote_root_id: string; remote_path: string; mode: SyncMode }) =>
+    request<SyncPair>('POST', '/sync', b),
+  updateSync: (id: string, b: { enabled?: boolean; mode?: SyncMode }) => request<SyncPair>('PATCH', `/sync/${id}`, b),
+  removeSync: (id: string) => request<void>('DELETE', `/sync/${id}`),
+  runSync: (id: string) => request<void>('POST', `/sync/${id}/run`),
+
+  autostart: () => request<{ supported: boolean; enabled: boolean }>('GET', '/system/autostart'),
+  setAutostart: (enabled: boolean) => request<{ supported: boolean; enabled: boolean }>('PUT', '/system/autostart', { enabled }),
   removeDevice: (id: string) => request<void>('DELETE', `/devices/${id}`),
   createInvite: () => request<Invite>('POST', '/devices/pair'),
   cancelInvite: (sessionId: string) => request<void>('DELETE', `/devices/pair/${sessionId}`),
@@ -361,13 +529,140 @@ export async function contentUrl(id: string, download = false, prefix = '') {
   return absoluteUrl(prefix ? url.replace(/^\/api\/v1/, `/api/v1${prefix}`) : url)
 }
 
-/** Uploads a file as a raw streamed body, reporting progress. */
+/** Files larger than this are sent in pieces that survive a dropped connection. */
+const CHUNK = 8 * 1024 * 1024
+const RESUME_KEY = 'nexus.uploads'
+
+/** Unfinished uploads by file, so choosing the same file again continues it. */
+function resumable(key: string, id?: string | null): string | undefined {
+  try {
+    const all = JSON.parse(localStorage.getItem(RESUME_KEY) ?? '{}') as Record<string, string>
+    if (id === undefined) return all[key]
+    if (id === null) delete all[key]
+    else all[key] = id
+    localStorage.setItem(RESUME_KEY, JSON.stringify(all))
+  } catch { /* storage unavailable: uploads still work, they just restart */ }
+  return undefined
+}
+
+/** Worth another try: the connection dropped or the service is busy. */
+const retryable = (e: unknown) =>
+  e instanceof ApiError && (e.status === 0 || e.status === 408 || e.status === 409 || e.status === 429 || e.status === 502 || e.status === 503 || e.status === 504)
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** PUTs one piece, reporting progress within it. */
+function putPiece(url: string, blob: Blob, onProgress: (loaded: number) => void, track: (x: XMLHttpRequest) => void) {
+  return new Promise<UploadProgress>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    track(xhr)
+    xhr.open('PUT', url)
+    if (conn.token) xhr.setRequestHeader('Authorization', `Bearer ${conn.token}`)
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => onProgress(e.loaded)
+    xhr.onload = () => {
+      let body: any = null
+      try { body = JSON.parse(xhr.responseText) } catch { /* empty */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body)
+      else reject(new ApiError(xhr.status, body?.error?.code ?? 'error', body?.error?.message ?? `Upload failed (${xhr.status})`))
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'unreachable', 'Connection lost during upload'))
+    xhr.onabort = () => reject(new ApiError(0, 'cancelled', 'Cancelled'))
+    xhr.send(blob)
+  })
+}
+
+/**
+ * Uploads a file, reporting progress. Large files go in pieces: when the
+ * connection drops the upload asks how much arrived and continues from
+ * there, and retrying (even after closing the app) picks up where it stopped.
+ */
 export function uploadFile(
   rootId: string,
   path: string,
   file: File,
   onProgress: (loaded: number) => void,
   prefix = '',
+): { promise: Promise<FileDetails>; abort: () => void } {
+  if (file.size <= CHUNK) return uploadWhole(rootId, path, file, onProgress, prefix)
+  let aborted = false
+  let current: XMLHttpRequest | null = null
+  let uploadId: string | undefined
+  const key = [prefix, rootId, path, file.name, file.size, file.lastModified].join('|')
+  const base = `${prefix}/files/uploads`
+  const cancelled = () => new ApiError(0, 'cancelled', 'Cancelled')
+
+  /** How much the server has, trying again while it cannot be reached. */
+  const offsetOf = async (id: string) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return (await request<UploadProgress>('GET', `${base}/${id}`)).offset
+      } catch (e) {
+        if (aborted) throw cancelled()
+        if (!retryable(e) || attempt > 8) throw e
+        await sleep(Math.min(30_000, 1000 * 2 ** attempt))
+      }
+    }
+  }
+
+  const promise = (async () => {
+    let id = resumable(key)
+    let offset = 0
+    if (id) {
+      try { offset = await offsetOf(id) } catch { id = undefined }
+    }
+    if (!id) {
+      const created = await request<UploadProgress>('POST', base, {
+        root_id: rootId, path, name: file.name, size: file.size, modified_at: file.lastModified || undefined,
+      })
+      id = created.id
+      offset = 0
+      resumable(key, id)
+    }
+    uploadId = id
+    onProgress(offset)
+    let failures = 0
+    while (offset < file.size) {
+      if (aborted) throw cancelled()
+      const start = offset
+      const end = Math.min(file.size, start + CHUNK)
+      try {
+        const r = await putPiece(`${conn.baseUrl}/api/v1${base}/${id}?offset=${start}`, file.slice(start, end), (n) => onProgress(start + n), (x) => (current = x))
+        offset = r.offset
+        failures = 0
+      } catch (e) {
+        if (aborted || (e as ApiError).code === 'cancelled') throw cancelled()
+        if (!retryable(e) || ++failures > 8) throw e
+        await sleep(Math.min(30_000, 1000 * 2 ** failures))
+        offset = await offsetOf(id)
+      }
+      onProgress(offset)
+    }
+    const done = await request<FileDetails>('POST', `${base}/${id}/complete`)
+    resumable(key, null)
+    return done
+  })()
+  return {
+    promise,
+    abort: () => {
+      aborted = true
+      current?.abort()
+      // Cancelled on purpose: free the space the partial upload holds.
+      if (uploadId) {
+        resumable(key, null)
+        void request<void>('DELETE', `${base}/${uploadId}`).catch(() => {})
+      }
+    },
+  }
+}
+
+/** Uploads a small file in one request. */
+function uploadWhole(
+  rootId: string,
+  path: string,
+  file: File,
+  onProgress: (loaded: number) => void,
+  prefix: string,
 ): { promise: Promise<FileDetails>; abort: () => void } {
   const xhr = new XMLHttpRequest()
   const promise = new Promise<FileDetails>((resolve, reject) => {

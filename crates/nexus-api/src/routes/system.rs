@@ -94,6 +94,7 @@ pub async fn setup(
         role: user.role,
         local: true,
         device_id: None,
+        allowed_roots: None,
     };
     audit(&s, &caller, "setup.completed", Some(node_name)).await;
     let client = headers.get("user-agent").and_then(|v| v.to_str().ok());
@@ -138,6 +139,7 @@ pub async fn login(
         role: user.role,
         local: false,
         device_id: None,
+        allowed_roots: None,
     };
     s.throttle.clear(peer.ip());
     audit(&s, &caller, "auth.login", None).await;
@@ -146,11 +148,10 @@ pub async fn login(
 }
 
 pub async fn logout(State(s): State<SharedState>, user: AuthUser, headers: HeaderMap) -> ApiResult<StatusCode> {
-    if !user.local {
-        if let Some(token) = bearer(&headers) {
+    if !user.local
+        && let Some(token) = bearer(&headers) {
             s.db.delete_session(&hash_token(token)).await?;
         }
-    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -183,8 +184,92 @@ pub struct LimitQuery {
 
 pub async fn activity(
     State(s): State<SharedState>,
-    _user: AuthUser,
+    user: AuthUser,
     Query(q): Query<LimitQuery>,
 ) -> ApiResult<Json<Vec<ActivityEntry>>> {
-    Ok(Json(s.db.recent_activity(clamp_limit(q.limit, 50, 500)).await?))
+    let mut entries = s.db.recent_activity(clamp_limit(q.limit, 50, 500)).await?;
+    // The log names files everywhere; people limited to some storage only
+    // see what they did themselves.
+    if user.is_limited() {
+        entries.retain(|e| e.username.as_deref() == Some(user.username.as_str()));
+    }
+    Ok(Json(entries))
+}
+
+// ---------------------------------------------------------------------------
+// Start with Windows
+
+const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "NEXUS Cloud";
+
+#[cfg(windows)]
+fn reg(args: &[&str]) -> std::io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("reg").args(args).creation_flags(CREATE_NO_WINDOW).output()
+}
+
+/// Whether this service is registered to start when the user signs in.
+#[cfg(windows)]
+fn autostart_enabled() -> bool {
+    reg(&["query", RUN_KEY, "/v", RUN_VALUE]).map(|o| o.status.success()).unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn write_autostart(enabled: bool) -> Result<(), NexusError> {
+    let output = if enabled {
+        let exe = std::env::current_exe()?;
+        let command = format!("\"{}\"", exe.display());
+        reg(&["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &command, "/f"])?
+    } else if autostart_enabled() {
+        reg(&["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])?
+    } else {
+        return Ok(());
+    };
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(NexusError::internal(format!("Windows refused the change: {}", String::from_utf8_lossy(&output.stderr).trim())))
+    }
+}
+
+#[cfg(not(windows))]
+fn autostart_enabled() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+fn write_autostart(_enabled: bool) -> Result<(), NexusError> {
+    Err(NexusError::invalid("Starting automatically is only available on Windows"))
+}
+
+/// `GET /system/autostart`: whether the service starts when you sign in.
+pub async fn autostart(user: AuthUser) -> ApiResult<Json<Value>> {
+    user.require_person()?;
+    let enabled = tokio::task::spawn_blocking(autostart_enabled).await.unwrap_or(false);
+    Ok(Json(json!({ "supported": cfg!(windows), "enabled": enabled })))
+}
+
+#[derive(Deserialize)]
+pub struct AutostartBody {
+    enabled: bool,
+}
+
+/// `PUT /system/autostart`: registers or removes the per-user start-up entry
+/// (no administrator rights needed; it only affects this Windows account).
+pub async fn set_autostart(
+    State(s): State<SharedState>,
+    user: AuthUser,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<AutostartBody>,
+) -> ApiResult<Json<Value>> {
+    user.require_person()?;
+    user.require(nexus_security::Action::ManageStorage)?;
+    if !peer.ip().is_loopback() {
+        return Err(NexusError::PermissionDenied("This can only be changed on the computer itself".into()).into());
+    }
+    let enabled = body.enabled;
+    tokio::task::spawn_blocking(move || write_autostart(enabled)).await.map_err(NexusError::internal)??;
+    audit(&s, &user, if enabled { "system.autostart.enabled" } else { "system.autostart.disabled" }, None).await;
+    Ok(Json(json!({ "supported": cfg!(windows), "enabled": enabled })))
 }

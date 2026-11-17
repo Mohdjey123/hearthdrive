@@ -119,3 +119,16 @@ body {
   body { -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
   input, textarea { -webkit-user-select: text; user-select: text; font-size: 16px; }
 }
+
+@media (pointer: coarse) {
+  /* Fingers need bigger targets than a mouse pointer. */
+  .nx-btn { min-height: 40px; padding-left: 14px; padding-right: 14px; }
+  .nx-icon-btn { min-width: 40px; min-height: 40px; }
+  select { min-height: 40px; }
+  input[type='checkbox'], input[type='radio'] { width: 20px; height: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  .animate-spin { animation-duration: 1.2s !important; }
+}

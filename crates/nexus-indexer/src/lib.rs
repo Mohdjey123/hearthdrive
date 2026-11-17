@@ -38,7 +38,7 @@ impl Indexer {
         let (watch_tx, watch_rx) = mpsc::unbounded_channel();
         let ignored = ignored
             .into_iter()
-            .map(|p| std::fs::canonicalize(&p).map(|c| dunce_simplify(c)).unwrap_or(p))
+            .map(|p| std::fs::canonicalize(&p).map(dunce_simplify).unwrap_or(p))
             .collect();
         Arc::new(Self {
             db,
@@ -65,11 +65,10 @@ impl Indexer {
     pub fn register_root(self: &Arc<Self>, root: &StorageRoot) {
         let online = nexus_storage::StorageManager::is_online(root);
         self.online.lock().unwrap().insert(root.id.clone(), online);
-        if online {
-            if let Err(e) = self.watch_root(root) {
+        if online
+            && let Err(e) = self.watch_root(root) {
                 tracing::warn!(root = %root.name, error = %e, "could not watch storage root");
             }
-        }
         self.spawn_scan(root.clone());
     }
 

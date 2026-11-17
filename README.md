@@ -91,6 +91,38 @@ Both computers can then browse each other from **Files** → device menu, from a
 
 How it works: every connection is QUIC with TLS 1.3, authenticated with the two devices' own keys. Devices first try to connect directly. On the same network that always works; across the internet it usually works through NAT hole punching. When it doesn't (some corporate, hotel or mobile networks), traffic goes through a relay server. A relay only forwards encrypted packets and cannot read them. The free public relays are rate-limited, so large transfers over a relay are slow. If you often hit that, run your own [`iroh-relay`](https://docs.iroh.computer/relays) on a small server and start NEXUS with `NEXUS_RELAY=https://relay.example.com`. The first time NEXUS runs, Windows may ask whether to allow `nexus-service` through the firewall. Allow it on private networks; it only accepts connections from paired devices and pairing requests that carry a valid code.
 
+## Working across devices
+
+* **Search everywhere.** In **Files**, type a search and tick **All devices** to search this computer and every paired device that is online. Results say which device each file is on.
+* **Copy between devices.** Select one or more files and choose **Copy to another device**. Pick the device, storage and folder. Folders are copied with everything inside them. The copy runs in the background (see **Transfers**); the content streams from the source to the destination through your node, nothing is stored in between, and a dropped connection continues from where it stopped.
+* **Limit what a device sees.** On **Devices**, each paired device shows **Storage it can see here**. Choose all storage or specific locations. Everything else is invisible to that device: it cannot list, search, download or upload there.
+* **People.** Under **Settings** → **People**, an owner or administrator can add accounts (administrator, editor or viewer), change roles and remove people. People sign in from a browser on the computer itself. The only owner cannot be removed or demoted.
+* **Limit what a person sees.** Next to each editor or viewer, the storage button opens **What … can use**: all storage, or chosen locations on this computer and on your paired devices. Everything else is invisible to them, on every device, including in search, sync, transfers and the activity log. Owners and administrators always see everything. A change applies to their very next request.
+* **Start with Windows.** **Settings** → **Start with Windows** registers the storage service to start when you sign in (a per-user start-up entry; no administrator rights).
+
+## Sync and versions
+
+* **Sync a folder.** Open **Sync** → **New sync**, choose a folder here and a folder on a paired computer, and a direction: both ways, only to the device, or only from the device. Sync runs within about 20 seconds of a change here, every five minutes otherwise, and whenever you press **Sync now**.
+* **Nothing is deleted outright.** A file removed on one side goes to the trash on the other. If a file changed on both sides, the newer one keeps its name and the other is kept beside it as `name (Device's copy date).ext`.
+* **Safety stop.** If most of a folder disappears at once (an unplugged drive, a moved folder), sync does not remove the files on the other side. It says so on the Sync page; press **Sync now** if the removal was meant.
+* **Earlier versions.** When sync, a copy or an upload with "replace" overwrites a file, the old content is kept (the last ten per file). Open **Properties** on a file to download or restore one. Restoring keeps the current content as a version too.
+* **Resumable uploads.** Files over 8 MB are uploaded in pieces. If the connection drops, the upload continues where it stopped; choosing **Retry** (even after closing the app) picks up from there.
+
+## Phone backup and the share menu
+
+* **Back up photos and videos.** In the phone app, open **Backup**, choose what to back up (camera and screenshots, pictures, videos), a paired computer and a folder on it, and allow NEXUS to read your photos when Android asks. Photos keep their folders and dates (for example `DCIM/Camera/IMG_1234.jpg`).
+* **When it runs.** While NEXUS is open on the phone: when you open it, every 15 minutes, and when you press **Back up now**. Only new and changed files are sent; a photo edited on the phone replaces its copy, and the computer keeps the earlier one as a version.
+* **Nothing is removed.** Deleting a photo on the phone keeps the copy on the computer. Deleting the copy on the computer does not make the phone send it again. Files already on the computer with the same name and size (after reinstalling the app, say) are not sent twice.
+* **Share to NEXUS.** In any app, choose **Share** → **NEXUS** for files, photos or text. NEXUS asks which computer and folder to send them to; the transfer appears under **Transfers**. **Later** keeps them in the app until you send or discard them.
+
+## Windows installer
+
+```bash
+npm run desktop:build
+```
+
+builds the service and the app in release mode and produces an NSIS installer under `target/release/bundle/nsis/`. The installer puts `nexus-service.exe` and the web interface next to the app. It is not code-signed, so Windows SmartScreen will warn on first run.
+
 ## Android app
 
 The Android app is the same node and the same interface, packaged with Tauri. The node runs inside the app, so the phone pairs and connects exactly like a computer does. A phone holds no storage of its own: it opens on the files of the computers it is paired with.
@@ -105,7 +137,7 @@ The Android app is the same node and the same interface, packaged with Tauri. Th
 2. Install it (`adb install -r <apk>`, or copy the file to the phone and open it).
 3. Open the app, name the phone, and choose **Scan QR code**. On the computer, open **Devices** → **Add device** and approve the phone after comparing fingerprints.
 
-Tap opens a file or folder; press and hold selects. Downloads are saved to the phone's `Download/NEXUS` folder. The node runs while the app is open; the computers keep running on their own.
+Tap opens a file or folder; press and hold selects. Downloads are saved to the phone's `Download/NEXUS` folder. The node runs while the app is open; the computers keep running on their own. Phone backup and sharing to NEXUS are described above.
 
 The script exists because the Tauri CLI links the compiled library with a symbolic link, which Windows only allows in Developer Mode. The script copies the library instead.
 
@@ -117,10 +149,10 @@ Following the product spec's phases. Each phase ships a working application.
 - [x] **Phase 1 — Local storage:** drives, roots, indexing, browser, search, upload/download, previews
 - [x] **Phase 2 — Networking:** built-in peer-to-peer connections (no VPN client), device identity keys, link/QR pairing, signed requests, online/offline peers, remote browsing
 - [x] **Phase 3 — Android:** native app with the node built in, QR pairing, remote browsing, previews, downloads, uploads
-- [ ] **Phase 4 — Multi-node storage:** unified index across nodes, remote operations, resumable chunked transfers
-- [ ] **Phase 5 — Synchronization:** one-way/two-way folder sync, conflicts, version history
-- [ ] **Phase 6 — Sharing and security:** invited users, per-root permissions, share links, revocation
-- [ ] **Phase 7 — Release:** Windows installer with service registration, auto-update, signed Android release
+- [x] **Phase 4 — Multi-node storage:** search across all devices, copying files and folders between devices, resumable uploads and copies
+- [x] **Phase 5 — Synchronization:** one-way and two-way folder sync, conflict copies, version history (no real-time change journal yet: devices are checked every five minutes)
+- [ ] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access are done; share links are not
+- [ ] **Phase 7 — Release:** Windows installer and start-with-Windows are done; auto-update and a store-signed Android release are not
 
 ## License
 

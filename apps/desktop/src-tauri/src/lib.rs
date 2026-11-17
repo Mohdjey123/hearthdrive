@@ -109,7 +109,11 @@ mod host {
     /// The node embedded in this app, started on first use.
     static NODE: OnceCell<Result<Connection, String>> = OnceCell::const_new();
 
-    async fn start(data_dir: PathBuf) -> Result<Connection, String> {
+    /// The phone's shared storage, where the camera and other apps keep
+    /// photos and videos.
+    const SHARED_STORAGE: &str = "/storage/emulated/0";
+
+    async fn start(data_dir: PathBuf, share_inbox: PathBuf) -> Result<Connection, String> {
         std::fs::create_dir_all(&data_dir).map_err(|e| format!("Could not create the app's data folder: {e}"))?;
         // The guard must outlive the node; the node lives as long as the app.
         if let Ok(guard) = nexus_core::init_logging(&data_dir) {
@@ -117,7 +121,10 @@ mod host {
         }
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let (failed_tx, failed_rx) = tokio::sync::oneshot::channel::<String>();
-        let config = Config::embedded(data_dir.clone(), "My phone");
+        let mut config = Config::embedded(data_dir.clone(), "My phone");
+        config.media_dir = Some(PathBuf::from(SHARED_STORAGE));
+        // MainActivity copies files shared to the app into `<cache>/shared`.
+        config.share_inbox = Some(share_inbox);
         std::thread::Builder::new()
             .name("nexus-node".into())
             .spawn(move || {
@@ -151,7 +158,8 @@ mod host {
 
     pub async fn connection(app: tauri::AppHandle) -> Result<Connection, String> {
         let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        NODE.get_or_init(|| start(data_dir)).await.clone()
+        let inbox = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("shared");
+        NODE.get_or_init(|| start(data_dir, inbox)).await.clone()
     }
 
     /// The phone's shared Download folder, where other apps can see files.

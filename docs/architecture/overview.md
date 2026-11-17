@@ -99,6 +99,41 @@ The request is tagged with the connection's authenticated key (`P2pPeer`) and a 
 
 **Relays.** A relay only forwards encrypted QUIC packets between endpoints it cannot decrypt. The public relays run by the iroh project are rate-limited, which slows large relayed transfers; direct paths are not affected. A self-hosted `iroh-relay` removes that limit.
 
+## Across devices, access and accounts (Phases 4 and 6)
+
+**Search across devices.** There is no shared index. The UI asks its own node and, through the proxy, each online paired device, and merges the answers. Each result carries the device it came from, so opening, previewing and downloading use that device's API.
+
+**Copy between devices.** `POST /transfers/copy` takes a source (`from_device`, `file_id`) and a destination (`to_device`, `root_id`, `path`); either side can be this node. The node opens the source as a stream (a local file, or the peer's ticketed content URL) and feeds it to the destination (the local upload path, or the peer's `/files/upload`). Only people signed in here may call it. Uploads to a peer are answered only when the whole body has arrived, so requests with a body use a 12-hour limit instead of the 20-second one.
+
+**Per-device storage access.** `devices.allowed_roots` is `NULL` (everything) or a JSON list of storage root ids. It is loaded into the caller's identity when a device request is authenticated, and every file route checks it: listing roots and trash filters, search and recent filter, and anything addressed to a hidden root or a file in one answers "not found".
+
+**Per-person storage access.** `users.allowed_roots` works the same way for people, except that its list may name storage locations on paired devices too. Owners and administrators are never limited (they could lift their own limit). The list is loaded with the session on every request, so a change applies at once. When a limited person's request goes to a paired device (the proxy, copies, sync), the node adds `x-nexus-acting-roots` with the list, and the signature covers it (an extra `roots:` line in the signed text, present only for limited people, so other requests sign exactly as before). The device then applies the intersection of its own limit for the calling node and the person's list. Limited people also only receive live events for their locations, only see their own entries in the activity log and their own transfers, and only see sync pairs whose folder here they can use; a sync pair stops running if its creator loses that folder.
+
+**Accounts.** `/users` lets owners and administrators add, change and remove accounts. Rules enforced on the server: only an owner can create, change or remove an owner; the last owner cannot be removed or demoted; nobody can remove their own account; removing an account or changing its password deletes its sessions. Devices can never call these routes.
+
+**Start with Windows.** `PUT /system/autostart` writes or removes `NEXUS Cloud` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, pointing at the running service executable. It is accepted from loopback only.
+
+## Resumable transfers, versions and sync (Phases 4 and 5)
+
+**Resumable uploads.** `POST /files/uploads` records the destination and size (`uploads` table) and validates the name, folder and free space before any byte is sent. Bytes go to `.nexus/staging/<id>.part` with `PUT /files/uploads/{id}?offset=N`; the offset must equal what has arrived, so a piece can never be written twice or out of order. Whatever arrives before a connection drops is kept. `GET` answers the current offset; `POST …/complete` hashes the file (BLAKE3), applies the original modification time and places it atomically. Only the person who started an upload can continue it. Uploads untouched for a day are deleted.
+
+**Copy jobs.** `POST /transfers/copy` answers at once with a job; `GET /transfers` lists jobs with progress. Each file goes through a resumable upload at the destination, so when either connection drops the job asks how much arrived, reopens the source at that offset (a local seek, or an HTTP range request to the peer) and continues, up to eight times with back-off. Folders are listed with `GET /files/tree` and recreated under a free name. Two jobs run at a time.
+
+**Versions.** Uploads with `on_conflict=replace` move the existing file to `.nexus/versions/<version id>` and record it in `file_versions` before putting the new one in place; the file keeps its id. Ten versions are kept per file. Restoring swaps the version back and keeps the replaced content as a version.
+
+**Sync.** A pair (`sync_pairs`) lives only on the node that created it; the other device just answers ordinary signed file requests, acting for the person who set it up (with that person's current role, capped by the device's role there). A run lists both folders (`/files/tree`), compares every path, case-insensitively, with the fingerprints (size and modification time) both sides had after the last run (`sync_state`), and plans:
+
+| Here | There | Two-way | Upload | Download |
+| --- | --- | --- | --- | --- |
+| changed | unchanged | copy there | copy there | copy here |
+| unchanged | changed | copy here | copy there | copy here |
+| deleted | unchanged | trash there | trash there | copy here |
+| changed | changed | newer wins, other kept as a conflict copy | copy there | copy here |
+
+The planner is a pure function with unit tests. Replacements keep versions; removals go to the trash. A run that would remove more than 20 files and more than half of the folder skips the removals until someone presses Sync now. A folder still being indexed, or offline, is not synced, so an incomplete listing never looks like deleted files. Temporary files (`~$*`, `*.tmp`, `*.part`, `desktop.ini`, `Thumbs.db`) are ignored.
+
+Runs happen about 20 seconds after a change in the local folder, every five minutes otherwise (changes on the device are only noticed by looking), and on demand.
+
 ## Android app (Phase 3)
 
 The Tauri shell (`apps/desktop/src-tauri`) builds for Windows and Android from one crate:
@@ -114,5 +149,9 @@ The UI is the same React app. It asks the shell which host it runs in (`shell: d
 * downloads go through the `save_download` command, which streams the file from the app's own node into `Download/NEXUS` (a web view cannot save files on Android). It refuses any URL that is not on the app's own node.
 
 On Android the device key is stored in the app's private storage without DPAPI; the app sandbox protects it. The node stops when Android stops the app, so a phone is reachable by other devices only while the app is open.
+
+**Phone backup.** `backups` (one row) names a paired computer, storage location and folder, and which phone folders to read (`DCIM`, `Pictures`, `Movies` under `/storage/emulated/0`); `backup_files` remembers each file sent with its size and modification time. A run (`routes/backup.rs`) lists the phone folders (skipping hidden files, which is how Android marks files being written or in its trash, and files changed in the last 30 seconds), drops what `backup_files` already has, skips files the computer already has with the same name and size, and sends the rest as one job through the same resumable upload as copies (`Mover::send_disk_file`), with `make_parents` and the photo's date. A changed photo is sent with `replace` (the computer keeps a version); a new one with `rename`, so a different file of the same name is never overwritten. It runs 15 seconds after the app starts, every 15 minutes, two minutes after a failure, and on request. The app asks for `READ_MEDIA_IMAGES`/`READ_MEDIA_VIDEO` through a small `window.NexusAndroid` bridge in `MainActivity`.
+
+**Share menu.** `MainActivity` accepts `SEND` and `SEND_MULTIPLE` for any type. It copies each shared `content://` item (never `file://`, never the app's own provider) into `<cache>/shared` as `name.part`, renames it when complete, and tells the page with a `nexus-shared` event. `GET /shared` lists the inbox; `POST /shared/send` sends chosen files (plain names only) to a folder on a paired device as a job and deletes each from the inbox once it arrived; `POST /shared/discard` drops them.
 
 Still to come: shared users across nodes, a unified index (Phase 4), a foreground service for long transfers on Android, and an installer firewall rule for the UDP port (Phase 7).

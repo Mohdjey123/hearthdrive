@@ -39,8 +39,11 @@ android {
             }
         }
         getByName("release") {
+            // Code shrinking is off: the Tauri plugins (QR scanner) are
+            // called by name at run time, and shrinking renames or removes
+            // the classes they need, which crashes the app.
             optimization {
-               enable = true
+               enable = false
             }
             proguardFiles(
                 *fileTree(".") {

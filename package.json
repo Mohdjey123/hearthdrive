@@ -10,7 +10,7 @@
     "build:ui": "npm run build -w @nexus/desktop",
     "dev:ui": "npm run dev -w @nexus/desktop",
     "desktop": "cargo build -p nexus-core && npm run tauri -w @nexus/desktop -- dev",
-    "desktop:build": "cargo build -p nexus-core --release && npm run tauri -w @nexus/desktop -- build",
+    "desktop:build": "cargo build -p nexus-core --release && npm run tauri -w @nexus/desktop -- build --config src-tauri/tauri.installer.conf.json",
     "test": "cargo test && npm run typecheck -w @nexus/desktop"
   }
 }

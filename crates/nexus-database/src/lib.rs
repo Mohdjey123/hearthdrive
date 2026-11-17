@@ -4,18 +4,22 @@
 //! the network; nodes exchange metadata events instead.
 
 mod activity;
+mod backup;
 mod devices;
 mod pairing;
 mod files;
 mod roots;
 mod sessions;
 mod settings;
+mod sync;
 mod trash;
 mod users;
 
+pub use backup::{Backup, NewBackup};
 pub use devices::NewPeer;
 pub use pairing::NewPairingRequest;
 pub use files::{RootStats, SortField, UnhashedFile};
+pub use sync::{FileVersion, Fingerprints, NewSyncPair, StateChange, SyncPair, SyncState, UploadSession};
 
 use nexus_common::Result;
 use sqlx::sqlite::{
@@ -27,9 +31,15 @@ use std::time::Duration;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
+/// A storage root's totals and how long they stay fresh.
+type StatsCache = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, (crate::files::RootStats, std::time::Instant)>>>;
+
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
+    /// Totals per storage root. Counting millions of rows takes seconds, so
+    /// results are reused for a while (longer the slower the count was).
+    stats_cache: StatsCache,
 }
 
 impl Database {
@@ -63,7 +73,7 @@ impl Database {
 
     async fn init(pool: SqlitePool) -> Result<Self> {
         MIGRATOR.run(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self { pool, stats_cache: Default::default() })
     }
 
     pub fn pool(&self) -> &SqlitePool {
@@ -72,6 +82,13 @@ impl Database {
 
     pub async fn close(&self) {
         self.pool.close().await;
+    }
+
+    /// Moves the write-ahead log back into the database file and shrinks it.
+    /// Without this the log can grow without bound while readers are busy.
+    pub async fn checkpoint(&self) -> Result<()> {
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&self.pool).await?;
+        Ok(())
     }
 }
 

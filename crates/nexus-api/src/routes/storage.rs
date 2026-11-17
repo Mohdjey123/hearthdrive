@@ -56,7 +56,9 @@ pub async fn list_roots(State(s): State<SharedState>, user: AuthUser) -> ApiResu
     let drives = list_drives().await;
     let mut out = Vec::new();
     for root in s.db.list_roots().await? {
-        out.push(root_view(&s, root, &drives).await?);
+        if user.sees_root(&root.id) {
+            out.push(root_view(&s, root, &drives).await?);
+        }
     }
     Ok(Json(out))
 }
@@ -67,6 +69,7 @@ pub async fn root_stats(
     Path(id): Path<String>,
 ) -> ApiResult<Json<RootView>> {
     user.require(Action::Read)?;
+    user.require_root(&id)?;
     let root = s.db.get_root(&id).await?;
     Ok(Json(root_view(&s, root, &list_drives().await).await?))
 }
@@ -107,6 +110,7 @@ pub async fn remove_root(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require(Action::ManageStorage)?;
+    user.require_person()?;
     s.indexer.unregister_root(&id);
     let root = s.storage.remove_root(&id).await?;
     audit(&s, &user, "storage.root.removed", Some(&root.absolute_path)).await;
@@ -120,6 +124,7 @@ pub async fn rescan_root(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require(Action::ManageStorage)?;
+    user.require_root(&id)?;
     let root = s.db.get_root(&id).await?;
     s.storage.ensure_online(&root)?;
     if s.indexer.is_scanning(&id) {

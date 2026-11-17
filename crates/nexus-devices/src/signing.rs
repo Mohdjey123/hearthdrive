@@ -16,6 +16,9 @@ pub const HDR_NONCE: &str = "x-nexus-nonce";
 pub const HDR_SIGNATURE: &str = "x-nexus-signature";
 pub const HDR_ACTING_USER: &str = "x-nexus-acting-user";
 pub const HDR_ACTING_ROLE: &str = "x-nexus-acting-role";
+/// Storage locations the person is limited to, comma-separated (absent: none
+/// of their own limits apply).
+pub const HDR_ACTING_ROOTS: &str = "x-nexus-acting-roots";
 
 /// Requests older or newer than this are refused.
 pub const MAX_SKEW_MS: i64 = 120_000;
@@ -34,11 +37,14 @@ pub struct SignedRequest {
     /// The person on the calling node, and their role there.
     pub acting_user: String,
     pub acting_role: String,
+    /// The storage locations that person is limited to, comma-separated;
+    /// `None` when they are not limited.
+    pub acting_roots: Option<String>,
 }
 
 impl SignedRequest {
     pub fn canonical(&self) -> Vec<u8> {
-        format!(
+        let mut text = format!(
             "NEXUS-SIG-V1\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             self.method.to_ascii_uppercase(),
             self.path_and_query,
@@ -47,8 +53,22 @@ impl SignedRequest {
             self.target_device,
             self.acting_role,
             self.acting_user,
-        )
-        .into_bytes()
+        );
+        // Only limited people add a line, so requests from people without
+        // limits read exactly as before.
+        if let Some(roots) = &self.acting_roots {
+            text.push_str("
+roots:");
+            text.push_str(roots);
+        }
+        text.into_bytes()
+    }
+
+    /// The acting person's storage limits as a list.
+    pub fn acting_root_list(&self) -> Option<Vec<String>> {
+        self.acting_roots
+            .as_deref()
+            .map(|r| r.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect())
     }
 
     pub fn sign(&self, identity: &NodeIdentity) -> String {
@@ -97,6 +117,7 @@ mod tests {
             target_device: "node-a".into(),
             acting_user: "alex".into(),
             acting_role: "owner".into(),
+            acting_roots: None,
         }
     }
 
@@ -111,11 +132,25 @@ mod tests {
             SignedRequest { path_and_query: "/api/v1/files?root_id=r2".into(), ..request() },
             SignedRequest { target_device: "node-b".into(), ..request() },
             SignedRequest { acting_role: "viewer".into(), ..request() },
+            SignedRequest { acting_roots: Some("r1".into()), ..request() },
             SignedRequest { nonce: "fedcba9876543210fedc".into(), ..request() },
         ];
         for v in variants {
             assert!(!v.verify(id.public_key(), &sig), "{v:?}");
         }
+    }
+
+    #[test]
+    fn limits_are_signed() {
+        let id = NodeIdentity::generate();
+        let limited = SignedRequest { acting_roots: Some("r1,r2".into()), ..request() };
+        let sig = limited.sign(&id);
+        assert!(limited.verify(id.public_key(), &sig));
+        // Dropping or widening the limits breaks the signature.
+        assert!(!request().verify(id.public_key(), &sig));
+        assert!(!SignedRequest { acting_roots: Some("r1,r2,r3".into()), ..request() }.verify(id.public_key(), &sig));
+        assert_eq!(limited.acting_root_list(), Some(vec!["r1".to_string(), "r2".to_string()]));
+        assert_eq!(SignedRequest { acting_roots: Some(String::new()), ..request() }.acting_root_list(), Some(vec![]));
     }
 
     #[test]

@@ -219,6 +219,11 @@ impl Database {
     }
 
     pub async fn root_stats(&self, root_id: &str) -> Result<RootStats> {
+        if let Some((stats, fresh_until)) = self.stats_cache.lock().unwrap_or_else(|e| e.into_inner()).get(root_id)
+            && std::time::Instant::now() < *fresh_until {
+                return Ok(*stats);
+            }
+        let started = std::time::Instant::now();
         let (files, dirs, bytes): (i64, i64, i64) = sqlx::query_as(
             "SELECT COALESCE(SUM(1 - is_dir), 0), COALESCE(SUM(is_dir), 0), COALESCE(SUM(size), 0) \
              FROM files WHERE root_id = ?",
@@ -226,7 +231,16 @@ impl Database {
         .bind(root_id)
         .fetch_one(&self.pool)
         .await?;
-        Ok(RootStats { files, dirs, bytes })
+        let stats = RootStats { files, dirs, bytes };
+        // A small root is counted in a millisecond and stays live. A root
+        // with millions of files takes seconds, so its totals are reused for
+        // up to a minute instead of being recounted on every request.
+        let ttl = (started.elapsed() * 20).min(std::time::Duration::from_secs(60));
+        self.stats_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(root_id.to_string(), (stats, std::time::Instant::now() + ttl));
+        Ok(stats)
     }
 
     pub async fn unhashed_files(&self, root_id: &str, limit: i64) -> Result<Vec<UnhashedFile>> {

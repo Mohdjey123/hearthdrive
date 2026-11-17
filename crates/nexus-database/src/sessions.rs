@@ -27,7 +27,7 @@ impl Database {
     /// The user owning an unexpired session, if any.
     pub async fn session_user(&self, token_hash: &str) -> Result<Option<User>> {
         Ok(sqlx::query_as::<_, User>(
-            "SELECT u.id, u.username, u.role, u.created_at FROM sessions s \
+            "SELECT u.id, u.username, u.role, u.created_at, u.allowed_roots FROM sessions s \
              JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
         )
         .bind(token_hash)

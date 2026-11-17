@@ -40,6 +40,31 @@ pub enum Event {
     PairingUpdated { id: String, status: String },
     #[serde(rename = "network.changed")]
     NetworkChanged,
+    /// A copy or sync job started, finished or was cancelled.
+    #[serde(rename = "transfer.updated")]
+    TransferUpdated { id: String, status: String },
+    /// A sync pair started or finished a run, or was changed.
+    #[serde(rename = "sync.updated")]
+    SyncUpdated { id: String },
+}
+
+impl Event {
+    /// The storage location an event is about, if any: people limited to
+    /// some locations only hear about those.
+    pub fn root_id(&self) -> Option<&str> {
+        match self {
+            Event::StorageChanged { root_id }
+            | Event::ScanStarted { root_id }
+            | Event::ScanProgress { root_id, .. }
+            | Event::ScanCompleted { root_id, .. }
+            | Event::ScanFailed { root_id, .. }
+            | Event::FileCreated { root_id, .. }
+            | Event::FileModified { root_id, .. }
+            | Event::FileDeleted { root_id, .. }
+            | Event::FileMoved { root_id, .. } => Some(root_id),
+            _ => None,
+        }
+    }
 }
 
 /// In-process fan-out for [`Event`]s. Cheap to clone.

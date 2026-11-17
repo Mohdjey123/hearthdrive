@@ -1,9 +1,14 @@
+pub mod backup;
 pub mod devices;
 pub mod events;
 pub mod files;
 pub mod network;
 pub mod storage;
+pub mod sync;
 pub mod system;
+pub mod transfers;
+pub mod uploads;
+pub mod users;
 
 use crate::auth::AuthUser;
 use crate::state::AppState;

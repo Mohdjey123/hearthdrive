@@ -2,7 +2,7 @@ import { useState } from 'react'
 import {
   FolderOpen, Laptop, Link2, Monitor, Network, QrCode, RefreshCw, ShieldCheck, Smartphone, Trash2,
 } from 'lucide-react'
-import { api, isMobile, thisDevice, type Device, type NetworkInfo, type Role } from '../services/api'
+import { api, isMobile, thisDevice, type Device, type NetworkInfo, type Role, type StorageRoot } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { navigate } from '../hooks/useRoute'
 import { formatBytes, formatRelative } from '../lib/format'
@@ -135,9 +135,96 @@ function NetworkPanel() {
   )
 }
 
+/** Chooses which of this device's storage locations a paired device may see. */
+function AccessModal({ device, onClose }: { device: Device; onClose: () => void }) {
+  const roots = useResource(() => api.roots(), [])
+  const [all, setAll] = useState(device.allowed_roots === null)
+  const [chosen, setChosen] = useState<Set<string>>(new Set(device.allowed_roots ?? []))
+  const [busy, setBusy] = useState(false)
+  const list: StorageRoot[] = roots.data ?? []
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.updateDevice(device.id, all ? { all_roots: true } : { allowed_roots: [...chosen] })
+      toast(all ? `${device.name} can see all storage` : `${device.name} can see ${chosen.size} of ${list.length} locations`)
+      onClose()
+    } catch (e) {
+      toastError(e)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`What ${device.name} can see`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={busy} onClick={() => void save()}>Save</Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-muted">
+          Choose which storage on this {thisDevice()} {device.name} can browse, search and change. Everything else stays invisible to it.
+        </p>
+        <label className="flex items-center gap-2.5">
+          <input type="radio" name="access" className="accent-[var(--nx-accent)]" checked={all} onChange={() => setAll(true)} />
+          <span>All storage, including locations added later</span>
+        </label>
+        <label className="flex items-center gap-2.5">
+          <input type="radio" name="access" className="accent-[var(--nx-accent)]" checked={!all} onChange={() => setAll(false)} />
+          <span>Only these locations</span>
+        </label>
+        <div className={all ? 'pointer-events-none opacity-50' : ''}>
+          {roots.loading && !roots.data ? (
+            <Spinner />
+          ) : list.length === 0 ? (
+            <p className="text-muted">This {thisDevice()} has no storage yet.</p>
+          ) : (
+            <ul className="divide-y divide-line rounded-md border border-line">
+              {list.map((r) => (
+                <li key={r.id}>
+                  <label className="flex items-center gap-2.5 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      className="accent-[var(--nx-accent)]"
+                      disabled={all}
+                      checked={chosen.has(r.id)}
+                      onChange={(e) =>
+                        setChosen((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(r.id)
+                          else next.delete(r.id)
+                          return next
+                        })
+                      }
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{r.name}</span>
+                      <span className="block truncate text-[12px] text-subtle">{r.absolute_path}</span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {!all && chosen.size === 0 && list.length > 0 && (
+          <p className="text-[12px] text-warn">With nothing selected, {device.name} will not see any files here.</p>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 function DeviceCard({ d, onRemove }: { d: Device; onRemove: (d: Device) => void }) {
   const Icon = deviceIcon(d.device_type)
   const [role, setRole] = useState<Role>(d.role)
+  const [editingAccess, setEditingAccess] = useState(false)
   const changeRole = async (r: Role) => {
     setRole(r)
     try {
@@ -186,6 +273,16 @@ function DeviceCard({ d, onRemove }: { d: Device; onRemove: (d: Device) => void 
             </div>
           </>
         )}
+        {!d.is_local && (
+          <div className="col-span-2">
+            <dt className="text-subtle">Storage it can see here</dt>
+            <dd className="mt-0.5">
+              <button className="text-fg underline decoration-line-strong underline-offset-2 hover:decoration-accent" onClick={() => setEditingAccess(true)}>
+                {d.allowed_roots === null ? 'All storage' : d.allowed_roots.length === 0 ? 'Nothing' : `${d.allowed_roots.length} location${d.allowed_roots.length === 1 ? '' : 's'}`}
+              </button>
+            </dd>
+          </div>
+        )}
         <div className="col-span-2">
           <dt className="text-subtle">Fingerprint</dt>
           <dd className="mt-0.5"><FingerprintText value={d.fingerprint} className="text-[11px]" /></dd>
@@ -219,6 +316,7 @@ function DeviceCard({ d, onRemove }: { d: Device; onRemove: (d: Device) => void 
           </Button>
         </div>
       )}
+      {editingAccess && <AccessModal device={d} onClose={() => setEditingAccess(false)} />}
     </div>
   )
 }
@@ -273,7 +371,7 @@ export function Devices() {
         <Spinner />
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
-          {list.map((d) => <DeviceCard key={`${d.id}-${d.role}`} d={d} onRemove={setRemoving} />)}
+          {list.map((d) => <DeviceCard key={`${d.id}-${d.role}-${d.allowed_roots?.join(',') ?? 'all'}`} d={d} onRemove={setRemoving} />)}
           {peers.length === 0 && (
             <button
               onClick={() => setInviting(true)}

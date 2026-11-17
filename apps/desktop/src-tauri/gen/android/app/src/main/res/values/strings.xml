@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">"NEXUS Cloud"</string>
     <string name="main_activity_title">"NEXUS Cloud"</string>
+    <string name="share_label">"NEXUS"</string>
 </resources>

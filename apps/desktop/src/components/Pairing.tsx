@@ -121,7 +121,9 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
     try {
       const inv = await api.createInvite()
       setInvite(inv)
-      setQr(await QRCode.toDataURL(inv.link, { margin: 1, width: 232, errorCorrectionLevel: 'M', color: { dark: '#000000', light: '#ffffff' } }))
+      // Large, with a quiet zone and low error correction: the link is long,
+      // and a small dense code cannot be read by a phone camera off a screen.
+      setQr(await QRCode.toDataURL(inv.link, { margin: 3, width: 720, errorCorrectionLevel: 'L', color: { dark: '#000000', light: '#ffffff' } }))
     } catch (e) {
       setError(e as ApiError)
     }
@@ -188,19 +190,16 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
             <li>On the other computer, open NEXUS Cloud → <span className="text-fg">Devices</span> → <span className="text-fg">Join a cloud</span>.</li>
             <li>Paste this link there. You will approve the request here.</li>
           </ol>
-          <div className="flex gap-4">
-            <div className={cx('shrink-0 rounded-md bg-white p-1.5', expired && 'opacity-30')}>
-              {qr ? <img src={qr} alt="Pairing QR code" className="size-[132px]" /> : <div className="size-[132px]" />}
+          <div className={cx('mx-auto w-fit rounded-md bg-white', expired && 'opacity-30')}>
+            {qr ? <img src={qr} alt="Pairing QR code" className="size-[300px] max-w-full" /> : <div className="size-[300px]" />}
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1 truncate rounded-md border border-line bg-bg px-2 py-1.5 font-mono text-[11px] text-muted select-all">
+              {invite.link}
             </div>
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="text-[12px] text-subtle">Pairing link</div>
-              <div className="max-h-[74px] overflow-hidden rounded-md border border-line bg-bg px-2 py-1.5 font-mono text-[11px] break-all text-muted select-all">
-                {invite.link}
-              </div>
-              <Button size="sm" icon={<Copy className="size-3.5" />} disabled={expired} onClick={() => void copyText(invite.link, 'Pairing link copied')}>
-                Copy link
-              </Button>
-            </div>
+            <Button size="sm" icon={<Copy className="size-3.5" />} disabled={expired} onClick={() => void copyText(invite.link, 'Pairing link copied')}>
+              Copy link
+            </Button>
           </div>
           <div className="flex items-center justify-between rounded-md bg-elevated px-3 py-2 text-[12px]">
             {expired ? (
@@ -220,7 +219,7 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
           </div>
           <p className="text-[12px] text-subtle">
             The link contains this {thisDevice()}'s public key, how to reach it and a one-time code — never a password or private key.
-            Phones will scan the QR code once Android access arrives.
+            Scan the code with the NEXUS app on a phone, or paste the link on another computer.
           </p>
         </div>
       )}
@@ -373,7 +372,7 @@ export function JoinModal({ open, onClose }: { open: boolean; onClose: () => voi
     if (open) setDone(null)
   }, [open])
   return (
-    <Modal open={open} onClose={onClose} title="Join a cloud" footer={done && <Button variant="primary" onClick={onClose}>Done</Button>}>
+    <Modal open={open} onClose={onClose} title={isMobile() ? 'Pair with a computer' : 'Join a cloud'} footer={done && <Button variant="primary" onClick={onClose}>Done</Button>}>
       {done ? (
         <div className="flex flex-col items-center gap-2 py-6 text-center">
           <div className="rounded-full bg-accent-soft p-3"><Check className="size-6 text-accent" /></div>

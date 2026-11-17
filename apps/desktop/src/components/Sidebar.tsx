@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpDown, Folder, HardDrive, LayoutGrid, MonitorSmartphone, Settings } from 'lucide-react'
+import { ArrowUpDown, Folder, FolderSync, HardDrive, ImageUp, LayoutGrid, MonitorSmartphone, Settings } from 'lucide-react'
 import type { Page } from '../hooks/useRoute'
 import { navigate } from '../hooks/useRoute'
 import { subscribeStatus } from '../services/events'
 import { useTransfers } from '../stores/transfers'
 import { useSession } from '../stores/session'
-import { isMobile } from '../services/api'
+import { api, isMobile } from '../services/api'
+import { useResource } from '../hooks/useResource'
 import { cx, StatusDot } from './ui'
 
 const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
@@ -13,9 +14,21 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
   { page: 'files', label: 'Files', icon: Folder },
   { page: 'storage', label: 'Storage', icon: HardDrive },
   { page: 'devices', label: 'Devices', icon: MonitorSmartphone },
+  { page: 'sync', label: 'Sync', icon: FolderSync },
+  { page: 'backup', label: 'Backup', icon: ImageUp },
   { page: 'transfers', label: 'Transfers', icon: ArrowUpDown },
   { page: 'settings', label: 'Settings', icon: Settings },
 ]
+
+/** Pages that need storage on this device. */
+export const PHONELESS: Page[] = ['overview', 'storage', 'sync']
+/** Pages only phones have. */
+export const PHONE_ONLY: Page[] = ['backup']
+
+/** The pages this device shows. */
+export function pageAvailable(page: Page) {
+  return isMobile() ? !PHONELESS.includes(page) : !PHONE_ONLY.includes(page)
+}
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -32,10 +45,17 @@ export function Logo({ className }: { className?: string }) {
   )
 }
 
+/** Uploads from this window plus copies and syncs running on the node. */
+function useActiveTransfers() {
+  const transfers = useTransfers()
+  const jobs = useResource(() => api.jobs().catch(() => []), [], (e) => e.type === 'transfer.updated')
+  const running = (jobs.data ?? []).filter((j) => j.status === 'queued' || j.status === 'running').length
+  return transfers.filter((t) => t.status === 'uploading' || t.status === 'queued').length + running
+}
+
 export function Sidebar({ current }: { current: Page }) {
   const { phase } = useSession()
-  const transfers = useTransfers()
-  const active = transfers.filter((t) => t.status === 'uploading' || t.status === 'queued').length
+  const active = useActiveTransfers()
   const [live, setLive] = useState(false)
   useEffect(() => subscribeStatus(setLive), [])
   const nodeName = phase.kind === 'ready' ? phase.nodeName : ''
@@ -48,7 +68,7 @@ export function Sidebar({ current }: { current: Page }) {
         <span className="text-[14px] font-semibold tracking-tight">NEXUS Cloud</span>
       </div>
       <nav className="flex-1 space-y-0.5 px-2 py-2">
-        {NAV.map(({ page, label, icon: Icon }) => (
+        {NAV.filter((n) => pageAvailable(n.page)).map(({ page, label, icon: Icon }) => (
           <button
             key={page}
             onClick={() => navigate(page)}
@@ -80,9 +100,9 @@ export function Sidebar({ current }: { current: Page }) {
 
 /** Navigation for narrow screens: a tab bar along the bottom edge. */
 export function BottomNav({ current }: { current: Page }) {
-  const transfers = useTransfers()
-  const active = transfers.filter((t) => t.status === 'uploading' || t.status === 'queued').length
-  const items = isMobile() ? NAV.filter((n) => n.page !== 'overview' && n.page !== 'storage') : NAV
+  const active = useActiveTransfers()
+  // A phone has no storage of its own, so nothing to show storage or sync for.
+  const items = NAV.filter((n) => pageAvailable(n.page))
   return (
     <nav className="flex shrink-0 border-t border-line bg-panel md:hidden">
       {items.map(({ page, label, icon: Icon }) => (

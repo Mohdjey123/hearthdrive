@@ -24,13 +24,18 @@ pub struct Config {
     pub ui_dir: Option<PathBuf>,
     /// Initial device name. Defaults to the computer's host name.
     pub device_name: Option<String>,
+    /// Phones: the shared storage photos are backed up from
+    /// (`NEXUS_MEDIA_DIR` elsewhere, for testing).
+    pub media_dir: Option<PathBuf>,
+    /// Phones: where files shared to the app wait (`NEXUS_SHARE_INBOX`).
+    pub share_inbox: Option<PathBuf>,
 }
 
 impl Config {
     /// A node hosted inside an app (the Android shell): any free loopback
     /// port, no web UI, data in the app's private directory.
     pub fn embedded(data_dir: PathBuf, device_name: &str) -> Self {
-        Self { data_dir, port: 0, ui_dir: None, device_name: Some(device_name.to_string()) }
+        Self { data_dir, port: 0, ui_dir: None, device_name: Some(device_name.to_string()), media_dir: None, share_inbox: None }
     }
 }
 
@@ -59,7 +64,14 @@ impl Config {
                 other => anyhow::bail!("unknown argument: {other}"),
             }
         }
-        Ok(Self { data_dir, port, ui_dir: ui_dir.or_else(locate_ui_dir), device_name: None })
+        Ok(Self {
+            data_dir,
+            port,
+            ui_dir: ui_dir.or_else(locate_ui_dir),
+            device_name: None,
+            media_dir: std::env::var_os("NEXUS_MEDIA_DIR").map(PathBuf::from),
+            share_inbox: std::env::var_os("NEXUS_SHARE_INBOX").map(PathBuf::from),
+        })
     }
 }
 
@@ -166,7 +178,8 @@ pub async fn run_with(
         config.data_dir.clone(),
         identity,
         net,
-    ));
+    )
+    .with_phone_dirs(config.media_dir.clone(), config.share_inbox.clone()));
     if let Some(ui) = &config.ui_dir {
         tracing::info!(path = %ui.display(), "serving web interface");
     }
@@ -174,6 +187,19 @@ pub async fn run_with(
     nexus_api::p2p::spawn_server(state.clone(), app.clone());
     nexus_api::net::spawn_network_monitor(state.clone());
     nexus_api::peers::spawn_peer_monitor(state.clone());
+    nexus_api::spawn_sync(state.clone());
+    nexus_api::spawn_backup(state.clone());
+
+    // Keep the database's write-ahead log from growing without bound.
+    let checkpoint_db = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            if let Err(e) = checkpoint_db.checkpoint().await {
+                tracing::debug!(error = %e, "database checkpoint skipped");
+            }
+        }
+    });
 
     let runtime_path = config.data_dir.join(RUNTIME_FILE);
     let runtime = RuntimeInfo {

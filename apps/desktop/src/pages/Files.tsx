@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, ChevronRight, Download, Eye, FolderInput, FolderPlus, HardDrive, Info, LayoutGrid,
+  ArrowDown, ArrowUp, ChevronRight, CopyPlus, Download, Eye, FolderInput, FolderPlus, HardDrive, History, Info, LayoutGrid,
   List, Monitor, Pencil, RotateCcw, Search, Trash2, Upload, WifiOff, X,
 } from 'lucide-react'
 import {
-  api, ApiError, fileApi, isMobile, isTouch, peerPrefix, thisDevice, type FileApi, type FileEntry, type FoundItem, type StorageRoot, type TrashItem,
+  api, ApiError, fileApi, isMobile, isTouch, peerPrefix, thisDevice, type Device, type FileApi, type FileEntry, type FoundItem,
+  type StorageRoot, type TrashItem,
 } from '../services/api'
 import { subscribe } from '../services/events'
 import { useResource } from '../hooks/useResource'
@@ -12,11 +13,15 @@ import { navigate, type Route } from '../hooks/useRoute'
 import { enqueueUploads, onUploadComplete } from '../stores/transfers'
 import { fileKind, formatBytes, formatDate, formatRelative, previewKind } from '../lib/format'
 import { FileIcon } from '../components/FileIcon'
-import { FilePreview, FolderPicker, downloadFile, useContentUrl } from '../components/FilePreview'
+import { FilePreview, FolderPicker, downloadFile, saveUrl, useContentUrl } from '../components/FilePreview'
 import { toast, toastError } from '../components/Toasts'
 import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, Spinner, cx } from '../components/ui'
 
 type Sort = 'name' | 'size' | 'modified' | 'type'
+
+/** A search result, tagged with the device it lives on when searching all
+ *  devices (`''` = this device). Untagged results belong to the device being browsed. */
+type Found = FoundItem & { device_id?: string; device_name?: string }
 const PAGE = 300
 
 function useListing(fapi: FileApi, rootId: string | undefined, path: string, sort: Sort, order: 'asc' | 'desc') {
@@ -130,7 +135,69 @@ function SortHeader({ label, field, sort, order, onSort, className }: {
   )
 }
 
-function Details({ file, rootName, onClose }: { file: FileEntry; rootName: string; onClose: () => void }) {
+/** Earlier contents of a file, kept whenever NEXUS replaced it. */
+function Versions({ file, fapi, writable, onRestored }: { file: FileEntry; fapi: FileApi; writable: boolean; onRestored: () => void }) {
+  const versions = useResource(() => fapi.versions(file.id), [file.id, fapi], (e) => e.type === 'file.modified')
+  const [busy, setBusy] = useState<string | null>(null)
+  const restore = async (id: string) => {
+    setBusy(id)
+    try {
+      await fapi.restoreVersion(file.id, id)
+      toast('Earlier version restored. The one it replaced is kept in the list.')
+      versions.reload()
+      onRestored()
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(null)
+    }
+  }
+  const list = versions.data ?? []
+  return (
+    <section className="mt-5 border-t border-line pt-4">
+      <h4 className="flex items-center gap-1.5 text-[11.5px] font-semibold tracking-wide text-muted uppercase">
+        <History className="size-3.5" /> Earlier versions
+      </h4>
+      {versions.error ? (
+        <p className="mt-2 text-[12px] text-subtle">{versions.error.message}</p>
+      ) : !versions.data ? (
+        <Spinner className="mt-2" />
+      ) : list.length === 0 ? (
+        <p className="mt-2 text-[12px] text-subtle">None yet. When sync or a copy replaces this file, the old content is kept here.</p>
+      ) : (
+        <ul className="mt-2 space-y-2">
+          {list.map((v) => (
+            <li key={v.id} className="rounded-md border border-line p-2.5">
+              <div className="text-[12.5px]">{formatDate(v.modified_at ?? v.created_at)}</div>
+              <div className="text-[11.5px] text-subtle">
+                {formatBytes(v.size)} · replaced {formatRelative(v.created_at)}{v.created_by ? ` by ${v.created_by}` : ''}
+              </div>
+              <div className="mt-2 flex gap-1.5">
+                <Button size="sm" onClick={() => void fapi.versionUrl(file.id, v.id).then((u) => saveUrl(u, file.filename)).catch(toastError)}>
+                  <Download className="size-3.5" /> Download
+                </Button>
+                {writable && (
+                  <Button size="sm" loading={busy === v.id} disabled={busy !== null} onClick={() => void restore(v.id)}>
+                    <RotateCcw className="size-3.5" /> Restore
+                  </Button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function Details({ file, rootName, fapi, writable, onChanged, onClose }: {
+  file: FileEntry
+  rootName: string
+  fapi: FileApi
+  writable: boolean
+  onChanged: () => void
+  onClose: () => void
+}) {
   const rows: [string, React.ReactNode][] = [
     ['Type', fileKind(file)],
     ['Size', file.is_dir ? '—' : `${formatBytes(file.size)} (${file.size.toLocaleString()} bytes)`],
@@ -160,6 +227,7 @@ function Details({ file, rootName, onClose }: { file: FileEntry; rootName: strin
             </div>
           ))}
         </dl>
+        {!file.is_dir && <Versions file={file} fapi={fapi} writable={writable} onRestored={onChanged} />}
       </div>
     </aside>
   )
@@ -280,9 +348,15 @@ export function Files({ route }: { route: Route }) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
+  // With the Properties panel open the list is narrower: drop the less
+  // important columns earlier so names stay readable.
+  const narrow = showDetails
   const [preview, setPreview] = useState<FileEntry | null>(null)
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<FoundItem[] | null>(null)
+  const [results, setResults] = useState<Found[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [everywhere, setEverywhere] = useState(false)
+  const [copying, setCopying] = useState(false)
   const [dialog, setDialog] = useState<null | 'folder' | 'rename' | 'move' | 'delete'>(null)
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -303,17 +377,50 @@ export function Files({ route }: { route: Route }) {
     setAnchor(null)
   }, [results === null])
 
-  // Debounced search across every storage root.
+  // Debounced search: the device being browsed, or every device at once.
+  const peerKey = peers.map((d) => d.id + d.online).join()
   useEffect(() => {
-    if (!query.trim()) {
+    const text = query.trim()
+    if (!text) {
       setResults(null)
+      setSearching(false)
       return
     }
+    let live = true
+    setSearching(true)
     const t = setTimeout(() => {
-      fapi.search(query.trim()).then((r) => setResults(r.items)).catch(toastError)
+      const run = async (): Promise<Found[]> => {
+        if (!everywhere) return (await fapi.search(text)).items
+        const sources = [
+          ...(isMobile() ? [] : [{ id: '', name: `This ${thisDevice()}` }]),
+          ...peers.filter((d) => d.online).map((d) => ({ id: d.id, name: d.name })),
+        ]
+        const found = await Promise.allSettled(
+          sources.map(async (src) =>
+            (await fileApi(src.id ? peerPrefix(src.id) : '').search(text)).items.map((i) => ({ ...i, device_id: src.id, device_name: src.name })),
+          ),
+        )
+        const failed = found.filter((r) => r.status === 'rejected').length
+        if (failed) toast(`${failed} device${failed > 1 ? 's' : ''} could not be searched`, 'error')
+        return found.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
+      }
+      run()
+        .then((items) => live && setResults(items))
+        .catch((e) => live && toastError(e))
+        .finally(() => live && setSearching(false))
     }, 220)
-    return () => clearTimeout(t)
-  }, [query, fapi])
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+  }, [query, fapi, everywhere, peerKey])
+
+  /** Which device's API serves this entry: its own for tagged results. */
+  const deviceOf = (f: FileEntry) => (f as Found).device_id ?? deviceId
+  const prefixOf = (f: FileEntry) => {
+    const id = deviceOf(f)
+    return id ? peerPrefix(id) : ''
+  }
 
   const items: FileEntry[] = results ?? listing.items
   const selectedItems = useMemo(() => items.filter((i) => selected.has(i.id)), [items, selected])
@@ -338,7 +445,7 @@ export function Files({ route }: { route: Route }) {
   const open = (f: FileEntry) => {
     if (f.is_dir) {
       setQuery('')
-      go({ root: f.root_id, path: f.relative_path })
+      navigate('files', { device: deviceOf(f) || undefined, root: f.root_id, path: f.relative_path })
     } else setPreview(f)
   }
 
@@ -511,7 +618,17 @@ export function Files({ route }: { route: Route }) {
       {/* Toolbar */}
       <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-line px-3 py-1 md:px-4">
         {results ? (
-          <span className="text-muted">{results.length} result{results.length === 1 ? '' : 's'} for “{query}”</span>
+          <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-muted">
+            <span className="truncate">
+              {searching ? 'Searching…' : `${results.length} result${results.length === 1 ? '' : 's'} for “${query}”`}
+            </span>
+            {peers.length > 0 && (
+              <label className="flex shrink-0 items-center gap-1.5 text-[12.5px] text-fg">
+                <input type="checkbox" className="accent-[var(--nx-accent)]" checked={everywhere} onChange={(e) => setEverywhere(e.target.checked)} />
+                All devices
+              </label>
+            )}
+          </span>
         ) : (
           <nav className="flex min-w-0 items-center gap-1 text-[13px]">
             <button className="font-medium hover:underline" onClick={() => go({ path: '' })}>{root?.name}</button>
@@ -537,8 +654,11 @@ export function Files({ route }: { route: Route }) {
               {single && !single.is_dir && (
                 <>
                   <IconButton label="Preview" onClick={() => setPreview(single)}><Eye className="size-4" /></IconButton>
-                  <IconButton label="Download" onClick={() => void downloadFile(single, prefix).catch(toastError)}><Download className="size-4" /></IconButton>
+                  <IconButton label="Download" onClick={() => void downloadFile(single, prefixOf(single)).catch(toastError)}><Download className="size-4" /></IconButton>
                 </>
+              )}
+              {peers.length > 0 && (
+                <IconButton label="Copy to another device" onClick={() => setCopying(true)}><CopyPlus className="size-4" /></IconButton>
               )}
               {single && writable && !results && (
                 <IconButton label="Rename (F2)" onClick={() => setDialog('rename')}><Pencil className="size-4" /></IconButton>
@@ -622,10 +742,10 @@ export function Files({ route }: { route: Route }) {
                     />
                   </th>
                   <th className="py-2 font-medium"><SortHeader label="Name" field="name" sort={sort} order={order} onSort={onSort} /></th>
-                  {results && <th className="hidden w-64 font-medium md:table-cell">Location</th>}
+                  {results && <th className={cx('hidden w-64 font-medium', narrow ? 'xl:table-cell' : 'md:table-cell')}>Location</th>}
                   <th className="w-20 pr-3 font-medium md:w-28 md:pr-0"><SortHeader label="Size" field="size" sort={sort} order={order} onSort={onSort} className="ml-auto" /></th>
-                  <th className="hidden w-44 pl-6 font-medium md:table-cell"><SortHeader label="Modified" field="modified" sort={sort} order={order} onSort={onSort} /></th>
-                  <th className="hidden w-24 pr-4 font-medium md:table-cell"><SortHeader label="Type" field="type" sort={sort} order={order} onSort={onSort} /></th>
+                  <th className={cx('hidden w-44 pl-6 font-medium', narrow ? 'lg:table-cell' : 'md:table-cell')}><SortHeader label="Modified" field="modified" sort={sort} order={order} onSort={onSort} /></th>
+                  <th className={cx('hidden w-24 pr-4 font-medium', narrow ? 'xl:table-cell' : 'md:table-cell')}><SortHeader label="Type" field="type" sort={sort} order={order} onSort={onSort} /></th>
                 </tr>
               </thead>
               <tbody>
@@ -650,13 +770,13 @@ export function Files({ route }: { route: Route }) {
                         </span>
                       </td>
                       {results && (
-                        <td className="hidden truncate pr-3 text-muted md:table-cell">
-                          {(f as FoundItem).root_name}{f.parent_path ? ` / ${f.parent_path}` : ''}
+                        <td className={cx('hidden truncate pr-3 text-muted', narrow ? 'xl:table-cell' : 'md:table-cell')}>
+                          {(f as Found).device_name ? `${(f as Found).device_name} · ` : ''}{(f as FoundItem).root_name}{f.parent_path ? ` / ${f.parent_path}` : ''}
                         </td>
                       )}
                       <td className="pr-3 text-right text-muted tabular md:pr-0">{f.is_dir ? '' : formatBytes(f.size)}</td>
-                      <td className="hidden truncate pl-6 text-muted md:table-cell">{formatDate(f.modified_at)}</td>
-                      <td className="hidden truncate pr-4 text-muted md:table-cell">{fileKind(f)}</td>
+                      <td className={cx('hidden truncate pl-6 text-muted', narrow ? 'lg:table-cell' : 'md:table-cell')}>{formatDate(f.modified_at)}</td>
+                      <td className={cx('hidden truncate pr-4 text-muted', narrow ? 'xl:table-cell' : 'md:table-cell')}>{fileKind(f)}</td>
                     </tr>
                   )
                 })}
@@ -672,9 +792,11 @@ export function Files({ route }: { route: Route }) {
                   onContextMenu={(e) => { if (touch) { e.preventDefault(); toggle(f) } }}
                   className={cx('rounded-lg border p-2 text-left select-none', selected.has(f.id) ? 'border-accent bg-accent-soft' : 'border-transparent hover:bg-hover')}
                 >
-                  <Thumb file={f} prefix={prefix} />
+                  <Thumb file={f} prefix={prefixOf(f)} />
                   <div className="mt-2 truncate text-[12.5px]">{f.filename}</div>
-                  <div className="truncate text-[11.5px] text-subtle">{f.is_dir ? 'Folder' : formatBytes(f.size)}</div>
+                  <div className="truncate text-[11.5px] text-subtle">
+                    {(f as Found).device_name ? `${(f as Found).device_name} · ` : ''}{f.is_dir ? 'Folder' : formatBytes(f.size)}
+                  </div>
                 </button>
               ))}
             </div>
@@ -688,7 +810,14 @@ export function Files({ route }: { route: Route }) {
           )}
         </div>
         {showDetails && single && (
-          <Details file={single} rootName={(single as FoundItem).root_name ?? root?.name ?? ''} onClose={() => setShowDetails(false)} />
+          <Details
+            file={single}
+            rootName={(single as FoundItem).root_name ?? root?.name ?? ''}
+            fapi={fileApi(prefixOf(single))}
+            writable={writable}
+            onChanged={() => void listing.reload()}
+            onClose={() => setShowDetails(false)}
+          />
         )}
       </div>
 
@@ -704,7 +833,27 @@ export function Files({ route }: { route: Route }) {
         <span className="ml-auto">{touch ? 'Tap to open · press and hold to select' : 'Double-click to open · Del to delete · F2 to rename'}</span>
       </div>
 
-      <FilePreview file={preview} siblings={items} onNavigate={setPreview} onClose={() => setPreview(null)} prefix={prefix} />
+      <FilePreview
+        file={preview}
+        siblings={preview ? items.filter((i) => deviceOf(i) === deviceOf(preview)) : items}
+        onNavigate={setPreview}
+        onClose={() => setPreview(null)}
+        prefix={preview ? prefixOf(preview) : prefix}
+      />
+      {copying && selectedItems.length > 0 && (
+        <CopyDialog
+          items={selectedItems}
+          fromDevice={deviceOf(selectedItems[0])}
+          fromOf={deviceOf}
+          devices={peers}
+          onClose={() => setCopying(false)}
+          onDone={() => {
+            setCopying(false)
+            setSelected(new Set())
+            void listing.reload()
+          }}
+        />
+      )}
       {root && (
         <FileDialogs
           fapi={fapi}
@@ -721,6 +870,121 @@ export function Files({ route }: { route: Route }) {
         />
       )}
     </div>
+  )
+}
+
+/** Copies the selected files to a folder on another device (or this one). */
+function CopyDialog({ items, fromDevice, fromOf, devices, onClose, onDone }: {
+  items: FileEntry[]
+  /** Device the files live on; '' for this device. */
+  fromDevice: string
+  /** The device each file lives on (results can span devices). */
+  fromOf: (f: FileEntry) => string
+  devices: Device[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  // Places to copy to: every other device, and this one unless it is a phone
+  // (a phone has no storage of its own).
+  const places = [
+    ...(isMobile() ? [] : [{ id: '', name: `This ${thisDevice()}`, online: true }]),
+    ...devices.map((d) => ({ id: d.id, name: d.name, online: d.online })),
+  ]
+  const [to, setTo] = useState(() => (places.find((p) => p.id !== fromDevice && p.online) ?? places[0])?.id ?? '')
+  const prefix = to ? peerPrefix(to) : ''
+  const roots = useResource(async () => ({ to, list: (await fileApi(prefix).roots()).filter((r) => r.online && !r.read_only) }), [to])
+  const rootList = roots.data?.to === to ? roots.data.list : undefined
+  const [rootId, setRootId] = useState('')
+  const [dest, setDest] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const activeRoot = rootList?.find((r) => r.id === rootId) ?? rootList?.[0]
+
+  useEffect(() => {
+    setRootId('')
+    setDest('')
+  }, [to])
+
+  const copy = async () => {
+    if (!activeRoot) return
+    setBusy(true)
+    setError('')
+    // Search results can come from several devices: one copy per source.
+    const bySource = new Map<string, string[]>()
+    for (const f of items) bySource.set(fromOf(f), [...(bySource.get(fromOf(f)) ?? []), f.id])
+    const failures: string[] = []
+    for (const [from, ids] of bySource) {
+      try {
+        await api.copyItems({ from_device: from || undefined, file_ids: ids, to_device: to || undefined, root_id: activeRoot.id, path: dest })
+      } catch (e) {
+        failures.push((e as Error).message)
+      }
+    }
+    setBusy(false)
+    if (failures.length === bySource.size) {
+      setError(failures.join('\n'))
+      return
+    }
+    const place = places.find((p) => p.id === to)?.name ?? 'device'
+    toast(`Copying ${what} to ${place}. Follow it in Transfers.`)
+    onDone()
+  }
+
+  const what = items.length === 1 ? items[0].filename : `${items.length} items`
+  return (
+    <Modal
+      open
+      onClose={busy ? () => {} : onClose}
+      title={`Copy ${what}`}
+      footer={
+        <>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={busy} disabled={!activeRoot} onClick={() => void copy()}>
+            Copy here
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="To device">
+            <select
+              value={to}
+              disabled={busy}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-8 w-full rounded-md border border-line bg-bg px-2 text-fg outline-none focus:border-accent"
+            >
+              {places.map((p) => (
+                <option key={p.id} value={p.id} disabled={!p.online}>{p.name}{p.online ? '' : ' (offline)'}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Storage">
+            <select
+              value={activeRoot?.id ?? ''}
+              disabled={busy || !rootList?.length}
+              onChange={(e) => { setRootId(e.target.value); setDest('') }}
+              className="h-8 w-full rounded-md border border-line bg-bg px-2 text-fg outline-none focus:border-accent"
+            >
+              {rootList?.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        {roots.error ? (
+          <ErrorNote>{roots.error.message}</ErrorNote>
+        ) : !rootList ? (
+          <Spinner />
+        ) : !activeRoot ? (
+          <p className="text-muted">That device has no storage you can write to.</p>
+        ) : (
+          <FolderPicker rootId={activeRoot.id} value={dest} onChange={setDest} prefix={prefix} />
+        )}
+        <p className="text-[12px] text-subtle">
+          The original stays where it is. If something with the same name exists, the copy gets a number added. The copy runs in the background and picks up where it stopped if the connection drops.
+        </p>
+        {error && <ErrorNote><span className="whitespace-pre-wrap">{error}</span></ErrorNote>}
+      </div>
+    </Modal>
   )
 }
 

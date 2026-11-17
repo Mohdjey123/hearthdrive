@@ -17,7 +17,9 @@ set -euo pipefail
 
 ARCH="${1:-aarch64}"
 PROFILE="${2:-debug}"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# On Git Bash, `pwd -W` gives a Windows path (D:/...), which both bash and
+# the Windows NDK tools understand, with or without MSYS path conversion.
+ROOT="$(cd "$(dirname "$0")/.." && { pwd -W 2>/dev/null || pwd; })"
 APP="$ROOT/apps/desktop"
 GRADLE="$APP/src-tauri/gen/android"
 
@@ -99,3 +101,5 @@ fi
 
 echo
 echo "APK: $APK"
+echo "Install on a connected phone with:"
+echo "  \"$ANDROID_HOME/platform-tools/adb\" install -r \"$APK\""

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
 import { Loader2, X } from 'lucide-react'
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ')
@@ -20,7 +20,7 @@ export function Button({
       {...rest}
       disabled={rest.disabled || loading}
       className={cx(
-        'inline-flex items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors select-none',
+        'nx-btn inline-flex items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors select-none',
         'disabled:opacity-50 disabled:pointer-events-none',
         size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
         variant === 'primary' && 'bg-accent text-accent-fg hover:bg-accent-strong',
@@ -43,7 +43,7 @@ export function IconButton({ label, children, className, ...rest }: ButtonHTMLAt
       aria-label={label}
       title={label}
       className={cx(
-        'inline-flex size-7 items-center justify-center rounded-md text-muted hover:text-fg hover:bg-hover transition-colors disabled:opacity-40 disabled:pointer-events-none',
+        'nx-icon-btn inline-flex size-7 items-center justify-center rounded-md text-muted hover:text-fg hover:bg-hover transition-colors disabled:opacity-40 disabled:pointer-events-none',
         className,
       )}
     >
@@ -172,28 +172,66 @@ export function Modal({ title, open, onClose, children, footer, wide }: {
   wide?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  // The latest onClose, without making the effect below depend on it:
+  // callers pass a new function on every render, and re-running the effect
+  // would move the focus back to the first field while someone is typing.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const opener = document.activeElement as HTMLElement | null
+    const focusable = () =>
+      [...(ref.current?.querySelectorAll<HTMLElement>('input,select,textarea,button,[tabindex]') ?? [])].filter(
+        (el) => !el.hasAttribute('disabled') && el.tabIndex !== -1 && el.offsetParent !== null,
+      )
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeRef.current()
+      // Keep Tab inside the dialog.
+      if (e.key === 'Tab') {
+        const items = focusable()
+        if (!items.length) return
+        const first = items[0]
+        const last = items[items.length - 1]
+        const active = document.activeElement
+        if (e.shiftKey && (active === first || !ref.current?.contains(active))) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && (active === last || !ref.current?.contains(active))) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
     window.addEventListener('keydown', onKey)
-    ref.current?.querySelector<HTMLElement>('input,button[data-autofocus]')?.focus()
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+    const initial =
+      ref.current?.querySelector<HTMLElement>('[data-autofocus]') ??
+      ref.current?.querySelector<HTMLElement>('input:not([type=checkbox]):not([type=radio]),textarea') ??
+      ref.current
+    initial?.focus({ preventScroll: true })
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      // Give the focus back to whatever opened the dialog.
+      if (opener && document.contains(opener)) opener.focus({ preventScroll: true })
+    }
+  }, [open])
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" onMouseDown={onClose}>
+    <div className="safe-area fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" onMouseDown={onClose}>
       <div
         ref={ref}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         className={cx(
-          'flex max-h-[90vh] w-full flex-col rounded-lg border border-line bg-panel shadow-2xl shadow-black/40',
+          'flex max-h-[90dvh] w-full flex-col rounded-lg border border-line bg-panel shadow-2xl shadow-black/40 outline-none',
           wide ? 'max-w-4xl' : 'max-w-md',
         )}
       >
         <header className="flex h-11 shrink-0 items-center justify-between border-b border-line pr-2 pl-4">
-          <h3 className="truncate text-[13px] font-semibold">{title}</h3>
+          <h3 id={titleId} className="truncate text-[13px] font-semibold">{title}</h3>
           <IconButton label="Close" onClick={onClose}>
             <X className="size-4" />
           </IconButton>

@@ -30,11 +30,11 @@ export function Toasts() {
     () => toasts,
   )
   return (
-    <div className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-80 flex-col gap-2">
+    <div className="pointer-events-none fixed inset-x-4 bottom-20 z-[60] flex flex-col gap-2 md:inset-x-auto md:right-4 md:bottom-4 md:w-80">
       {list.map((t) => (
         <div
           key={t.id}
-          role="status"
+          role={t.tone === 'error' ? 'alert' : 'status'}
           className={cx(
             'pointer-events-auto flex items-start gap-2 rounded-md border bg-panel px-3 py-2.5 text-[12.5px] shadow-lg shadow-black/30',
             t.tone === 'error' ? 'border-danger/40' : 'border-line',

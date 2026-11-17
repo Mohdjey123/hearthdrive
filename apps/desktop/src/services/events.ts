@@ -16,6 +16,8 @@ export type NexusEvent =
   | { type: 'pairing.requested'; request_id: string; name: string }
   | { type: 'pairing.updated'; id: string; status: string }
   | { type: 'network.changed' }
+  | { type: 'transfer.updated'; id: string; status: string }
+  | { type: 'sync.updated'; id: string }
 
 type Handler = (event: NexusEvent) => void
 type StatusHandler = (connected: boolean) => void

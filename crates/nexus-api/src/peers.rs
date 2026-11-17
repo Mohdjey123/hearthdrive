@@ -19,7 +19,7 @@ use nexus_common::types::{Device, Role};
 use nexus_common::{NexusError, Result};
 use nexus_database::NewPeer;
 use nexus_devices::invite::{hello_message, status_message};
-use nexus_devices::signing::{HDR_ACTING_ROLE, HDR_ACTING_USER, HDR_DEVICE, HDR_NONCE, HDR_SIGNATURE, HDR_TIMESTAMP};
+use nexus_devices::signing::{HDR_ACTING_ROLE, HDR_ACTING_ROOTS, HDR_ACTING_USER, HDR_DEVICE, HDR_NONCE, HDR_SIGNATURE, HDR_TIMESTAMP};
 use nexus_devices::{NodeIdentity, SignedRequest, random_code, verify_message};
 use nexus_network::{P2pNode, PeerKey, RecvStream, SendStream, public_key};
 use serde::de::DeserializeOwned;
@@ -29,7 +29,9 @@ use std::time::{Duration, Instant};
 
 const MONITOR_INTERVAL: Duration = Duration::from_secs(20);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
-const CALL_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(20);
+/// Uploads answer only after the whole body arrived, however long that takes.
+pub(crate) const TRANSFER_TIMEOUT: Duration = Duration::from_secs(12 * 60 * 60);
 const JOIN_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const JOIN_DEADLINE_MS: i64 = 20 * 60 * 1000;
 /// Largest JSON reply read from a peer.
@@ -71,11 +73,20 @@ pub struct PeerClient {
 pub struct Acting<'a> {
     pub user: &'a str,
     pub role: Role,
+    /// The storage locations the person is limited to, if they are.
+    pub roots: Option<&'a [String]>,
 }
 
 impl Acting<'static> {
     /// The node itself (presence, pairing status, removal).
-    pub const NODE: Acting<'static> = Acting { user: "", role: Role::Restricted };
+    pub const NODE: Acting<'static> = Acting { user: "", role: Role::Restricted, roots: None };
+}
+
+impl<'a> Acting<'a> {
+    /// Acting for a person, with their limits.
+    pub fn of(user: &'a AuthUser) -> Self {
+        Acting { user: &user.username, role: user.role, roots: user.allowed_roots.as_deref() }
+    }
 }
 
 impl PeerClient {
@@ -122,6 +133,7 @@ impl PeerClient {
                 target_device: target.device_id.clone(),
                 acting_user: acting.user.to_string(),
                 acting_role: acting.role.as_str().to_string(),
+                acting_roots: acting.roots.map(|r| r.join(",")),
             };
             let value = |s: &str| HeaderValue::from_str(s).map_err(|_| NexusError::invalid("invalid header value"));
             headers.insert(HDR_DEVICE, value(&self.self_id)?);
@@ -130,6 +142,9 @@ impl PeerClient {
             headers.insert(HDR_SIGNATURE, value(&req.sign(&self.identity))?);
             headers.insert(HDR_ACTING_USER, value(acting.user)?);
             headers.insert(HDR_ACTING_ROLE, value(acting.role.as_str())?);
+            if let Some(roots) = &req.acting_roots {
+                headers.insert(HDR_ACTING_ROOTS, value(roots)?);
+            }
             nonce = req.nonce;
         }
         headers.insert(header::HOST, HeaderValue::from_static(P2P_HOST));
@@ -180,6 +195,21 @@ impl PeerClient {
         acting: Option<Acting<'_>>,
         timeout: Duration,
     ) -> Result<(T, String)> {
+        self.call_limited(target, method, path, json, acting, timeout, MAX_JSON).await
+    }
+
+    /// [`Self::call`] for replies that may be large (folder trees).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_limited<T: DeserializeOwned>(
+        &self,
+        target: &Target,
+        method: Method,
+        path: &str,
+        json: Option<&impl Serialize>,
+        acting: Option<Acting<'_>>,
+        timeout: Duration,
+        limit: usize,
+    ) -> Result<(T, String)> {
         let mut headers = HeaderMap::new();
         let body = match json {
             Some(value) => {
@@ -190,18 +220,25 @@ impl PeerClient {
         };
         let (res, nonce) = self.send(target, method, path, headers, body, acting, timeout).await?;
         let status = res.status();
-        let bytes = read_body(res).await.map_err(|e| NexusError::PeerUnreachable(format!("{}: {e}", target.name)))?;
+        let bytes = read_body_limited(res, limit)
+            .await
+            .map_err(|e| NexusError::PeerUnreachable(format!("{}: {e}", target.name)))?;
         if !status.is_success() {
             return Err(peer_error(&target.name, status, &bytes));
         }
+        let bytes = if bytes.is_empty() { b"null".to_vec() } else { bytes };
         let value = serde_json::from_slice(&bytes)
             .map_err(|e| NexusError::PeerUnreachable(format!("{} sent an unexpected reply ({e})", target.name)))?;
         Ok((value, nonce))
     }
 }
 
-async fn read_body(res: axum::http::Response<Incoming>) -> std::result::Result<Vec<u8>, String> {
-    Limited::new(res.into_body(), MAX_JSON)
+pub(crate) async fn read_body(res: axum::http::Response<Incoming>) -> std::result::Result<Vec<u8>, String> {
+    read_body_limited(res, MAX_JSON).await
+}
+
+async fn read_body_limited(res: axum::http::Response<Incoming>, limit: usize) -> std::result::Result<Vec<u8>, String> {
+    Limited::new(res.into_body(), limit)
         .collect()
         .await
         .map(|b| b.to_bytes().to_vec())
@@ -209,7 +246,7 @@ async fn read_body(res: axum::http::Response<Incoming>) -> std::result::Result<V
 }
 
 /// Turns a peer's JSON error reply into the matching error.
-fn peer_error(name: &str, status: axum::http::StatusCode, body: &[u8]) -> NexusError {
+pub(crate) fn peer_error(name: &str, status: axum::http::StatusCode, body: &[u8]) -> NexusError {
     #[derive(Deserialize)]
     struct Body {
         error: Inner,
@@ -225,6 +262,11 @@ fn peer_error(name: &str, status: axum::http::StatusCode, body: &[u8]) -> NexusE
             "rate_limited" => NexusError::RateLimited,
             "conflict" => NexusError::Conflict(format!("{name}: {}", b.error.message)),
             "unauthorized" | "permission_denied" => NexusError::PermissionDenied(format!("{name}: {}", b.error.message)),
+            "insufficient_storage" => NexusError::InsufficientStorage(format!("{name}: {}", b.error.message)),
+            // Worth trying again: the device is busy, offline or had a hiccup.
+            "peer_unreachable" | "unavailable" | "io_error" | "internal_error" | "database_error" => {
+                NexusError::PeerUnreachable(format!("{name}: {}", b.error.message))
+            }
             _ => NexusError::InvalidInput(format!("{name}: {}", b.error.message)),
         },
         Err(_) => NexusError::PeerUnreachable(format!("{name} answered with HTTP {status}")),
@@ -379,6 +421,7 @@ pub async fn proxy(
             role: Role::Viewer,
             local: false,
             device_id: None,
+            allowed_roots: None,
         },
         None => return Err(NexusError::Unauthorized.into()),
     };
@@ -401,10 +444,14 @@ pub async fn proxy(
             headers.insert(name.clone(), value.clone());
         }
     }
-    let body = if matches!(method, Method::GET | Method::HEAD | Method::DELETE) { Body::empty() } else { req.into_body() };
-    let acting = Acting { user: &caller.username, role: caller.role };
+    let has_body = !matches!(method, Method::GET | Method::HEAD | Method::DELETE);
+    let body = if has_body { req.into_body() } else { Body::empty() };
+    let acting = Acting::of(&caller);
+    // A request with a body (an upload) is answered only once the peer has
+    // received all of it, so it gets a transfer-sized time limit.
+    let timeout = if has_body { TRANSFER_TIMEOUT } else { CALL_TIMEOUT };
 
-    let res = match s.peers.send(&target, method, &path_and_query, headers, body, Some(acting), CALL_TIMEOUT).await {
+    let res = match s.peers.send(&target, method, &path_and_query, headers, body, Some(acting), timeout).await {
         Ok((res, _)) => res,
         Err(e) => {
             s.net.peer_wake.notify_one();

@@ -29,6 +29,14 @@ const ACTIONS: Record<string, string> = {
   'device.role.changed': 'Changed device access',
   'network.remote.enabled': 'Remote access on',
   'network.remote.disabled': 'Remote access off',
+  'file.copied': 'Copied between devices',
+  'device.access.changed': 'Changed device storage',
+  'user.created': 'Added person',
+  'user.removed': 'Removed person',
+  'user.role.changed': 'Changed role',
+  'user.password.changed': 'Changed password',
+  'system.autostart.enabled': 'Start with Windows on',
+  'system.autostart.disabled': 'Start with Windows off',
 }
 
 export function rootTone(r: StorageRoot): 'online' | 'offline' | 'busy' | 'error' {
@@ -87,16 +95,16 @@ export function Overview() {
         }
       />
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Indexed data" value={formatBytes(indexed)} sub={`${formatCount(files)} files`} />
         <Stat label="Storage locations" value={`${online.length} / ${list.length}`} sub="online" />
         <Stat label="Drive capacity" value={formatBytes(capacity)} sub={`${formatBytes(free)} free`} />
         <Stat label="Active transfers" value={String(activeTransfers.length)} sub={activeTransfers.length ? 'uploading' : 'idle'} />
       </div>
 
-      <div className="mt-4 grid grid-cols-5 gap-4">
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-5">
         <Panel
-          className="col-span-3"
+          className="lg:col-span-3"
           title="Storage"
           padded={false}
           actions={<Button size="sm" variant="ghost" onClick={() => navigate('storage')}>Manage</Button>}
@@ -126,7 +134,7 @@ export function Overview() {
                       </div>
                       <div className="mt-2 flex items-center gap-3 pl-4">
                         <ProgressBar value={r.disk ? used / r.disk.total_bytes : 0} tone={r.online ? 'accent' : 'muted'} />
-                        <span className="w-48 shrink-0 text-right text-[11.5px] text-subtle">{rootStatusText(r)}</span>
+                        <span className="w-28 shrink-0 text-right text-[11.5px] text-subtle sm:w-48">{rootStatusText(r)}</span>
                       </div>
                     </button>
                   </li>
@@ -136,7 +144,7 @@ export function Overview() {
           )}
         </Panel>
 
-        <Panel className="col-span-2" title="Recent files" padded={false}>
+        <Panel className="lg:col-span-2" title="Recent files" padded={false}>
           {recent.data?.length ? (
             <ul className="divide-y divide-line">
               {recent.data.map((f) => (
@@ -163,13 +171,13 @@ export function Overview() {
         </Panel>
       </div>
 
-      <div className="mt-4 grid grid-cols-5 gap-4">
-        <Panel className="col-span-3" title="Activity" padded={false}>
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-5">
+        <Panel className="lg:col-span-3" title="Activity" padded={false}>
           {activity.data?.length ? (
             <ul className="divide-y divide-line">
               {activity.data.map((a) => (
                 <li key={a.id} className="flex items-center gap-3 px-4 py-2">
-                  <span className="w-36 shrink-0 font-medium">{ACTIONS[a.action] ?? a.action}</span>
+                  <span className="w-28 shrink-0 font-medium sm:w-44">{ACTIONS[a.action] ?? a.action}</span>
                   <span className="min-w-0 flex-1 truncate text-muted">{a.resource}</span>
                   <span className="shrink-0 text-[11.5px] text-subtle">{formatRelative(a.timestamp)}</span>
                 </li>
@@ -180,7 +188,7 @@ export function Overview() {
           )}
         </Panel>
         <Panel
-          className="col-span-2"
+          className="lg:col-span-2"
           title="Transfers"
           actions={<Button size="sm" variant="ghost" onClick={() => navigate('transfers')}>View all</Button>}
         >

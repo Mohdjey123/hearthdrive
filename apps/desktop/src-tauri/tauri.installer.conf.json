@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "targets": ["nsis"],
+    "resources": {
+      "../../../target/release/nexus-service.exe": "nexus-service.exe",
+      "../dist": "ui"
+    }
+  }
+}

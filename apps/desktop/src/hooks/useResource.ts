@@ -23,9 +23,13 @@ export function useResource<T>(
   const seq = useRef(0)
   const loadRef = useRef(load)
   loadRef.current = load
+  const inFlight = useRef(false)
+  const again = useRef(false)
 
-  const reload = useCallback(() => {
+  const run = useCallback(() => {
     const id = ++seq.current
+    inFlight.current = true
+    again.current = false
     setLoading(true)
     loadRef
       .current()
@@ -38,12 +42,25 @@ export function useResource<T>(
         if (id === seq.current) setError(e)
       })
       .finally(() => {
-        if (id === seq.current) setLoading(false)
+        if (id !== seq.current) return
+        inFlight.current = false
+        setLoading(false)
+        if (again.current) run()
       })
   }, [])
 
+  // A refresh never cancels a request that is still running: the running
+  // one finishes and shows its result, then one more request follows. With
+  // a steady stream of events and a slow request, cancelling would mean no
+  // result ever arrives.
+  const reload = useCallback(() => {
+    if (inFlight.current) again.current = true
+    else run()
+  }, [run])
+
+  // New inputs (another folder, another device) do replace a running request.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(reload, deps)
+  useEffect(run, deps)
 
   const filterRef = useRef(refreshOn)
   filterRef.current = refreshOn
@@ -52,8 +69,14 @@ export function useResource<T>(
     const unsubscribe = subscribe((e) => {
       const f = filterRef.current
       if (e.type === 'resync' || (f && f(e))) {
-        clearTimeout(timer)
-        timer = setTimeout(reload, 300)
+        // Throttle, not debounce: the first event schedules a refresh and
+        // later events do not push it back, so busy storage still refreshes.
+        if (timer === undefined) {
+          timer = setTimeout(() => {
+            timer = undefined
+            reload()
+          }, 400)
+        }
       }
     })
     return () => {
