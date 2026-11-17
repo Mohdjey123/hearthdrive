@@ -1,0 +1,29 @@
+[package]
+name = "nexus-core"
+description = "NEXUS node lifecycle and the nexus-service background process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nexus-service"
+path = "src/main.rs"
+
+[dependencies]
+nexus-api = { workspace = true }
+nexus-common = { workspace = true }
+nexus-database = { workspace = true }
+nexus-devices = { workspace = true }
+nexus-indexer = { workspace = true }
+nexus-network = { workspace = true }
+nexus-security = { workspace = true }
+nexus-storage = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+blake3 = { workspace = true }
+serde_json = { workspace = true }
+sysinfo = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }

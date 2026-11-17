@@ -1,0 +1,19 @@
+[package]
+name = "nexus-storage"
+description = "Storage roots, safe path resolution and file operations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexus-common = { workspace = true }
+nexus-database = { workspace = true }
+dunce = { workspace = true }
+mime_guess = { workspace = true }
+serde = { workspace = true }
+sysinfo = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

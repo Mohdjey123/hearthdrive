@@ -1,0 +1,13 @@
+[package]
+name = "nexus-security"
+description = "Password hashing, tokens, signed tickets and role checks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexus-common = { workspace = true }
+argon2 = { workspace = true }
+blake3 = { workspace = true }
+# Enables the OS random source (`OsRng`) re-exported through argon2.
+rand_core = { workspace = true }

@@ -1,0 +1,78 @@
+import { useEffect, useState } from 'react'
+import { ArrowUpDown, Folder, HardDrive, LayoutGrid, MonitorSmartphone, Settings } from 'lucide-react'
+import type { Page } from '../hooks/useRoute'
+import { navigate } from '../hooks/useRoute'
+import { subscribeStatus } from '../services/events'
+import { useTransfers } from '../stores/transfers'
+import { useSession } from '../stores/session'
+import { cx, StatusDot } from './ui'
+
+const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
+  { page: 'overview', label: 'Overview', icon: LayoutGrid },
+  { page: 'files', label: 'Files', icon: Folder },
+  { page: 'storage', label: 'Storage', icon: HardDrive },
+  { page: 'devices', label: 'Devices', icon: MonitorSmartphone },
+  { page: 'transfers', label: 'Transfers', icon: ArrowUpDown },
+  { page: 'settings', label: 'Settings', icon: Settings },
+]
+
+export function Logo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 512 512" className={className} aria-hidden>
+      <g stroke="var(--nx-accent)" strokeWidth="26" strokeLinecap="round">
+        <line x1="150" y1="170" x2="362" y2="170" />
+        <line x1="150" y1="170" x2="256" y2="356" />
+        <line x1="362" y1="170" x2="256" y2="356" />
+      </g>
+      <circle cx="150" cy="170" r="62" fill="var(--nx-accent)" />
+      <circle cx="362" cy="170" r="62" fill="var(--nx-accent)" />
+      <circle cx="256" cy="356" r="62" fill="var(--nx-fg)" />
+    </svg>
+  )
+}
+
+export function Sidebar({ current }: { current: Page }) {
+  const { phase } = useSession()
+  const transfers = useTransfers()
+  const active = transfers.filter((t) => t.status === 'uploading' || t.status === 'queued').length
+  const [live, setLive] = useState(false)
+  useEffect(() => subscribeStatus(setLive), [])
+  const nodeName = phase.kind === 'ready' ? phase.nodeName : ''
+  const username = phase.kind === 'ready' ? phase.me.username : ''
+
+  return (
+    <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-panel">
+      <div className="flex h-14 items-center gap-2.5 px-4">
+        <Logo className="size-6" />
+        <span className="text-[14px] font-semibold tracking-tight">NEXUS Cloud</span>
+      </div>
+      <nav className="flex-1 space-y-0.5 px-2 py-2">
+        {NAV.map(({ page, label, icon: Icon }) => (
+          <button
+            key={page}
+            onClick={() => navigate(page)}
+            className={cx(
+              'flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors',
+              current === page ? 'bg-accent-soft text-fg font-medium' : 'text-muted hover:bg-hover hover:text-fg',
+            )}
+          >
+            <Icon className={cx('size-4', current === page && 'text-accent')} />
+            <span className="flex-1 text-left">{label}</span>
+            {page === 'transfers' && active > 0 && (
+              <span className="rounded bg-accent px-1.5 text-[11px] font-semibold text-accent-fg tabular">{active}</span>
+            )}
+          </button>
+        ))}
+      </nav>
+      <div className="border-t border-line px-4 py-3">
+        <div className="flex items-center gap-2">
+          <StatusDot tone={live ? 'online' : 'offline'} />
+          <span className="truncate text-[12.5px] font-medium">{nodeName}</span>
+        </div>
+        <div className="mt-0.5 truncate pl-4 text-[11.5px] text-subtle">
+          {live ? 'Service connected' : 'Connecting…'} · {username}
+        </div>
+      </div>
+    </aside>
+  )
+}

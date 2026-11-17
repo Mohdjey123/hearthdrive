@@ -1,0 +1,19 @@
+[package]
+name = "nexus-indexer"
+description = "Filesystem indexing, change watching and background hashing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexus-common = { workspace = true }
+nexus-database = { workspace = true }
+nexus-storage = { workspace = true }
+blake3 = { workspace = true }
+notify = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

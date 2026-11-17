@@ -1,0 +1,24 @@
+pub mod devices;
+pub mod events;
+pub mod files;
+pub mod network;
+pub mod storage;
+pub mod system;
+
+use crate::auth::AuthUser;
+use crate::state::AppState;
+
+/// Best-effort audit log entry; never fails the request.
+pub(crate) async fn audit(state: &AppState, user: &AuthUser, action: &str, resource: Option<&str>) {
+    if let Err(e) = state
+        .db
+        .log_activity(action, resource, user.user_id.as_deref(), Some(user.device_id.as_deref().unwrap_or(&state.node.device_id)))
+        .await
+    {
+        tracing::warn!(error = %e, "could not write activity log");
+    }
+}
+
+pub(crate) fn clamp_limit(limit: Option<i64>, default: i64, max: i64) -> i64 {
+    limit.unwrap_or(default).clamp(1, max)
+}

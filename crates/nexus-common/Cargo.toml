@@ -1,0 +1,14 @@
+[package]
+name = "nexus-common"
+description = "Shared types, errors and utilities for NEXUS Cloud"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }

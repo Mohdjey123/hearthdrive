@@ -1,0 +1,16 @@
+{
+  "name": "nexus-cloud",
+  "private": true,
+  "license": "FSL-1.1-ALv2",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "service": "cargo run -p nexus-core --bin nexus-service",
+    "build:ui": "npm run build -w @nexus/desktop",
+    "dev:ui": "npm run dev -w @nexus/desktop",
+    "desktop": "cargo build -p nexus-core && npm run tauri -w @nexus/desktop -- dev",
+    "desktop:build": "cargo build -p nexus-core --release && npm run tauri -w @nexus/desktop -- build",
+    "test": "cargo test && npm run typecheck -w @nexus/desktop"
+  }
+}
