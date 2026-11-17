@@ -1,10 +1,48 @@
+<div align="center">
+
 # NEXUS Cloud
 
 **Your devices. Your storage. One cloud.**
 
-NEXUS Cloud turns your own computers into a private, self-hosted personal cloud. Free and open source, with no subscription and no third-party storage.
+A private, self-hosted personal cloud made of your own Windows computers and Android phones.<br>
+Free and open source. No subscription, no third-party storage, nothing exposed to the public internet.
 
-> **Status: Phases 0–3.** Each Windows computer is a complete cloud node (indexing, browsing, search, upload, download, preview, rename, move, trash, restore). Computers and Android phones pair with a link or QR code, then browse, preview, download and upload each other's files from any network, with built-in encrypted peer-to-peer connections and nothing else to install. Sync and sharing come next (see [Roadmap](#roadmap)).
+![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)
+![Platforms: Windows | Android](https://img.shields.io/badge/platforms-Windows%20%7C%20Android-informational)
+![Rust](https://img.shields.io/badge/backend-Rust%20%2B%20Axum-orange)
+![Tauri 2](https://img.shields.io/badge/app-Tauri%202%20%2B%20React-24c8db)
+
+</div>
+
+---
+
+Every computer you install NEXUS on becomes a storage node: it indexes the folders and drives you choose (in place, nothing is moved or uploaded anywhere) and serves them to your other devices. Devices pair with a link or a QR code and talk over end-to-end encrypted peer-to-peer connections, from any network, with nothing else to install.
+
+> **Status:** Phases 0–5 are done and Phase 6 is mostly done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, and the Android app with photo backup. Share links, auto-update and a store-signed Android build are next (see [Roadmap](#roadmap)).
+
+## Contents
+
+- [Features](#features)
+- [What works today](#what-works-today)
+- [Repository layout](#repository-layout)
+- [Development](#development)
+- [Connecting your computers](#connecting-your-computers)
+- [Working across devices](#working-across-devices)
+- [Sync and versions](#sync-and-versions)
+- [Phone backup and the share menu](#phone-backup-and-the-share-menu)
+- [Windows installer](#windows-installer)
+- [Android app](#android-app)
+- [Roadmap](#roadmap)
+
+## Features
+
+- **Your files stay where they are.** Add existing folders or whole drives; NEXUS indexes them in place and never moves or copies them on its own.
+- **One view of everything.** Browse, search, preview, stream, download and upload files on any of your devices from any other.
+- **Built-in, encrypted networking.** Devices connect directly whenever possible and through an encrypted relay otherwise. No VPN, port forwarding or account with anyone.
+- **Copy and sync between devices.** Background copies that resume after a dropped connection; one-way or two-way folder sync with conflict copies, a safety stop and version history.
+- **Phone app.** The Android app runs the same node: browse your computers, back up photos and videos, and send files to a computer from any app's **Share** menu.
+- **You decide who sees what.** Accounts with roles, and per-device and per-person limits to chosen storage locations, enforced on every device.
+- **Built to be safe.** Loopback-only API, signed requests between devices, Argon2id passwords, path validation against traversal and link escapes, and an audit log.
 
 ## What works today
 
@@ -14,11 +52,14 @@ NEXUS Cloud turns your own computers into a private, self-hosted personal cloud.
 | Setup | First-run wizard: name the computer, create a local owner account (Argon2id), add folders or drives |
 | Storage | Drive detection; add existing folders or whole drives (indexed in place, never moved); read-only roots; overlap and system-folder protection; removing a root never deletes files |
 | Indexing | Fast metadata-only scan in 2,000-row batches; incremental rescans keep file ids stable; live filesystem watching; BLAKE3 hashes computed slowly in the background; drives that go offline keep their index and show as offline |
-| Files | Unified browser (list and grid views), sort, multi-select, case-insensitive search across all storage, image/video/audio/text preview, HTTP range streaming, downloads, uploads with progress and speed, new folder, rename, move, trash, restore, permanent delete |
-| Devices | Ed25519 identity per computer (private key encrypted with Windows DPAPI); pairing by link or QR code with a single-use 128-bit code, proof of key possession and owner approval after comparing fingerprints; per-device access role; online/offline and latency monitoring; immediate removal on both sides |
+| Files | Unified browser (list and grid views), sort, multi-select, case-insensitive search across all storage, image/video/audio/text preview, HTTP range streaming, downloads, resumable uploads with progress and speed, new folder, rename, move, trash, restore, permanent delete, version history |
+| Devices | Ed25519 identity per computer (private key encrypted with Windows DPAPI); pairing by link or QR code with a single-use 128-bit code, proof of key possession and owner approval after comparing fingerprints; per-device access role and storage limits; online/offline and latency monitoring; immediate removal on both sides |
 | Networking | Built-in peer-to-peer networking ([iroh](https://iroh.computer)): QUIC connections dialed by device key, direct when possible (local network, NAT hole punching, UPnP), otherwise through an encrypted relay; public relays by default or your own; the HTTP API itself stays on loopback |
-| Remote browsing | Browse, search, preview, stream, download, upload, rename, move and trash files on a paired computer, relayed by your own node with signed requests; media uses the remote node's own short-lived tickets |
-| Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); uploads never overwrite files; DNS-rebinding Host check; user content served with `CSP: sandbox`; audit log |
+| Across devices | Browse, search, preview, stream, download, upload, rename, move and trash files on a paired device, relayed by your own node with signed requests; background copies of files and folders that resume after a dropped connection |
+| Sync | One-way and two-way folder sync between devices; conflict copies; removals go to the trash; a safety stop for mass removals; the last ten versions of every replaced file |
+| People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices |
+| Android | The same node inside the app; QR pairing; photo and video backup to a computer; NEXUS in the system share menu |
+| Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; user content served with `CSP: sandbox`; audit log |
 
 ## Repository layout
 
@@ -35,6 +76,7 @@ crates/
   nexus-api/           Axum REST + WebSocket API under /api/v1
   nexus-core/          Node lifecycle and the `nexus-service` binary
 migrations/            SQL migrations (embedded at build time)
+scripts/               Android build script
 docs/                  Architecture and development notes
 ```
 
@@ -153,6 +195,10 @@ Following the product spec's phases. Each phase ships a working application.
 - [x] **Phase 5 — Synchronization:** one-way and two-way folder sync, conflict copies, version history (no real-time change journal yet: devices are checked every five minutes)
 - [ ] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access are done; share links are not
 - [ ] **Phase 7 — Release:** Windows installer and start-with-Windows are done; auto-update and a store-signed Android release are not
+
+## Documentation
+
+- [Architecture overview](docs/architecture/overview.md): processes, data model, indexing, path safety, networking, sync, access and the Android app.
 
 ## License
 
