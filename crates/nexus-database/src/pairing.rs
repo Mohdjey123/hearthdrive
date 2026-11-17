@@ -1,4 +1,5 @@
 use crate::Database;
+use sqlx::AssertSqlSafe;
 use nexus_common::types::{PairingRequest, PairingSession};
 use nexus_common::{NexusError, Result, new_id, time::now_ms};
 
@@ -93,7 +94,7 @@ impl Database {
 
     pub async fn get_pairing_request(&self, id: &str) -> Result<PairingRequest> {
         self.expire_pairing_requests().await?;
-        sqlx::query_as::<_, PairingRequest>(&format!("SELECT {REQUEST_COLUMNS} FROM pairing_requests WHERE id = ?"))
+        sqlx::query_as::<_, PairingRequest>(AssertSqlSafe(format!("SELECT {REQUEST_COLUMNS} FROM pairing_requests WHERE id = ?")))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -102,9 +103,9 @@ impl Database {
 
     pub async fn pending_pairing_requests(&self) -> Result<Vec<PairingRequest>> {
         self.expire_pairing_requests().await?;
-        Ok(sqlx::query_as::<_, PairingRequest>(&format!(
+        Ok(sqlx::query_as::<_, PairingRequest>(AssertSqlSafe(format!(
             "SELECT {REQUEST_COLUMNS} FROM pairing_requests WHERE status = 'pending' ORDER BY created_at"
-        ))
+        )))
         .fetch_all(&self.pool)
         .await?)
     }

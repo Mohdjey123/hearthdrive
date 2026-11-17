@@ -1,4 +1,5 @@
 use crate::{Database, like_escape};
+use sqlx::AssertSqlSafe;
 use nexus_common::types::{FileEntry, NewEntry};
 use nexus_common::{NexusError, Result};
 use serde::Serialize;
@@ -161,7 +162,7 @@ impl Database {
              ORDER BY is_dir DESC, {} {direction}, filename COLLATE NOCASE ASC LIMIT ? OFFSET ?",
             sort.sql()
         );
-        let items = sqlx::query_as::<_, FileEntry>(&sql)
+        let items = sqlx::query_as::<_, FileEntry>(AssertSqlSafe(sql))
             .bind(root_id)
             .bind(parent)
             .bind(limit)
@@ -177,7 +178,7 @@ impl Database {
     }
 
     pub async fn get_file(&self, id: &str) -> Result<FileEntry> {
-        sqlx::query_as::<_, FileEntry>(&format!("SELECT {FILE_COLUMNS} FROM files WHERE id = ?"))
+        sqlx::query_as::<_, FileEntry>(AssertSqlSafe(format!("SELECT {FILE_COLUMNS} FROM files WHERE id = ?")))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -185,9 +186,9 @@ impl Database {
     }
 
     pub async fn get_file_by_path(&self, root_id: &str, rel: &str) -> Result<Option<FileEntry>> {
-        Ok(sqlx::query_as::<_, FileEntry>(&format!(
+        Ok(sqlx::query_as::<_, FileEntry>(AssertSqlSafe(format!(
             "SELECT {FILE_COLUMNS} FROM files WHERE root_id = ? AND relative_path = ?"
-        ))
+        )))
         .bind(root_id)
         .bind(rel)
         .fetch_optional(&self.pool)
@@ -202,7 +203,7 @@ impl Database {
             "SELECT {FILE_COLUMNS} FROM files WHERE filename LIKE ? ESCAPE '\\' {root_clause} \
              ORDER BY is_dir DESC, filename COLLATE NOCASE LIMIT ? OFFSET ?"
         );
-        let mut q = sqlx::query_as::<_, FileEntry>(&sql).bind(pattern);
+        let mut q = sqlx::query_as::<_, FileEntry>(AssertSqlSafe(sql)).bind(pattern);
         if let Some(root) = root_id {
             q = q.bind(root);
         }
@@ -210,9 +211,9 @@ impl Database {
     }
 
     pub async fn recent_files(&self, limit: i64) -> Result<Vec<FileEntry>> {
-        Ok(sqlx::query_as::<_, FileEntry>(&format!(
+        Ok(sqlx::query_as::<_, FileEntry>(AssertSqlSafe(format!(
             "SELECT {FILE_COLUMNS} FROM files WHERE is_dir = 0 ORDER BY modified_at DESC LIMIT ?"
-        ))
+        )))
         .bind(limit)
         .fetch_all(&self.pool)
         .await?)

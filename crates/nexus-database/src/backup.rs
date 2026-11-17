@@ -1,5 +1,6 @@
 //! Phone backup settings and what has been backed up.
 
+use sqlx::AssertSqlSafe;
 use crate::Database;
 use nexus_common::{NexusError, Result, new_id, time::now_ms};
 use serde::Serialize;
@@ -47,7 +48,7 @@ const COLUMNS: &str = "id, device_id, root_id, path, label, sources, enabled, cr
 impl Database {
     /// The phone's backup, if one is set up.
     pub async fn get_backup(&self) -> Result<Option<Backup>> {
-        Ok(sqlx::query_as::<_, Backup>(&format!("SELECT {COLUMNS} FROM backups ORDER BY created_at LIMIT 1"))
+        Ok(sqlx::query_as::<_, Backup>(AssertSqlSafe(format!("SELECT {COLUMNS} FROM backups ORDER BY created_at LIMIT 1")))
             .fetch_optional(&self.pool)
             .await?)
     }
@@ -96,7 +97,7 @@ impl Database {
             }
         };
         tx.commit().await?;
-        sqlx::query_as::<_, Backup>(&format!("SELECT {COLUMNS} FROM backups WHERE id = ?"))
+        sqlx::query_as::<_, Backup>(AssertSqlSafe(format!("SELECT {COLUMNS} FROM backups WHERE id = ?")))
             .bind(&id)
             .fetch_one(&self.pool)
             .await

@@ -1,8 +1,10 @@
 use crate::auth::{AuthUser, authenticate};
 use crate::state::SharedState;
 use axum::extract::State;
+use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::response::Response;
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
@@ -16,8 +18,33 @@ struct AuthMessage {
 
 /// Live events. Browsers cannot set headers on WebSocket connections, so the
 /// client authenticates with its first message: `{"type":"auth","token":"…"}`.
-pub async fn events(State(s): State<SharedState>, ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(move |socket| handle(s, socket))
+///
+/// WebSockets are not covered by CORS, so the origin is checked here: only
+/// the app, the web interface this node serves, and programs that send no
+/// origin may connect. Other web pages are turned away before any message.
+pub async fn events(
+    State(s): State<SharedState>,
+    headers: HeaderMap,
+    ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
+) -> Response {
+    if !origin_allowed(&headers) {
+        return (StatusCode::FORBIDDEN, "Origin not allowed").into_response();
+    }
+    match ws {
+        Ok(ws) => ws.on_upgrade(move |socket| handle(s, socket)),
+        Err(rejection) => rejection.into_response(),
+    }
+}
+
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else { return true };
+    let Ok(origin) = origin.to_str() else { return false };
+    if crate::allowed_origins().any(|o| o == origin) {
+        return true;
+    }
+    // The web interface served by this node: same scheme, host and port.
+    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default();
+    !host.is_empty() && origin == format!("http://{host}")
 }
 
 async fn handle(s: SharedState, mut socket: WebSocket) {

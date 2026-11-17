@@ -1,4 +1,5 @@
 use crate::Database;
+use sqlx::AssertSqlSafe;
 use nexus_common::types::DeletedFile;
 use nexus_common::{NexusError, Result};
 
@@ -26,15 +27,15 @@ impl Database {
     }
 
     pub async fn list_deleted(&self) -> Result<Vec<DeletedFile>> {
-        Ok(sqlx::query_as::<_, DeletedFile>(&format!(
+        Ok(sqlx::query_as::<_, DeletedFile>(AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM deleted_files ORDER BY deleted_at DESC"
-        ))
+        )))
         .fetch_all(&self.pool)
         .await?)
     }
 
     pub async fn get_deleted(&self, id: &str) -> Result<DeletedFile> {
-        sqlx::query_as::<_, DeletedFile>(&format!("SELECT {COLUMNS} FROM deleted_files WHERE id = ?"))
+        sqlx::query_as::<_, DeletedFile>(AssertSqlSafe(format!("SELECT {COLUMNS} FROM deleted_files WHERE id = ?")))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?

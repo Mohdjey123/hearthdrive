@@ -59,7 +59,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Sync | One-way and two-way folder sync between devices; conflict copies; removals go to the trash; a safety stop for mass removals; the last ten versions of every replaced file |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices |
 | Android | The same node inside the app; QR pairing; photo and video backup to a computer; NEXUS in the system share menu |
-| Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; user content served with `CSP: sandbox`; audit log |
+| Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; a strict Content Security Policy on the web interface; user content and everything shown from a paired device served with `CSP: sandbox`; origin check on the live event stream; per-person limits enforced on downloads too; phones accept first-run setup only from the app itself and keep their data out of Android backups; audit log |
 
 ## Repository layout
 

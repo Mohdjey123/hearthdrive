@@ -27,6 +27,11 @@ struct Harness {
 }
 
 async fn harness(peer: [u8; 4]) -> Harness {
+    harness_with(peer, false).await
+}
+
+/// `setup_needs_token`: as on a phone, where any app can reach the port.
+async fn harness_with(peer: [u8; 4], setup_needs_token: bool) -> Harness {
     let data = tempfile::tempdir().unwrap();
     let storage = tempfile::tempdir().unwrap();
     let db = Database::open_in_memory().await.unwrap();
@@ -45,7 +50,7 @@ async fn harness(peer: [u8; 4]) -> Harness {
         data.path().to_path_buf(),
         identity,
         NetRuntime::new(p2p, true),
-    ));
+    ).with_setup_token_required(setup_needs_token));
     let app = nexus_api::router(state, None).layer(MockConnectInfo(SocketAddr::from((peer, 50000))));
     Harness { app, _data: data, storage }
 }
@@ -232,6 +237,53 @@ async fn remote_peers_cannot_run_setup_or_add_roots() {
     let (s, _) = call(&h.app, Method::POST, "/api/v1/storage/roots", Some(LOCAL_TOKEN),
         Some(json!({"path": h.storage.path().to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn on_phones_only_the_app_can_run_setup() {
+    let h = harness_with([127, 0, 0, 1], true).await;
+    let body = json!({"node_name": "Phone", "username": "owner", "password": "correct horse"});
+    // Another app on the phone reaches the port but has no token.
+    let (s, _) = call(&h.app, Method::POST, "/api/v1/setup", None, Some(body.clone())).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(&h.app, Method::POST, "/api/v1/setup", Some("guessed"), Some(body.clone())).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, v) = call(&h.app, Method::POST, "/api/v1/setup", Some(LOCAL_TOKEN), Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}
+
+#[tokio::test]
+async fn web_pages_cannot_open_the_event_stream() {
+    let h = harness([127, 0, 0, 1]).await;
+    let upgrade = |origin: Option<&str>| {
+        let mut req = Request::get("/api/v1/events")
+            .header(header::HOST, "127.0.0.1:47100")
+            .header(header::CONNECTION, "upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header(header::SEC_WEBSOCKET_VERSION, "13")
+            .header(header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==");
+        if let Some(o) = origin {
+            req = req.header(header::ORIGIN, o);
+        }
+        req.body(Body::empty()).unwrap()
+    };
+    let res = h.app.clone().oneshot(upgrade(Some("https://evil.example"))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let res = h.app.clone().oneshot(upgrade(Some("http://localhost:8080"))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    // The app and the interface this node serves get past the origin check.
+    for origin in ["http://tauri.localhost", "http://127.0.0.1:47100"] {
+        let res = h.app.clone().oneshot(upgrade(Some(origin))).await.unwrap();
+        assert_ne!(res.status(), StatusCode::FORBIDDEN, "{origin}");
+    }
+}
+
+#[tokio::test]
+async fn the_web_interface_has_a_content_security_policy() {
+    let h = harness([127, 0, 0, 1]).await;
+    let res = h.app.clone().oneshot(Request::get("/api/v1/health").header(header::HOST, "127.0.0.1:47100").body(Body::empty()).unwrap()).await.unwrap();
+    let csp = res.headers()[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.contains("default-src 'self'") && csp.contains("frame-ancestors 'none'"), "{csp}");
 }
 
 #[tokio::test]

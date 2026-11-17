@@ -1,4 +1,5 @@
 use crate::Database;
+use sqlx::AssertSqlSafe;
 use nexus_common::types::{ScanState, StorageRoot};
 use nexus_common::{NexusError, Result};
 
@@ -24,15 +25,15 @@ impl Database {
     }
 
     pub async fn list_roots(&self) -> Result<Vec<StorageRoot>> {
-        Ok(sqlx::query_as::<_, StorageRoot>(&format!(
+        Ok(sqlx::query_as::<_, StorageRoot>(AssertSqlSafe(format!(
             "SELECT {ROOT_COLUMNS} FROM storage_roots ORDER BY created_at"
-        ))
+        )))
         .fetch_all(&self.pool)
         .await?)
     }
 
     pub async fn get_root(&self, id: &str) -> Result<StorageRoot> {
-        sqlx::query_as::<_, StorageRoot>(&format!("SELECT {ROOT_COLUMNS} FROM storage_roots WHERE id = ?"))
+        sqlx::query_as::<_, StorageRoot>(AssertSqlSafe(format!("SELECT {ROOT_COLUMNS} FROM storage_roots WHERE id = ?")))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?

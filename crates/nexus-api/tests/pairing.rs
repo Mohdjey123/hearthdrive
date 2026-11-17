@@ -663,11 +663,26 @@ async fn people_limits_apply_here_and_on_paired_devices() {
     assert_eq!(s, 404);
     let (_, found) = g.call(Method::GET, "/search?q=two", None).await;
     assert_eq!(found["items"].as_array().unwrap().len(), 0, "{found}");
+    // Nor can they read a file there by its id.
+    let (_, listing) = a.call(Method::GET, &format!("/files?root_id={a2}"), None).await;
+    let hidden = listing["items"][0]["id"].as_str().unwrap().to_string();
+    let (_, listing) = a.call(Method::GET, &format!("/files?root_id={a1}"), None).await;
+    let shown = listing["items"][0]["id"].as_str().unwrap().to_string();
+    let (s, _) = g.call(Method::GET, &format!("/files/{hidden}/content"), None).await;
+    assert_eq!(s, 404);
+    let (s, _) = g.call(Method::POST, &format!("/files/{hidden}/link"), None).await;
+    assert_eq!(s, 404);
+    let res = reqwest::Client::new().get(format!("{}/files/{shown}/content", g.base)).bearer_auth(&g.token).send().await.unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    assert_eq!(res.bytes().await.unwrap().as_ref(), b"one");
 
     // On Laptop too: the limit travels with the signed request.
     let (s, roots) = g.call(Method::GET, &format!("{proxy}/storage/roots"), None).await;
     assert_eq!(s, 200, "{roots}");
     assert_eq!(root_ids(&roots), vec![b1.clone()]);
+    // Whatever a device answers is sandboxed on this node's origin.
+    let res = reqwest::Client::new().get(format!("{}{proxy}/storage/roots", g.base)).bearer_auth(&g.token).send().await.unwrap();
+    assert!(res.headers()["content-security-policy"].to_str().unwrap().starts_with("sandbox"));
     let (s, _) = g.call(Method::GET, &format!("{proxy}/files?root_id={b2}"), None).await;
     assert_eq!(s, 404);
     // The owner still sees everything there.

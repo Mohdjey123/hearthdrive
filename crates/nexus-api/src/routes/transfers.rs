@@ -176,8 +176,10 @@ impl Jobs {
         self.list.lock().unwrap().iter().find(|j| j.id == id).cloned()
     }
 
-    fn clear_finished(&self) {
-        self.list.lock().unwrap().retain(|j| !j.finished());
+    /// Forgets finished jobs: the caller's own if they are limited to some
+    /// storage (they cannot see anyone else's).
+    fn clear_finished(&self, user: &AuthUser) {
+        self.list.lock().unwrap().retain(|j| !j.finished() || (user.is_limited() && j.by != user.username));
     }
 
     /// Waits for a free slot. Returns `None` if the job was cancelled meanwhile.
@@ -451,6 +453,7 @@ impl Mover<'_> {
     async fn open(&self, side: &Side, file_id: &str, offset: u64) -> Result<Body> {
         match side {
             Side::Local => {
+                self.user.require(Action::Read).map_err(|e| e.0)?;
                 let file = self.s.db.get_file(file_id).await?;
                 self.user.require_root(&file.root_id).map_err(|e| e.0)?;
                 if file.is_dir {
@@ -819,6 +822,6 @@ pub async fn cancel(State(s): State<SharedState>, user: AuthUser, Path(id): Path
 
 pub async fn clear(State(s): State<SharedState>, user: AuthUser) -> ApiResult<StatusCode> {
     user.require_person()?;
-    s.jobs.clear_finished();
+    s.jobs.clear_finished(&user);
     Ok(StatusCode::NO_CONTENT)
 }

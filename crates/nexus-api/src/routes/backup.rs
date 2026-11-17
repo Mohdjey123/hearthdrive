@@ -601,6 +601,7 @@ pub struct DiscardShared {
 
 pub async fn discard_shared(State(s): State<SharedState>, user: AuthUser, Json(req): Json<DiscardShared>) -> ApiResult<StatusCode> {
     user.require_person()?;
+    user.require(Action::Write)?;
     let dir = inbox(&s)?.to_path_buf();
     let names: Vec<String> = if req.names.is_empty() {
         let d = dir.clone();

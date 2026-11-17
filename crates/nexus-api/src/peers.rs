@@ -379,11 +379,13 @@ const RESPONSE_HEADERS: &[HeaderName] = &[
     header::CONTENT_RANGE,
     header::ACCEPT_RANGES,
     header::CONTENT_DISPOSITION,
-    header::CONTENT_SECURITY_POLICY,
     header::CACHE_CONTROL,
     header::ETAG,
     header::LAST_MODIFIED,
 ];
+
+/// The policy every proxied response gets (the same one as local file content).
+const PROXY_CSP: &str = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
 
 fn is_ticket_content(rest: &str, query: Option<&str>) -> bool {
     let parts: Vec<&str> = rest.split('/').collect();
@@ -462,6 +464,11 @@ pub async fn proxy(
     let mut response = Response::builder().status(res.status());
     if let Some(headers) = response.headers_mut() {
         copy_headers(res.headers(), headers);
+        // Whatever the device sends is shown on this node's origin, so it is
+        // always sandboxed here: a device cannot serve a page that reads the
+        // session of someone signed in to this node.
+        headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(PROXY_CSP));
+        headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     }
     Ok(response.body(Body::new(res.into_body())).map_err(NexusError::internal)?.into_response())
 }

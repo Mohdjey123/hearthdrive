@@ -82,7 +82,7 @@ impl Drop for Writing<'_> {
 
 async fn owned(s: &AppState, user: &AuthUser, id: &str) -> Result<UploadSession, NexusError> {
     let session = s.db.get_upload(id).await?;
-    if session.owner != user.username || !user.sees_root(&session.root_id) {
+    if session.owner != user.owner_key() || !user.sees_root(&session.root_id) {
         return Err(NexusError::NotFound("Upload".into()));
     }
     Ok(session)
@@ -113,7 +113,7 @@ pub(crate) async fn begin(s: &AppState, user: &AuthUser, req: &NewUpload) -> Res
             policy.as_str(),
             req.modified_at,
             req.make_parents,
-            &user.username,
+            &user.owner_key(),
         )
         .await?;
     Ok(UploadProgress { id: session.id, offset: 0, size: req.size })

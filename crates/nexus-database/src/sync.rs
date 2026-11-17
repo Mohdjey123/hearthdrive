@@ -1,5 +1,6 @@
 //! Resumable uploads, earlier versions of files, and folder sync pairs.
 
+use sqlx::AssertSqlSafe;
 use crate::files::FILE_COLUMNS;
 use crate::{Database, like_escape};
 use nexus_common::types::FileEntry;
@@ -101,7 +102,7 @@ impl Database {
     ) -> Result<UploadSession> {
         let id = new_id();
         let now = now_ms();
-        sqlx::query(&format!("INSERT INTO uploads ({UPLOAD_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+        sqlx::query(AssertSqlSafe(format!("INSERT INTO uploads ({UPLOAD_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")))
             .bind(&id)
             .bind(root_id)
             .bind(parent)
@@ -119,7 +120,7 @@ impl Database {
     }
 
     pub async fn get_upload(&self, id: &str) -> Result<UploadSession> {
-        sqlx::query_as::<_, UploadSession>(&format!("SELECT {UPLOAD_COLUMNS} FROM uploads WHERE id = ?"))
+        sqlx::query_as::<_, UploadSession>(AssertSqlSafe(format!("SELECT {UPLOAD_COLUMNS} FROM uploads WHERE id = ?")))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -138,7 +139,7 @@ impl Database {
 
     /// Uploads not continued for `max_age_ms`; their staging files can go.
     pub async fn stale_uploads(&self, max_age_ms: i64) -> Result<Vec<UploadSession>> {
-        Ok(sqlx::query_as::<_, UploadSession>(&format!("SELECT {UPLOAD_COLUMNS} FROM uploads WHERE updated_at < ?"))
+        Ok(sqlx::query_as::<_, UploadSession>(AssertSqlSafe(format!("SELECT {UPLOAD_COLUMNS} FROM uploads WHERE updated_at < ?")))
             .bind(now_ms() - max_age_ms)
             .fetch_all(&self.pool)
             .await?)
@@ -147,7 +148,7 @@ impl Database {
     // -- versions ---------------------------------------------------------
 
     pub async fn insert_version(&self, v: &FileVersion) -> Result<()> {
-        sqlx::query(&format!("INSERT INTO file_versions ({VERSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+        sqlx::query(AssertSqlSafe(format!("INSERT INTO file_versions ({VERSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")))
             .bind(&v.id)
             .bind(&v.file_id)
             .bind(&v.root_id)
@@ -164,16 +165,16 @@ impl Database {
 
     /// Newest first.
     pub async fn list_versions(&self, file_id: &str) -> Result<Vec<FileVersion>> {
-        Ok(sqlx::query_as::<_, FileVersion>(&format!(
+        Ok(sqlx::query_as::<_, FileVersion>(AssertSqlSafe(format!(
             "SELECT {VERSION_COLUMNS} FROM file_versions WHERE file_id = ? ORDER BY created_at DESC, id"
-        ))
+        )))
         .bind(file_id)
         .fetch_all(&self.pool)
         .await?)
     }
 
     pub async fn get_version(&self, id: &str) -> Result<FileVersion> {
-        sqlx::query_as::<_, FileVersion>(&format!("SELECT {VERSION_COLUMNS} FROM file_versions WHERE id = ?"))
+        sqlx::query_as::<_, FileVersion>(AssertSqlSafe(format!("SELECT {VERSION_COLUMNS} FROM file_versions WHERE id = ?")))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -195,7 +196,7 @@ impl Database {
             ("AND relative_path LIKE ? ESCAPE '\\'", format!("{}/%", like_escape(rel)))
         };
         let sql = format!("SELECT {FILE_COLUMNS} FROM files WHERE root_id = ? {clause} ORDER BY relative_path LIMIT 500001");
-        let mut q = sqlx::query_as::<_, FileEntry>(&sql).bind(root_id);
+        let mut q = sqlx::query_as::<_, FileEntry>(AssertSqlSafe(sql)).bind(root_id);
         if !rel.is_empty() {
             q = q.bind(pattern);
         }
@@ -231,7 +232,7 @@ impl Database {
     }
 
     pub async fn get_sync_pair(&self, id: &str) -> Result<SyncPair> {
-        sqlx::query_as::<_, SyncPair>(&format!("SELECT {PAIR_COLUMNS} FROM sync_pairs WHERE id = ?"))
+        sqlx::query_as::<_, SyncPair>(AssertSqlSafe(format!("SELECT {PAIR_COLUMNS} FROM sync_pairs WHERE id = ?")))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -239,7 +240,7 @@ impl Database {
     }
 
     pub async fn list_sync_pairs(&self) -> Result<Vec<SyncPair>> {
-        Ok(sqlx::query_as::<_, SyncPair>(&format!("SELECT {PAIR_COLUMNS} FROM sync_pairs ORDER BY created_at"))
+        Ok(sqlx::query_as::<_, SyncPair>(AssertSqlSafe(format!("SELECT {PAIR_COLUMNS} FROM sync_pairs ORDER BY created_at")))
             .fetch_all(&self.pool)
             .await?)
     }

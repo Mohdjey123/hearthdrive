@@ -9,9 +9,12 @@ use std::path::{Path, PathBuf};
 /// NEXUS bookkeeping directory inside each writable root (trash, staging).
 pub const INTERNAL_DIR: &str = ".nexus";
 
+/// Device names Windows reserves in every folder (with any extension),
+/// including the superscript-digit ports and the console streams.
 const RESERVED_NAMES: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6",
+    "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6",
+    "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
 ];
 
 /// Top-level directories that are never indexed or exposed.
@@ -184,6 +187,9 @@ mod tests {
         assert!(validate_name("a*b").is_err());
         assert!(validate_name("a\u{1}b").is_err());
         assert!(validate_name("COM1.log").is_err());
+        assert!(validate_name("conin$").is_err());
+        assert!(validate_name("COM¹.txt").is_err());
+        assert!(validate_name("COM10").is_ok());
         assert!(validate_name(&"x".repeat(256)).is_err());
     }
 

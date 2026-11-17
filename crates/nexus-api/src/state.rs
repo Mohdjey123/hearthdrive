@@ -51,6 +51,9 @@ pub struct AppState {
     /// Files shared to the app from other apps wait here (phones).
     pub share_inbox: Option<PathBuf>,
     pub backup: crate::routes::backup::BackupControl,
+    /// First-run setup needs the local token (phones, where any app can
+    /// reach the loopback API).
+    pub setup_needs_token: bool,
 }
 
 impl AppState {
@@ -89,7 +92,14 @@ impl AppState {
             media_dir: None,
             share_inbox: None,
             backup: Default::default(),
+            setup_needs_token: false,
         }
+    }
+
+    /// Only the app holding the local token may complete first-run setup.
+    pub fn with_setup_token_required(mut self, required: bool) -> Self {
+        self.setup_needs_token = required;
+        self
     }
 
     /// Sets the phone folders: its shared storage and the share inbox.

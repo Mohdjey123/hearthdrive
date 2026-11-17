@@ -29,13 +29,24 @@ pub struct Config {
     pub media_dir: Option<PathBuf>,
     /// Phones: where files shared to the app wait (`NEXUS_SHARE_INBOX`).
     pub share_inbox: Option<PathBuf>,
+    /// Only the host app (holding the local token) may complete first-run
+    /// setup. On for phones, where every app can reach the loopback port.
+    pub setup_needs_token: bool,
 }
 
 impl Config {
     /// A node hosted inside an app (the Android shell): any free loopback
     /// port, no web UI, data in the app's private directory.
     pub fn embedded(data_dir: PathBuf, device_name: &str) -> Self {
-        Self { data_dir, port: 0, ui_dir: None, device_name: Some(device_name.to_string()), media_dir: None, share_inbox: None }
+        Self {
+            data_dir,
+            port: 0,
+            ui_dir: None,
+            device_name: Some(device_name.to_string()),
+            media_dir: None,
+            share_inbox: None,
+            setup_needs_token: true,
+        }
     }
 }
 
@@ -71,6 +82,7 @@ impl Config {
             device_name: None,
             media_dir: std::env::var_os("NEXUS_MEDIA_DIR").map(PathBuf::from),
             share_inbox: std::env::var_os("NEXUS_SHARE_INBOX").map(PathBuf::from),
+            setup_needs_token: false,
         })
     }
 }
@@ -179,7 +191,8 @@ pub async fn run_with(
         identity,
         net,
     )
-    .with_phone_dirs(config.media_dir.clone(), config.share_inbox.clone()));
+    .with_phone_dirs(config.media_dir.clone(), config.share_inbox.clone())
+    .with_setup_token_required(config.setup_needs_token));
     if let Some(ui) = &config.ui_dir {
         tracing::info!(path = %ui.display(), "serving web interface");
     }
@@ -225,9 +238,17 @@ pub async fn run_with(
     served.context("API server stopped unexpectedly")
 }
 
+/// Writes `runtime.json`, which holds the owner-level local token. The data
+/// folder is private to this account on Windows; elsewhere the file is made
+/// readable by its owner only.
 fn write_runtime(path: &Path, info: &RuntimeInfo) -> anyhow::Result<()> {
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(info)?)?;
+    let _ = std::fs::remove_file(&tmp);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    std::io::Write::write_all(&mut options.open(&tmp)?, &serde_json::to_vec_pretty(info)?)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
 }

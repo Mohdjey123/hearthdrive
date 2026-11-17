@@ -23,7 +23,14 @@ impl NodeIdentity {
                 let protected = dpapi::protect(&identity.key.to_bytes())?;
                 let text = format!("{}:{}\n", dpapi::SCHEME, b64_encode(&protected));
                 let tmp = path.with_extension("key.tmp");
-                std::fs::write(&tmp, text)?;
+                let _ = std::fs::remove_file(&tmp);
+                let mut options = std::fs::OpenOptions::new();
+                options.write(true).create_new(true);
+                // Without DPAPI (phones, development) the key is protected by
+                // the file's permissions: its owner only.
+                #[cfg(unix)]
+                std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+                std::io::Write::write_all(&mut options.open(&tmp)?, text.as_bytes())?;
                 std::fs::rename(&tmp, &path)?;
                 tracing::info!(fingerprint = %identity.fingerprint, "created device identity");
                 Ok(identity)

@@ -9,7 +9,12 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- No backups of the app's data: it holds the device key (Android has no
+         DPAPI, so it is protected by the app's private storage) and sessions.
+         A backup restored on another phone would clone this device. -->
     <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.nexus_desktop"

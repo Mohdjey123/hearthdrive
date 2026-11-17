@@ -283,6 +283,17 @@ pub async fn approve(
     if req.status != "pending" {
         return Err(NexusError::Conflict(format!("This request is already {}", req.status)).into());
     }
+    // A request may not take over a device that is already paired with a
+    // different key (it would inherit that device's access here).
+    if let Ok(existing) = s.db.get_device(&req.device_id).await
+        && (existing.is_local || !existing.public_key.as_deref().is_some_and(|k| same_key(k, &req.public_key)))
+    {
+        return Err(NexusError::Conflict(format!(
+            "Another device named {} is already paired with this id. Remove it under Devices first if it was reinstalled.",
+            existing.name
+        ))
+        .into());
+    }
     let addresses = req.address_list();
     s.db.upsert_paired_device(&NewPeer {
         id: &req.device_id,
@@ -350,7 +361,10 @@ pub async fn incoming_request(
 
     let name = req.name.trim();
     let addresses: Vec<String> = req.addresses.into_iter().filter(|a| nexus_network::valid_hint(a)).take(8).collect();
-    if name.is_empty() || name.len() > 64 || req.device_id.is_empty() || req.device_id.len() > 64 {
+    let id_ok = (1..=64).contains(&req.device_id.len())
+        && req.device_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let version_ok = req.version.as_deref().is_none_or(|v| v.len() <= 32 && v.chars().all(|c| c.is_ascii_graphic()));
+    if name.is_empty() || name.len() > 64 || name.chars().any(char::is_control) || !id_ok || !version_ok {
         return Err(NexusError::invalid("Invalid device details").into());
     }
     if !matches!(req.device_type.as_str(), "windows" | "linux" | "macos" | "android" | "ios" | "web") {
@@ -443,6 +457,21 @@ pub async fn join(State(s): State<SharedState>, user: AuthUser, Json(body): Json
     }
     if invite.device_id == s.node.device_id {
         return Err(NexusError::invalid("This link is for this computer. Open it on the device you want to add.").into());
+    }
+    let id_ok = (1..=64).contains(&invite.device_id.len())
+        && invite.device_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let name = invite.name.trim();
+    if !id_ok || name.is_empty() || name.len() > 64 || name.chars().any(char::is_control) {
+        return Err(NexusError::invalid("This pairing link is incomplete").into());
+    }
+    if let Ok(existing) = s.db.get_device(&invite.device_id).await
+        && !existing.public_key.as_deref().is_some_and(|k| same_key(k, &invite.public_key))
+    {
+        return Err(NexusError::Conflict(format!(
+            "Another device named {} is already paired with this id. Remove it under Devices first if it was reinstalled.",
+            existing.name
+        ))
+        .into());
     }
     let me = s.db.get_device(&s.node.device_id).await?;
     let request = PairRequestBody {

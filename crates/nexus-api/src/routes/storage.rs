@@ -47,8 +47,11 @@ async fn list_drives() -> Vec<DriveInfo> {
     tokio::task::spawn_blocking(drives::list_drives).await.unwrap_or_default()
 }
 
-pub async fn drives(_user: AuthUser) -> Json<Vec<DriveInfo>> {
-    Json(list_drives().await)
+/// The computer's drives, for adding storage: only for people who may add it.
+pub async fn drives(user: AuthUser) -> ApiResult<Json<Vec<DriveInfo>>> {
+    user.require_person()?;
+    user.require(Action::ManageStorage)?;
+    Ok(Json(list_drives().await))
 }
 
 pub async fn list_roots(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Vec<RootView>>> {
@@ -91,6 +94,7 @@ pub async fn add_root(
     Json(body): Json<AddRootBody>,
 ) -> ApiResult<(StatusCode, Json<RootView>)> {
     user.require(Action::ManageStorage)?;
+    user.require_person()?;
     if !peer.ip().is_loopback() {
         return Err(NexusError::PermissionDenied("Storage can only be added on the computer itself".into()).into());
     }
@@ -124,6 +128,7 @@ pub async fn rescan_root(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require(Action::ManageStorage)?;
+    user.require_person()?;
     user.require_root(&id)?;
     let root = s.db.get_root(&id).await?;
     s.storage.ensure_online(&root)?;

@@ -115,10 +115,28 @@ impl Database {
         Ok(())
     }
 
-    /// Removes an account and its sessions.
+    /// Removes an account and its sessions. Syncs and backups the person set
+    /// up stop and keep a name no new account can take (usernames have no
+    /// spaces), so someone given the same name later does not inherit them.
     pub async fn delete_user(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM sessions WHERE user_id = ?").bind(id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM users WHERE id = ?").bind(id).execute(&self.pool).await?;
+        let mut tx = self.pool.begin().await?;
+        let name: Option<String> = sqlx::query_scalar("SELECT username FROM users WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
+        if let Some(name) = name {
+            let retired = format!("{name} (removed)");
+            sqlx::query("UPDATE sync_pairs SET enabled = 0, created_by = ? WHERE created_by = ?")
+                .bind(&retired)
+                .bind(&name)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE backups SET enabled = 0, created_by = ? WHERE created_by = ?")
+                .bind(&retired)
+                .bind(&name)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("DELETE FROM sessions WHERE user_id = ?").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM users WHERE id = ?").bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 }

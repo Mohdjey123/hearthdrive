@@ -30,14 +30,24 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-/// Origins of the desktop shell's webview and the Vite dev server.
-const ALLOWED_ORIGINS: &[&str] = &[
-    "http://tauri.localhost",
-    "https://tauri.localhost",
-    "tauri://localhost",
-    "http://localhost:1420",
-    "http://127.0.0.1:1420",
-];
+/// Origins of the app shell's web view.
+const ALLOWED_ORIGINS: &[&str] = &["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost"];
+
+/// The Vite dev server, allowed in development builds only: in a release
+/// build any program could serve a page there.
+const DEV_ORIGINS: &[&str] = &["http://localhost:1420", "http://127.0.0.1:1420"];
+
+/// Origins allowed to call the API from a browser.
+pub(crate) fn allowed_origins() -> impl Iterator<Item = &'static str> {
+    let dev: &[&str] = if cfg!(debug_assertions) { DEV_ORIGINS } else { &[] };
+    ALLOWED_ORIGINS.iter().chain(dev).copied()
+}
+
+/// The web interface served to browsers loads nothing from anywhere else and
+/// can never be framed.
+const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; \
+    img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; \
+    frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
     use routes::{backup, devices, files, network, storage, sync, system, transfers, uploads, users};
@@ -129,9 +139,7 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
     }
 
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(
-            ALLOWED_ORIGINS.iter().map(|o| HeaderValue::from_static(o)),
-        ))
+        .allow_origin(AllowOrigin::list(allowed_origins().map(HeaderValue::from_static)))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::RANGE])
         .expose_headers([header::CONTENT_DISPOSITION, header::CONTENT_LENGTH])
@@ -149,6 +157,11 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .layer(SetResponseHeaderLayer::if_not_present(
             header::REFERRER_POLICY,
             HeaderValue::from_static("no-referrer"),
+        ))
+        // File content and proxied responses set their own, stricter policy.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(UI_CSP),
         ))
         .layer(middleware::from_fn_with_state(state, host_guard))
         .layer(TraceLayer::new_for_http())

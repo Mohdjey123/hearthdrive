@@ -8,7 +8,7 @@ use axum::http::{HeaderMap, StatusCode};
 use nexus_common::time::now_ms;
 use nexus_common::types::{ActivityEntry, User};
 use nexus_common::{NexusError, VERSION};
-use nexus_security::{generate_token, hash_password, hash_token, verify_password};
+use nexus_security::{generate_token, hash_password, hash_token, token_matches, verify_password};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::net::SocketAddr;
@@ -67,6 +67,11 @@ pub async fn setup(
 ) -> ApiResult<Json<SessionResponse>> {
     if !peer.ip().is_loopback() {
         return Err(NexusError::PermissionDenied("Setup must be completed on this computer".into()).into());
+    }
+    // On a phone every app can reach this port, so only the NEXUS app
+    // itself (which holds the local token) may set the node up.
+    if s.setup_needs_token && !bearer(&headers).is_some_and(|t| token_matches(t, &s.local_token)) {
+        return Err(NexusError::PermissionDenied("Set up NEXUS from its app".into()).into());
     }
     let node_name = req.node_name.trim();
     if node_name.is_empty() || node_name.len() > 64 {
@@ -159,8 +164,10 @@ pub async fn me(user: AuthUser) -> Json<AuthUser> {
     Json(user)
 }
 
-pub async fn info(State(s): State<SharedState>, _user: AuthUser) -> ApiResult<Json<Value>> {
+pub async fn info(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Value>> {
     let device = s.db.get_device(&s.node.device_id).await?;
+    // Where this node keeps its data is nobody else's business.
+    let data_dir = user.device_id.is_none().then(|| s.data_dir.to_string_lossy().into_owned());
     Ok(Json(json!({
         "node": {
             "device_id": device.id,
@@ -171,7 +178,7 @@ pub async fn info(State(s): State<SharedState>, _user: AuthUser) -> ApiResult<Js
         },
         "started_at": s.started_at,
         "uptime_ms": now_ms() - s.started_at,
-        "data_dir": s.data_dir.to_string_lossy(),
+        "data_dir": data_dir,
         "network": s.net.snapshot(),
         "fingerprint": s.identity.fingerprint(),
     })))

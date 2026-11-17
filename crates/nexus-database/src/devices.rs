@@ -1,4 +1,5 @@
 use crate::Database;
+use sqlx::AssertSqlSafe;
 use nexus_common::types::{Device, Role};
 use nexus_common::{NexusError, Result, new_id, time::now_ms};
 
@@ -48,7 +49,7 @@ impl Database {
     }
 
     pub async fn get_device(&self, id: &str) -> Result<Device> {
-        sqlx::query_as::<_, Device>(&format!("SELECT {COLUMNS} FROM devices WHERE id = ?"))
+        sqlx::query_as::<_, Device>(AssertSqlSafe(format!("SELECT {COLUMNS} FROM devices WHERE id = ?")))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -56,9 +57,9 @@ impl Database {
     }
 
     pub async fn list_devices(&self) -> Result<Vec<Device>> {
-        Ok(sqlx::query_as::<_, Device>(&format!(
+        Ok(sqlx::query_as::<_, Device>(AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM devices ORDER BY is_local DESC, created_at"
-        ))
+        )))
         .fetch_all(&self.pool)
         .await?)
     }
@@ -94,9 +95,9 @@ impl Database {
 
     /// Paired devices only (never this node).
     pub async fn list_peer_devices(&self) -> Result<Vec<Device>> {
-        Ok(sqlx::query_as::<_, Device>(&format!(
+        Ok(sqlx::query_as::<_, Device>(AssertSqlSafe(format!(
             "SELECT {COLUMNS} FROM devices WHERE is_local = 0 AND public_key IS NOT NULL ORDER BY name COLLATE NOCASE"
-        ))
+        )))
         .fetch_all(&self.pool)
         .await?)
     }

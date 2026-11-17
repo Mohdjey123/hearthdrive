@@ -35,6 +35,17 @@ impl AuthUser {
         Self { user_id: Some(user.id), username: user.username, role: user.role, local: false, device_id: None, allowed_roots }
     }
 
+    /// Who owns something the caller started (a resumable upload), in a form
+    /// no one else can take: a paired device could name itself after a
+    /// person here, but never gets their account id.
+    pub fn owner_key(&self) -> String {
+        match (&self.device_id, &self.user_id) {
+            (Some(device), _) => format!("device:{device}:{}", self.username),
+            (None, Some(user)) => format!("user:{user}"),
+            (None, None) => format!("local:{}", self.username),
+        }
+    }
+
     /// Limited to some storage locations.
     pub fn is_limited(&self) -> bool {
         self.allowed_roots.is_some()

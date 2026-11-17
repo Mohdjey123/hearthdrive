@@ -196,17 +196,21 @@ pub async fn content(
     Query(q): Query<ContentQuery>,
     req: Request,
 ) -> ApiResult<Response> {
-    let authorised = match q.ticket.as_deref() {
-        Some(ticket) => s.tickets.verify(ticket, "content", &id),
+    // A ticket was issued after checking the caller's access to this file.
+    // A session is checked here, like any other request.
+    let caller = match q.ticket.as_deref() {
+        Some(ticket) if s.tickets.verify(ticket, "content", &id) => None,
+        Some(_) => return Err(NexusError::Unauthorized.into()),
         None => match bearer(req.headers()) {
-            Some(token) => authenticate(&s, token).await.is_ok(),
-            None => false,
+            Some(token) => Some(authenticate(&s, token).await?),
+            None => return Err(NexusError::Unauthorized.into()),
         },
     };
-    if !authorised {
-        return Err(NexusError::Unauthorized.into());
-    }
     let file = s.db.get_file(&id).await?;
+    if let Some(user) = &caller {
+        user.require(Action::Read)?;
+        user.require_root(&file.root_id)?;
+    }
     if file.is_dir {
         return Err(NexusError::invalid("This is a folder").into());
     }
