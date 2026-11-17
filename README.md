@@ -4,7 +4,7 @@
 
 NEXUS Cloud turns your own computers into a private, self-hosted personal cloud. Free and open source, with no subscription and no third-party storage.
 
-> **Status: Phases 0–2.** Each Windows computer is a complete cloud node (indexing, browsing, search, upload, download, preview, rename, move, trash, restore). Computers pair with a link or QR code, then browse, preview and upload to each other's files from any network, with built-in encrypted peer-to-peer connections and nothing else to install. Android access and sync come next (see [Roadmap](#roadmap)).
+> **Status: Phases 0–3.** Each Windows computer is a complete cloud node (indexing, browsing, search, upload, download, preview, rename, move, trash, restore). Computers and Android phones pair with a link or QR code, then browse, preview, download and upload each other's files from any network, with built-in encrypted peer-to-peer connections and nothing else to install. Sync and sharing come next (see [Roadmap](#roadmap)).
 
 ## What works today
 
@@ -91,6 +91,24 @@ Both computers can then browse each other from **Files** → device menu, from a
 
 How it works: every connection is QUIC with TLS 1.3, authenticated with the two devices' own keys. Devices first try to connect directly. On the same network that always works; across the internet it usually works through NAT hole punching. When it doesn't (some corporate, hotel or mobile networks), traffic goes through a relay server. A relay only forwards encrypted packets and cannot read them. The free public relays are rate-limited, so large transfers over a relay are slow. If you often hit that, run your own [`iroh-relay`](https://docs.iroh.computer/relays) on a small server and start NEXUS with `NEXUS_RELAY=https://relay.example.com`. The first time NEXUS runs, Windows may ask whether to allow `nexus-service` through the firewall. Allow it on private networks; it only accepts connections from paired devices and pairing requests that carry a valid code.
 
+## Android app
+
+The Android app is the same node and the same interface, packaged with Tauri. The node runs inside the app, so the phone pairs and connects exactly like a computer does. A phone holds no storage of its own: it opens on the files of the computers it is paired with.
+
+1. Build the APK (Android SDK and NDK, a JDK, and the Rust Android targets are required):
+
+   ```bash
+   scripts/build-android.sh aarch64 release
+   ```
+
+   `x86_64 debug` builds for the emulator. The script prints the APK's path. Release builds are signed with the local Android debug key so they install directly; sign with your own key before publishing.
+2. Install it (`adb install -r <apk>`, or copy the file to the phone and open it).
+3. Open the app, name the phone, and choose **Scan QR code**. On the computer, open **Devices** → **Add device** and approve the phone after comparing fingerprints.
+
+Tap opens a file or folder; press and hold selects. Downloads are saved to the phone's `Download/NEXUS` folder. The node runs while the app is open; the computers keep running on their own.
+
+The script exists because the Tauri CLI links the compiled library with a symbolic link, which Windows only allows in Developer Mode. The script copies the library instead.
+
 ## Roadmap
 
 Following the product spec's phases. Each phase ships a working application.
@@ -98,11 +116,11 @@ Following the product spec's phases. Each phase ships a working application.
 - [x] **Phase 0 — Foundation:** workspace, service, Tauri shell, React UI, migrations, logging
 - [x] **Phase 1 — Local storage:** drives, roots, indexing, browser, search, upload/download, previews
 - [x] **Phase 2 — Networking:** built-in peer-to-peer connections (no VPN client), device identity keys, link/QR pairing, signed requests, online/offline peers, remote browsing
-- [ ] **Phase 3 — Android:** installable PWA, pairing, remote browsing, uploads
+- [x] **Phase 3 — Android:** native app with the node built in, QR pairing, remote browsing, previews, downloads, uploads
 - [ ] **Phase 4 — Multi-node storage:** unified index across nodes, remote operations, resumable chunked transfers
 - [ ] **Phase 5 — Synchronization:** one-way/two-way folder sync, conflicts, version history
 - [ ] **Phase 6 — Sharing and security:** invited users, per-root permissions, share links, revocation
-- [ ] **Phase 7 — Release:** Windows installer with service registration, auto-update, native Android
+- [ ] **Phase 7 — Release:** Windows installer with service registration, auto-update, signed Android release
 
 ## License
 

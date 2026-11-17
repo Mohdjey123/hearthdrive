@@ -4,7 +4,7 @@ import {
   List, Monitor, Pencil, RotateCcw, Search, Trash2, Upload, WifiOff, X,
 } from 'lucide-react'
 import {
-  api, ApiError, fileApi, peerPrefix, type FileApi, type FileEntry, type FoundItem, type StorageRoot, type TrashItem,
+  api, ApiError, fileApi, isMobile, isTouch, peerPrefix, thisDevice, type FileApi, type FileEntry, type FoundItem, type StorageRoot, type TrashItem,
 } from '../services/api'
 import { subscribe } from '../services/events'
 import { useResource } from '../hooks/useResource'
@@ -142,7 +142,7 @@ function Details({ file, rootName, onClose }: { file: FileEntry; rootName: strin
     ['BLAKE3', file.is_dir ? '—' : file.content_hash ? <span className="font-mono text-[11px] break-all">{file.content_hash}</span> : <span className="text-subtle">Pending (computed in background)</span>],
   ]
   return (
-    <aside className="w-72 shrink-0 overflow-auto border-l border-line bg-panel">
+    <aside className="absolute inset-0 z-20 overflow-auto bg-panel md:static md:w-72 md:shrink-0 md:border-l md:border-line">
       <div className="flex h-10 items-center justify-between border-b border-line pr-2 pl-4">
         <span className="text-[12px] font-semibold tracking-wide text-muted uppercase">Properties</span>
         <IconButton label="Close" onClick={onClose}><X className="size-4" /></IconButton>
@@ -193,7 +193,7 @@ function TrashView({ fapi, onBack }: { fapi: FileApi; onBack: () => void }) {
       <div className="flex items-center gap-3 pb-4">
         <Button variant="ghost" size="sm" onClick={onBack}>← Files</Button>
         <h1 className="text-[18px] font-semibold">Trash</h1>
-        <span className="text-muted">Deleted items stay on their drive until you delete them permanently.</span>
+        <span className="hidden text-muted md:inline">Deleted items stay on their drive until you delete them permanently.</span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-line bg-panel">
         {trash.loading && !trash.data ? (
@@ -205,8 +205,8 @@ function TrashView({ fapi, onBack }: { fapi: FileApi; onBack: () => void }) {
             <thead className="sticky top-0 bg-panel text-[12px] text-muted">
               <tr className="border-b border-line">
                 <th className="px-4 py-2 font-medium">Name</th>
-                <th className="px-2 py-2 font-medium">Original location</th>
-                <th className="px-2 py-2 font-medium">Size</th>
+                <th className="hidden px-2 py-2 font-medium md:table-cell">Original location</th>
+                <th className="hidden px-2 py-2 font-medium md:table-cell">Size</th>
                 <th className="px-2 py-2 font-medium">Deleted</th>
                 <th />
               </tr>
@@ -220,8 +220,8 @@ function TrashView({ fapi, onBack }: { fapi: FileApi; onBack: () => void }) {
                       {t.filename}
                     </span>
                   </td>
-                  <td className="px-2 py-2 text-muted">{t.root_name} / {t.original_path}</td>
-                  <td className="px-2 py-2 text-muted tabular">{formatBytes(t.size)}</td>
+                  <td className="hidden px-2 py-2 text-muted md:table-cell">{t.root_name} / {t.original_path}</td>
+                  <td className="hidden px-2 py-2 text-muted tabular md:table-cell">{formatBytes(t.size)}</td>
                   <td className="px-2 py-2 text-muted">{formatRelative(t.deleted_at)}</td>
                   <td className="px-4 py-2 text-right whitespace-nowrap">
                     <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" />} onClick={() => void restore(t)}>Restore</Button>
@@ -274,7 +274,7 @@ export function Files({ route }: { route: Route }) {
   const [sort, setSort] = useState<Sort>('name')
   const [order, setOrder] = useState<'asc' | 'desc'>('asc')
   const [view, setView] = useState<'list' | 'grid'>(() => {
-    try { return localStorage.getItem('nexus.view') === 'grid' ? 'grid' : 'list' } catch { return 'list' }
+    try { return (localStorage.getItem('nexus.view') ?? (isTouch() ? 'grid' : 'list')) === 'grid' ? 'grid' : 'list' } catch { return 'list' }
   })
   const listing = useListing(fapi, showTrash ? undefined : rootId, path, sort, order)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -328,6 +328,13 @@ export function Files({ route }: { route: Route }) {
   }
   const where = device ? `${device.name} · ` : ''
 
+  // A phone has no storage of its own: open the first paired computer.
+  useEffect(() => {
+    if (!isMobile() || deviceId || peers.length === 0) return
+    const first = peers.find((d) => d.online) ?? peers[0]
+    navigate('files', { device: first.id })
+  }, [deviceId, peers.map((d) => d.id + d.online).join()])
+
   const open = (f: FileEntry) => {
     if (f.is_dir) {
       setQuery('')
@@ -335,7 +342,13 @@ export function Files({ route }: { route: Route }) {
     } else setPreview(f)
   }
 
+  const touch = isTouch()
   const click = (e: React.MouseEvent, f: FileEntry) => {
+    if (touch) {
+      if (selected.size > 0) toggle(f)
+      else open(f)
+      return
+    }
     if (e.shiftKey && anchor) {
       const a = items.findIndex((i) => i.id === anchor)
       const b = items.findIndex((i) => i.id === f.id)
@@ -401,7 +414,7 @@ export function Files({ route }: { route: Route }) {
         onChange={(e) => switchDevice(e.target.value)}
         className="h-7 rounded-md border border-line bg-elevated px-2 text-[12.5px] text-fg outline-none focus:border-accent"
       >
-        <option value="">This computer</option>
+        {!isMobile() && <option value="">This computer</option>}
         {peers.map((d) => (
           <option key={d.id} value={d.id}>{d.name}{d.online ? '' : ' (offline)'}</option>
         ))}
@@ -411,8 +424,8 @@ export function Files({ route }: { route: Route }) {
 
   if (prefix && (rootsError || (rootList && rootList.length === 0))) {
     return (
-      <div className="-m-6 flex h-[calc(100%+3rem)] flex-col">
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-panel px-4">{deviceSwitcher}</div>
+      <div className="-m-4 flex h-[calc(100%+2rem)] flex-col md:-m-6 md:h-[calc(100%+3rem)]">
+        <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-panel px-3 py-2 md:px-4 md:py-0">{deviceSwitcher}</div>
         <EmptyState
           icon={rootsError ? <WifiOff className="size-8" /> : <HardDrive className="size-8" />}
           title={rootsError ? `${device?.name ?? 'This device'} is not reachable` : `${device?.name ?? 'This device'} has no storage`}
@@ -424,6 +437,20 @@ export function Files({ route }: { route: Route }) {
     )
   }
 
+  if (!prefix && isMobile()) {
+    return peers.length > 0 || devices.loading ? (
+      <div className="p-6"><Spinner /></div>
+    ) : (
+      <EmptyState
+        icon={<Monitor className="size-8" />}
+        title="Connect a computer"
+        action={<Button variant="primary" onClick={() => navigate('devices', { join: '1' })}>Pair with a computer</Button>}
+      >
+        Pair this phone with a computer that runs NEXUS to browse, download and upload its files.
+      </EmptyState>
+    )
+  }
+
   if (rootList && rootList.length === 0) {
     return (
       <EmptyState
@@ -431,7 +458,7 @@ export function Files({ route }: { route: Route }) {
         title="No storage yet"
         action={<Button variant="primary" onClick={() => navigate('storage', { add: '1' })}>Add a folder or drive</Button>}
       >
-        Add a folder or drive to start browsing your files.
+        Add a folder or drive on this {thisDevice()} to start browsing your files.
       </EmptyState>
     )
   }
@@ -446,9 +473,9 @@ export function Files({ route }: { route: Route }) {
   }
 
   return (
-    <div className="-m-6 flex h-[calc(100%+3rem)] flex-col">
+    <div className="-m-4 flex h-[calc(100%+2rem)] flex-col md:-m-6 md:h-[calc(100%+3rem)]">
       {/* Location bar */}
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-panel px-4">
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-panel px-3 py-2 md:px-4 md:py-0">
         {deviceSwitcher}
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
           {rootList?.map((r) => (
@@ -465,7 +492,7 @@ export function Files({ route }: { route: Route }) {
             </button>
           ))}
         </div>
-        <div className="relative ml-auto w-72">
+        <div className="relative w-full md:ml-auto md:w-72">
           <Search className="pointer-events-none absolute top-2 left-2.5 size-4 text-subtle" />
           <Input
             value={query}
@@ -482,7 +509,7 @@ export function Files({ route }: { route: Route }) {
       </div>
 
       {/* Toolbar */}
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-4">
+      <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-line px-3 py-1 md:px-4">
         {results ? (
           <span className="text-muted">{results.length} result{results.length === 1 ? '' : 's'} for “{query}”</span>
         ) : (
@@ -533,16 +560,16 @@ export function Files({ route }: { route: Route }) {
             {view === 'list' ? <LayoutGrid className="size-4" /> : <List className="size-4" />}
           </IconButton>
           <Button size="sm" icon={<FolderPlus className="size-3.5" />} disabled={!writable || !!results} onClick={() => setDialog('folder')}>
-            New folder
+            <span className="hidden sm:inline">New folder</span>
           </Button>
           <Button size="sm" variant="primary" icon={<Upload className="size-3.5" />} disabled={!writable || !!results} onClick={() => fileInput.current?.click()}>
-            Upload
+            <span className="hidden sm:inline">Upload</span>
           </Button>
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => { upload(e.target.files); e.target.value = '' }} />
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <div
           className={cx('relative min-w-0 flex-1 overflow-auto', dragging && 'bg-accent-soft')}
           onDragOver={(e) => {
@@ -595,10 +622,10 @@ export function Files({ route }: { route: Route }) {
                     />
                   </th>
                   <th className="py-2 font-medium"><SortHeader label="Name" field="name" sort={sort} order={order} onSort={onSort} /></th>
-                  {results && <th className="w-64 font-medium">Location</th>}
-                  <th className="w-28 font-medium"><SortHeader label="Size" field="size" sort={sort} order={order} onSort={onSort} className="ml-auto" /></th>
-                  <th className="w-44 pl-6 font-medium"><SortHeader label="Modified" field="modified" sort={sort} order={order} onSort={onSort} /></th>
-                  <th className="w-24 pr-4 font-medium"><SortHeader label="Type" field="type" sort={sort} order={order} onSort={onSort} /></th>
+                  {results && <th className="hidden w-64 font-medium md:table-cell">Location</th>}
+                  <th className="w-20 pr-3 font-medium md:w-28 md:pr-0"><SortHeader label="Size" field="size" sort={sort} order={order} onSort={onSort} className="ml-auto" /></th>
+                  <th className="hidden w-44 pl-6 font-medium md:table-cell"><SortHeader label="Modified" field="modified" sort={sort} order={order} onSort={onSort} /></th>
+                  <th className="hidden w-24 pr-4 font-medium md:table-cell"><SortHeader label="Type" field="type" sort={sort} order={order} onSort={onSort} /></th>
                 </tr>
               </thead>
               <tbody>
@@ -608,8 +635,9 @@ export function Files({ route }: { route: Route }) {
                     <tr
                       key={f.id}
                       onClick={(e) => click(e, f)}
-                      onDoubleClick={() => open(f)}
-                      className={cx('h-9 cursor-default border-b border-line/60 select-none', isSel ? 'bg-accent-soft' : 'hover:bg-hover')}
+                      onDoubleClick={() => !touch && open(f)}
+                      onContextMenu={(e) => { if (touch) { e.preventDefault(); toggle(f) } }}
+                      className={cx('h-11 md:h-9 cursor-default border-b border-line/60 select-none', isSel ? 'bg-accent-soft' : 'hover:bg-hover')}
                     >
                       <td className="pl-4" onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" aria-label={`Select ${f.filename}`} className="accent-[var(--nx-accent)]" checked={isSel} onChange={() => toggle(f)} />
@@ -622,25 +650,26 @@ export function Files({ route }: { route: Route }) {
                         </span>
                       </td>
                       {results && (
-                        <td className="truncate pr-3 text-muted">
+                        <td className="hidden truncate pr-3 text-muted md:table-cell">
                           {(f as FoundItem).root_name}{f.parent_path ? ` / ${f.parent_path}` : ''}
                         </td>
                       )}
-                      <td className="text-right text-muted tabular">{f.is_dir ? '' : formatBytes(f.size)}</td>
-                      <td className="truncate pl-6 text-muted">{formatDate(f.modified_at)}</td>
-                      <td className="truncate pr-4 text-muted">{fileKind(f)}</td>
+                      <td className="pr-3 text-right text-muted tabular md:pr-0">{f.is_dir ? '' : formatBytes(f.size)}</td>
+                      <td className="hidden truncate pl-6 text-muted md:table-cell">{formatDate(f.modified_at)}</td>
+                      <td className="hidden truncate pr-4 text-muted md:table-cell">{fileKind(f)}</td>
                     </tr>
                   )
                 })}
               </tbody>
             </table>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3 p-4">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-2 p-3 md:grid-cols-[repeat(auto-fill,minmax(150px,1fr))] md:gap-3 md:p-4">
               {items.map((f) => (
                 <button
                   key={f.id}
                   onClick={(e) => click(e, f)}
-                  onDoubleClick={() => open(f)}
+                  onDoubleClick={() => !touch && open(f)}
+                  onContextMenu={(e) => { if (touch) { e.preventDefault(); toggle(f) } }}
                   className={cx('rounded-lg border p-2 text-left select-none', selected.has(f.id) ? 'border-accent bg-accent-soft' : 'border-transparent hover:bg-hover')}
                 >
                   <Thumb file={f} prefix={prefix} />
@@ -672,7 +701,7 @@ export function Files({ route }: { route: Route }) {
         )}
         <span>{results ? `${results.length} results` : `${listing.total.toLocaleString()} items`}</span>
         {root?.scanning && <span className="text-warn">Indexing…</span>}
-        <span className="ml-auto">Double-click to open · Del to delete · F2 to rename</span>
+        <span className="ml-auto">{touch ? 'Tap to open · press and hold to select' : 'Double-click to open · Del to delete · F2 to rename'}</span>
       </div>
 
       <FilePreview file={preview} siblings={items} onNavigate={setPreview} onClose={() => setPreview(null)} prefix={prefix} />

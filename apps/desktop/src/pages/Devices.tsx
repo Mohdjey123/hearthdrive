@@ -2,7 +2,7 @@ import { useState } from 'react'
 import {
   FolderOpen, Laptop, Link2, Monitor, Network, QrCode, RefreshCw, ShieldCheck, Smartphone, Trash2,
 } from 'lucide-react'
-import { api, type Device, type NetworkInfo, type Role } from '../services/api'
+import { api, isMobile, thisDevice, type Device, type NetworkInfo, type Role } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { navigate } from '../hooks/useRoute'
 import { formatBytes, formatRelative } from '../lib/format'
@@ -71,8 +71,8 @@ function NetworkPanel() {
       {!n ? (
         <Spinner />
       ) : (
-        <div className="grid grid-cols-5 gap-6">
-          <div className="col-span-3 space-y-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-5">
+          <div className="space-y-3 md:col-span-3">
             <div className="flex items-center gap-2">
               <StatusDot tone={stateTone(n)} />
               <span className="font-medium">{STATE_LABEL[n.status.state]}</span>
@@ -110,16 +110,16 @@ function NetworkPanel() {
                 <span className="mt-0.5 block text-[12px] text-muted">
                   {n.remote_enabled
                     ? 'Only devices you paired can connect, and only to browse and transfer files. Nothing is opened to the internet.'
-                    : 'Off: paired devices cannot connect to this computer and see it as offline. You can still browse them from here.'}
+                    : `Off: paired devices cannot connect to this ${thisDevice()} and see it as offline. You can still browse them from here.`}
                 </span>
               </span>
             </label>
           </div>
-          <div className="col-span-2 space-y-4 border-l border-line pl-6">
+          <div className="space-y-4 md:col-span-2 md:border-l md:border-line md:pl-6">
             <div>
-              <div className="text-[12px] text-subtle">This computer's fingerprint</div>
+              <div className="text-[12px] text-subtle">This {thisDevice()}'s fingerprint</div>
               <FingerprintText value={n.fingerprint} className="mt-1 block" />
-              <p className="mt-1 text-[12px] text-subtle">Compare it when pairing. The key behind it never leaves this computer and is protected by Windows.</p>
+              <p className="mt-1 text-[12px] text-subtle">Compare it when pairing. The key behind it never leaves this {thisDevice()}{isMobile() ? ' and is kept in the app\'s private storage' : ' and is protected by Windows'}.</p>
             </div>
             <div className="text-[12px] text-subtle">
               <div className="flex items-center gap-1.5 font-medium text-muted"><ShieldCheck className="size-3.5" /> How devices connect</div>
@@ -155,7 +155,7 @@ function DeviceCard({ d, onRemove }: { d: Device; onRemove: (d: Device) => void 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{d.name}</span>
-            {d.is_local && <Badge tone="accent">This computer</Badge>}
+            {d.is_local && <Badge tone="accent">This {thisDevice()}</Badge>}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-muted">
             <StatusDot tone={d.online ? 'online' : 'offline'} />
@@ -173,7 +173,7 @@ function DeviceCard({ d, onRemove }: { d: Device; onRemove: (d: Device) => void 
           <>
             <div><dt className="text-subtle">Paired</dt><dd className="mt-0.5">{formatRelative(d.paired_at)}</dd></div>
             <div>
-              <dt className="text-subtle">Access to this computer</dt>
+              <dt className="text-subtle">Access to this {thisDevice()}</dt>
               <dd className="mt-0.5">
                 <select
                   value={role}
@@ -227,7 +227,8 @@ export function Devices() {
   const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.') || e.type === 'network.changed')
   const requests = useResource(() => api.pairingRequests().catch(() => []), [], (e) => e.type.startsWith('pairing.') || e.type.startsWith('device.'))
   const [inviting, setInviting] = useState(false)
-  const [joining, setJoining] = useState(false)
+  // `#/devices?join=1` opens the join dialog straight away.
+  const [joining, setJoining] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('join') === '1')
   const [removing, setRemoving] = useState<Device | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -253,10 +254,10 @@ export function Devices() {
     <div>
       <PageHeader
         title="Devices"
-        subtitle="Computers that are part of your cloud"
+        subtitle="Devices that are part of your cloud"
         actions={
           <>
-            <Button icon={<Link2 className="size-3.5" />} onClick={() => setJoining(true)}>Join a cloud</Button>
+            <Button icon={<Link2 className="size-3.5" />} onClick={() => setJoining(true)}>{isMobile() ? 'Pair with a computer' : 'Join a cloud'}</Button>
             <Button variant="primary" icon={<QrCode className="size-3.5" />} onClick={() => setInviting(true)}>Add device</Button>
           </>
         }
@@ -310,7 +311,7 @@ export function Devices() {
         }
       >
         <p>
-          <span className="font-medium">{removing?.name}</span> will immediately lose access to this computer, and this computer will stop
+          <span className="font-medium">{removing?.name}</span> will immediately lose access to this {thisDevice()}, and this {thisDevice()} will stop
           showing its files. No files are deleted on either device. You can pair it again later.
         </p>
       </Modal>

@@ -1,5 +1,5 @@
 import { LogOut, Monitor, Moon, Sun } from 'lucide-react'
-import { api, connection } from '../services/api'
+import { api, connection, isMobile } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { useSession } from '../stores/session'
 import { useTheme, type ThemePref } from '../stores/theme'
@@ -8,7 +8,7 @@ import { Badge, Button, PageHeader, Panel, Spinner, cx } from '../components/ui'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[200px_1fr] items-start gap-4 py-3">
+    <div className="grid grid-cols-1 items-start gap-1 py-3 md:grid-cols-[200px_1fr] md:gap-4">
       <div className="text-muted">{label}</div>
       <div className="min-w-0 break-words">{children}</div>
     </div>
@@ -59,7 +59,7 @@ export function Settings() {
           </Row>
           <Row label="Session">
             {me?.local ? (
-              'Desktop app — authenticated automatically on this computer'
+              isMobile() ? 'This app signs in to its own node automatically. There is no password to remember.' : 'Desktop app — authenticated automatically on this computer'
             ) : (
               <Button size="sm" icon={<LogOut className="size-3.5" />} onClick={() => void signOut()}>Sign out</Button>
             )}
@@ -80,8 +80,10 @@ export function Settings() {
               <span className="font-mono text-[12px]">{info.data.data_dir}</span>
               <div className="mt-1 text-[12px] text-subtle">Database, logs and runtime state. Your files are never stored here.</div>
             </Row>
-            <Row label="Background service">
-              The storage service keeps running when this window is closed.
+            <Row label={isMobile() ? 'While the app is closed' : 'Background service'}>
+              {isMobile()
+                ? 'NEXUS runs on this phone while the app is open. Your computers keep running on their own and are reachable again as soon as you open the app.'
+                : 'The storage service keeps running when this window is closed.'}
             </Row>
           </div>
         ) : (

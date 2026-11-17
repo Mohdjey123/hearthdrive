@@ -1,0 +1,10 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.nexus_desktop" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- The app draws its own dark background under the system bars,
+             so the bar icons are always light. -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+        <item name="android:windowBackground">@color/nexus_background</item>
+    </style>
+</resources>

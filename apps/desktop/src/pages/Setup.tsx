@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Check, Cloud, HardDrive, Link2, Smartphone } from 'lucide-react'
-import { api, setSessionToken, type JoinState, type StorageRoot, type SystemInfo } from '../services/api'
+import { api, isMobile, setSessionToken, type JoinState, type StorageRoot, type SystemInfo } from '../services/api'
 import { JoinForm } from '../components/Pairing'
 import { useSession } from '../stores/session'
 import { AddStorageForm } from '../components/AddStorage'
@@ -42,6 +42,95 @@ function Choice({ icon, title, body, tag, disabled, selected, onClick }: {
 }
 
 export function Setup({ defaultName }: { defaultName: string }) {
+  return isMobile() ? <MobileSetup defaultName={defaultName} /> : <DesktopSetup defaultName={defaultName} />
+}
+
+/** A password nobody has to remember: the phone app signs in to its own
+ *  node with a per-run token, so the account password is never typed. */
+function randomPassword(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24))
+  return btoa(String.fromCharCode(...bytes))
+}
+
+/** Phone setup: name the phone, then pair it with a computer. */
+function MobileSetup({ defaultName }: { defaultName: string }) {
+  const { reload } = useSession()
+  const [step, setStep] = useState<'name' | 'pair' | 'done'>('name')
+  const [name, setName] = useState(defaultName || 'My phone')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [joined, setJoined] = useState<JoinState | null>(null)
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const session = await api.setup({ node_name: name.trim(), username: 'owner', password: randomPassword() })
+      setSessionToken(session.token)
+      setStep('pair')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="safe-area flex min-h-full flex-col bg-bg">
+      <div className="flex flex-1 flex-col justify-center p-5">
+        <div className="mb-6 flex items-center gap-3">
+          <Logo className="size-9" />
+          <div>
+            <div className="text-[17px] font-semibold tracking-tight">NEXUS Cloud</div>
+            <div className="text-muted">Your devices. Your storage. One cloud.</div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-line bg-panel p-5">
+          {step === 'name' && (
+            <form onSubmit={create} className="space-y-4">
+              <div>
+                <h2 className="text-[15px] font-semibold">Set up this phone</h2>
+                <p className="mt-1 text-muted">
+                  Your files stay on your computers. This phone connects to them directly and securely — no account, no cloud service.
+                </p>
+              </div>
+              <Field label="Phone name" hint="Shown on your computers when you pair.">
+                <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} className="h-10" />
+              </Field>
+              <ErrorNote>{error}</ErrorNote>
+              <Button type="submit" variant="primary" className="h-11 w-full" loading={busy} disabled={!name.trim()}>Continue</Button>
+            </form>
+          )}
+          {step === 'pair' && (
+            <div className="space-y-4">
+              <h2 className="text-[15px] font-semibold">Pair with a computer</h2>
+              <JoinForm onJoined={(j) => { setJoined(j); setStep('done') }} />
+              <button className="block w-full pt-1 text-center text-[12.5px] text-muted underline" onClick={() => setStep('done')}>
+                Skip for now
+              </button>
+            </div>
+          )}
+          {step === 'done' && (
+            <div className="space-y-4 text-center">
+              <div className="mx-auto w-fit rounded-full bg-accent-soft p-3"><Check className="size-6 text-accent" /></div>
+              <h2 className="text-[15px] font-semibold">{joined ? `Paired with ${joined.host_name}` : 'This phone is ready'}</h2>
+              <p className="text-muted">
+                {joined
+                  ? 'You can now browse, download and upload its files from anywhere.'
+                  : 'Pair it with a computer from Devices whenever you like.'}
+              </p>
+              <Button variant="primary" className="h-11 w-full" onClick={() => void reload()}>Open NEXUS Cloud</Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DesktopSetup({ defaultName }: { defaultName: string }) {
   const { reload } = useSession()
   const [step, setStep] = useState(0)
   const [nodeName, setNodeName] = useState(defaultName)
@@ -125,8 +214,8 @@ export function Setup({ defaultName }: { defaultName: string }) {
               <Choice
                 icon={<Smartphone className="size-5" />}
                 title="Connect my phone"
-                body="Pair an Android device by scanning a QR code."
-                tag={<Badge>Arrives with Android access</Badge>}
+body="Install the NEXUS app on an Android phone and scan this computer's pairing code. Set up this computer first, then use Devices → Add device."
+                tag={<Badge>From the phone app</Badge>}
                 disabled
               />
               <div className="flex justify-end pt-2">

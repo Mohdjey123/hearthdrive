@@ -207,7 +207,7 @@ export function Modal({ title, open, onClose, children, footer, wide }: {
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="flex items-end justify-between gap-4 pb-5">
+    <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 pb-5">
       <div className="min-w-0">
         <h1 className="text-[20px] font-semibold tracking-tight">{title}</h1>
         {subtitle && <p className="mt-0.5 truncate text-muted">{subtitle}</p>}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import QRCode from 'qrcode'
-import { Check, Copy, Fingerprint, Laptop, Link2, RefreshCw, ShieldAlert } from 'lucide-react'
-import { api, ApiError, type Invite, type JoinState, type PairingRequest } from '../services/api'
+import { Check, Copy, Fingerprint, Laptop, Link2, RefreshCw, ScanLine, ShieldAlert } from 'lucide-react'
+import { api, ApiError, isMobile, thisDevice, type Invite, type JoinState, type PairingRequest } from '../services/api'
 import { subscribe } from '../services/events'
 import { formatRelative } from '../lib/format'
 import { toast, toastError } from './Toasts'
@@ -174,7 +174,7 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
         <div className="flex flex-col items-center gap-2 py-8 text-center">
           <div className="rounded-full bg-accent-soft p-3"><Check className="size-6 text-accent" /></div>
           <div className="font-medium">Device added</div>
-          <p className="text-muted">It can now browse this computer's files, and you can browse its files from here.</p>
+          <p className="text-muted">It can now browse this {thisDevice()}'s files, and you can browse its files from here.</p>
         </div>
       ) : requests.length > 0 ? (
         <div className="space-y-3">
@@ -215,11 +215,11 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
             )}
           </div>
           <div className="text-[12px] text-muted">
-            <div className="flex items-center gap-1.5"><Fingerprint className="size-3.5" /> This computer's fingerprint</div>
+            <div className="flex items-center gap-1.5"><Fingerprint className="size-3.5" /> This {thisDevice()}'s fingerprint</div>
             <FingerprintText value={invite.fingerprint} className="mt-1 block text-fg" />
           </div>
           <p className="text-[12px] text-subtle">
-            The link contains this computer's public key, how to reach it and a one-time code — never a password or private key.
+            The link contains this {thisDevice()}'s public key, how to reach it and a one-time code — never a password or private key.
             Phones will scan the QR code once Android access arrives.
           </p>
         </div>
@@ -253,16 +253,43 @@ export function JoinForm({ onJoined, onCancel }: { onJoined: (join: JoinState) =
     if (join?.status === 'approved') onJoined(join)
   }, [join?.status])
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const send = async (value: string) => {
     setBusy(true)
     setError('')
     try {
-      setJoin(await api.join(link.trim()))
+      setJoin(await api.join(value.trim()))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
+    }
+  }
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    void send(link)
+  }
+
+  // Phones: read the pairing QR code shown on the computer.
+  const scan = async () => {
+    setError('')
+    try {
+      const scanner = await import('@tauri-apps/plugin-barcode-scanner')
+      let permission = await scanner.checkPermissions()
+      if (permission !== 'granted') permission = await scanner.requestPermissions()
+      if (permission !== 'granted') {
+        setError('Allow camera access to scan the code, or paste the pairing link instead.')
+        return
+      }
+      const result = await scanner.scan({ windowed: false, formats: [scanner.Format.QRCode] })
+      if (!result.content.startsWith('nexus-pair:')) {
+        setError('That is not a NEXUS pairing code. Scan the code shown under Devices → Add device.')
+        return
+      }
+      setLink(result.content)
+      await send(result.content)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (!/cancel/i.test(message)) setError(message)
     }
   }
 
@@ -299,20 +326,34 @@ export function JoinForm({ onJoined, onCancel }: { onJoined: (join: JoinState) =
 
   return (
     <form onSubmit={submit} className="space-y-3">
-      <p className="text-muted">
-        On the computer you are joining, open <span className="text-fg">Devices</span> → <span className="text-fg">Add device</span> and copy its pairing link.
-        Both computers need NEXUS running and an internet connection, or the same local network. Nothing else to install.
-      </p>
+      {isMobile() ? (
+        <>
+          <p className="text-muted">
+            On your computer, open <span className="text-fg">Devices</span> → <span className="text-fg">Add device</span>, then scan the code it shows.
+          </p>
+          <Button type="button" variant="primary" className="h-11 w-full" icon={<ScanLine className="size-4" />} loading={busy} onClick={() => void scan()}>
+            Scan QR code
+          </Button>
+          <div className="pt-1 text-center text-[12px] text-subtle">or paste the pairing link</div>
+        </>
+      ) : (
+        <p className="text-muted">
+          On the computer you are joining, open <span className="text-fg">Devices</span> → <span className="text-fg">Add device</span> and copy its pairing link.
+          Both computers need NEXUS running and an internet connection, or the same local network. Nothing else to install.
+        </p>
+      )}
       <label className="block">
         <span className="mb-1 block text-[12px] text-muted">Pairing link</span>
         <textarea
           value={link}
           onChange={(e) => setLink(e.target.value)}
-          rows={4}
+          rows={isMobile() ? 3 : 4}
           spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
           placeholder="nexus-pair:…"
           className="w-full resize-none rounded-md border border-line bg-bg px-3 py-2 font-mono text-[11.5px] text-fg outline-none placeholder:text-subtle focus:border-accent"
-          autoFocus
+          autoFocus={!isMobile()}
         />
       </label>
       <ErrorNote>{error}</ErrorNote>

@@ -5,6 +5,7 @@ import { navigate } from '../hooks/useRoute'
 import { subscribeStatus } from '../services/events'
 import { useTransfers } from '../stores/transfers'
 import { useSession } from '../stores/session'
+import { isMobile } from '../services/api'
 import { cx, StatusDot } from './ui'
 
 const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
@@ -41,7 +42,7 @@ export function Sidebar({ current }: { current: Page }) {
   const username = phase.kind === 'ready' ? phase.me.username : ''
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-panel">
+    <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
       <div className="flex h-14 items-center gap-2.5 px-4">
         <Logo className="size-6" />
         <span className="text-[14px] font-semibold tracking-tight">NEXUS Cloud</span>
@@ -74,5 +75,32 @@ export function Sidebar({ current }: { current: Page }) {
         </div>
       </div>
     </aside>
+  )
+}
+
+/** Navigation for narrow screens: a tab bar along the bottom edge. */
+export function BottomNav({ current }: { current: Page }) {
+  const transfers = useTransfers()
+  const active = transfers.filter((t) => t.status === 'uploading' || t.status === 'queued').length
+  const items = isMobile() ? NAV.filter((n) => n.page !== 'overview' && n.page !== 'storage') : NAV
+  return (
+    <nav className="flex shrink-0 border-t border-line bg-panel md:hidden">
+      {items.map(({ page, label, icon: Icon }) => (
+        <button
+          key={page}
+          onClick={() => navigate(page)}
+          className={cx(
+            'relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10.5px]',
+            current === page ? 'font-medium text-fg' : 'text-muted',
+          )}
+        >
+          <Icon className={cx('size-5', current === page && 'text-accent')} />
+          <span className="max-w-full truncate">{label}</span>
+          {page === 'transfers' && active > 0 && (
+            <span className="absolute top-1 left-1/2 ml-2 rounded bg-accent px-1 text-[10px] font-semibold text-accent-fg tabular">{active}</span>
+          )}
+        </button>
+      ))}
+    </nav>
   )
 }

@@ -262,18 +262,18 @@ impl P2pNode {
         };
 
         let (state, detail) = if !enabled {
-            (NetworkState::Off, "Remote access is off. Paired devices cannot connect to this computer.".to_string())
+            (NetworkState::Off, "Remote access is off. Paired devices cannot connect to this device.".to_string())
         } else if relay_connected {
             (
                 NetworkState::Online,
-                "Paired devices can reach this computer from any network. Connections go direct when possible, otherwise through an encrypted relay.".into(),
+                "Paired devices can reach this device from any network. Connections go direct when possible, otherwise through an encrypted relay.".into(),
             )
         } else if self.config.relay != RelayChoice::Disabled && self.started.elapsed() < STARTUP_GRACE {
             (NetworkState::Starting, "Connecting to the relay network…".into())
         } else if self.config.relay == RelayChoice::Disabled {
             (
                 NetworkState::LocalOnly,
-                "Relays are turned off. Only devices that can reach this computer directly (usually on the same network) can connect.".into(),
+                "Relays are turned off. Only devices that can reach this device directly (usually on the same network) can connect.".into(),
             )
         } else {
             (

@@ -22,6 +22,16 @@ pub struct Config {
     pub port: u16,
     /// Built web UI to serve for browser access (optional).
     pub ui_dir: Option<PathBuf>,
+    /// Initial device name. Defaults to the computer's host name.
+    pub device_name: Option<String>,
+}
+
+impl Config {
+    /// A node hosted inside an app (the Android shell): any free loopback
+    /// port, no web UI, data in the app's private directory.
+    pub fn embedded(data_dir: PathBuf, device_name: &str) -> Self {
+        Self { data_dir, port: 0, ui_dir: None, device_name: Some(device_name.to_string()) }
+    }
 }
 
 impl Config {
@@ -49,7 +59,7 @@ impl Config {
                 other => anyhow::bail!("unknown argument: {other}"),
             }
         }
-        Ok(Self { data_dir, port, ui_dir: ui_dir.or_else(locate_ui_dir) })
+        Ok(Self { data_dir, port, ui_dir: ui_dir.or_else(locate_ui_dir), device_name: None })
     }
 }
 
@@ -72,12 +82,39 @@ fn hostname() -> String {
     sysinfo::System::host_name().unwrap_or_else(|| "This computer".into())
 }
 
+/// Sets up logging to the console and to daily files in `<data_dir>/logs`.
+/// Keep the returned guard alive for as long as the process logs.
+pub fn init_logging(data_dir: &Path) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+    let log_dir = data_dir.join("logs");
+    std::fs::create_dir_all(&log_dir)?;
+    let (file_writer, guard) =
+        tracing_appender::non_blocking(tracing_appender::rolling::daily(&log_dir, "nexus-service.log"));
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn,notify=warn")))
+        .with(fmt::layer().with_target(false))
+        .with(fmt::layer().with_ansi(false).with_writer(file_writer))
+        .try_init()
+        .map_err(|e| anyhow::anyhow!("logging is already set up: {e}"))?;
+    Ok(guard)
+}
+
+/// Runs the node until the process is asked to stop.
 pub async fn run(config: Config) -> anyhow::Result<()> {
+    run_with(config, None).await
+}
+
+/// Like [`run`], and reports the API address and local owner token through
+/// `ready` once the node is listening (for a host app that embeds the node).
+pub async fn run_with(
+    config: Config,
+    ready: Option<tokio::sync::oneshot::Sender<RuntimeInfo>>,
+) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.data_dir)
         .with_context(|| format!("creating data directory {}", config.data_dir.display()))?;
     let db = Database::open(&config.data_dir.join("nexus.db")).await.context("opening database")?;
 
-    let host = hostname();
+    let host = config.device_name.clone().unwrap_or_else(hostname);
     let device = db.ensure_local_device(&host, std::env::consts::OS).await?;
     db.touch_device(&device.id).await?;
     let purged = db.purge_expired_sessions().await?;
@@ -93,12 +130,13 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(address).await.with_context(|| {
         format!("port {} is in use — is NEXUS already running?", config.port)
     })?;
+    let address = listener.local_addr()?;
 
     // `NEXUS_NETWORK=local` keeps the endpoint on loopback without relays:
     // only other nodes on this computer can connect (development).
     let p2p_config = match std::env::var("NEXUS_NETWORK").as_deref() {
         Ok("local") => P2pConfig::loopback(),
-        _ => P2pConfig::from_env(config.port),
+        _ => P2pConfig::from_env(address.port()),
     };
     let p2p = Arc::new(
         P2pNode::start(identity.secret_bytes(), p2p_config)
@@ -138,14 +176,18 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     nexus_api::peers::spawn_peer_monitor(state.clone());
 
     let runtime_path = config.data_dir.join(RUNTIME_FILE);
-    write_runtime(&runtime_path, &RuntimeInfo {
+    let runtime = RuntimeInfo {
         pid: std::process::id(),
         port: address.port(),
         base_url: format!("http://{address}"),
         local_token,
         started_at: now_ms(),
-    })?;
+    };
+    write_runtime(&runtime_path, &runtime)?;
     tracing::info!(%address, "NEXUS service listening");
+    if let Some(ready) = ready {
+        let _ = ready.send(runtime);
+    }
 
     let served = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())

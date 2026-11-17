@@ -99,4 +99,20 @@ The request is tagged with the connection's authenticated key (`P2pPeer`) and a 
 
 **Relays.** A relay only forwards encrypted QUIC packets between endpoints it cannot decrypt. The public relays run by the iroh project are rate-limited, which slows large relayed transfers; direct paths are not affected. A self-hosted `iroh-relay` removes that limit.
 
-Still to come: shared users across nodes, a unified index (Phase 4), Android access (Phase 3), and an installer firewall rule for the UDP port (Phase 7).
+## Android app (Phase 3)
+
+The Tauri shell (`apps/desktop/src-tauri`) builds for Windows and Android from one crate:
+
+* **Desktop.** `service_connection` finds or starts the separate `nexus-service` process and returns its address and local token.
+* **Android.** There is no separate process. `service_connection` starts the node in the app's own process on first use (`nexus_core::run_with` on a dedicated thread and runtime), with its data in the app's private directory and the API on a random loopback port. The web view talks to it over loopback HTTP; the network security config allows plain HTTP to `127.0.0.1` only.
+
+The UI is the same React app. It asks the shell which host it runs in (`shell: desktop | mobile`) and adapts:
+* a bottom tab bar replaces the sidebar on narrow screens, and tables drop their secondary columns;
+* tap opens, press-and-hold selects;
+* setup asks only for a phone name. The account gets a random password, because the app always signs in to its own node with the per-run local token;
+* pairing can scan the QR code (`tauri-plugin-barcode-scanner`);
+* downloads go through the `save_download` command, which streams the file from the app's own node into `Download/NEXUS` (a web view cannot save files on Android). It refuses any URL that is not on the app's own node.
+
+On Android the device key is stored in the app's private storage without DPAPI; the app sandbox protects it. The node stops when Android stops the app, so a phone is reachable by other devices only while the app is open.
+
+Still to come: shared users across nodes, a unified index (Phase 4), a foreground service for long transfers on Android, and an installer firewall rule for the UDP port (Phase 7).

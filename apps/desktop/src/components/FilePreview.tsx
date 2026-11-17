@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, Download } from 'lucide-react'
-import { contentUrl, fileApi, type FileEntry } from '../services/api'
+import { contentUrl, fileApi, isMobile, type FileEntry } from '../services/api'
+import { toast, toastError } from './Toasts'
 import { formatBytes, formatDate, previewKind } from '../lib/format'
 import { FileIcon } from './FileIcon'
 import { Button, IconButton, Modal, Spinner } from './ui'
@@ -19,6 +20,15 @@ export async function cachedContentUrl(id: string, prefix = '') {
 
 export async function downloadFile(file: FileEntry, prefix = '') {
   const url = await contentUrl(file.id, true, prefix)
+  if (isMobile()) {
+    // A web view cannot save files on a phone; the app writes the file to
+    // the phone's Download folder instead.
+    const { invoke } = await import('@tauri-apps/api/core')
+    toast(`Downloading ${file.filename}…`)
+    const saved = await invoke<string>('save_download', { url, filename: file.filename })
+    toast(`Saved to ${saved}`)
+    return
+  }
   const a = document.createElement('a')
   a.href = url
   a.download = file.filename
@@ -110,7 +120,7 @@ export function FilePreview({ file, siblings, onNavigate, onClose, prefix = '' }
                 <ChevronRight className="size-4" />
               </IconButton>
             </div>
-            <Button icon={<Download className="size-3.5" />} onClick={() => void downloadFile(file, prefix)}>
+            <Button icon={<Download className="size-3.5" />} onClick={() => void downloadFile(file, prefix).catch(toastError)}>
               Download
             </Button>
           </div>

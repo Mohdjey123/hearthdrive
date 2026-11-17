@@ -191,7 +191,7 @@ export class ApiError extends Error {
   }
 }
 
-interface Connection { baseUrl: string; token: string | null; local: boolean; dataDir?: string }
+interface Connection { baseUrl: string; token: string | null; local: boolean; dataDir?: string; shell?: 'desktop' | 'mobile' }
 
 const TOKEN_KEY = 'nexus.session'
 let conn: Connection = { baseUrl: '', token: null, local: false }
@@ -203,8 +203,8 @@ export const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS
 export async function initConnection(): Promise<Connection> {
   if (isTauri()) {
     const { invoke } = await import('@tauri-apps/api/core')
-    const c = await invoke<{ base_url: string; token: string; data_dir: string }>('service_connection')
-    conn = { baseUrl: c.base_url, token: c.token, local: true, dataDir: c.data_dir }
+    const c = await invoke<{ base_url: string; token: string; data_dir: string; shell?: 'desktop' | 'mobile' }>('service_connection')
+    conn = { baseUrl: c.base_url, token: c.token, local: true, dataDir: c.data_dir, shell: c.shell ?? 'desktop' }
   } else {
     let stored: string | null = null
     try { stored = localStorage.getItem(TOKEN_KEY) } catch { /* storage unavailable */ }
@@ -215,6 +215,16 @@ export async function initConnection(): Promise<Connection> {
 }
 
 export const connection = () => conn
+
+/** The UI runs inside the phone app, which hosts its own node. */
+export const isMobile = () => conn.shell === 'mobile'
+
+/** Touch-first input: tap opens, press-and-hold selects. */
+export const isTouch = () =>
+  isMobile() || (typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true)
+
+/** "phone" or "computer", for wording that names this device. */
+export const thisDevice = () => (isMobile() ? 'phone' : 'computer')
 
 export function setSessionToken(token: string | null) {
   if (conn.local) return

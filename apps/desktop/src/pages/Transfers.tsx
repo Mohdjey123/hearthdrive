@@ -35,7 +35,7 @@ export function Transfers() {
               const pct = t.size ? t.loaded / t.size : t.status === 'done' ? 1 : 0
               const remaining = t.speed > 0 ? ((t.size - t.loaded) / t.speed) * 1000 : 0
               return (
-                <li key={t.id} className="flex items-center gap-4 px-5 py-3">
+                <li key={t.id} className="flex items-center gap-3 px-4 py-3 md:gap-4 md:px-5">
                   <Upload className="size-4 shrink-0 text-muted" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -50,7 +50,7 @@ export function Transfers() {
                       <ProgressBar className="mt-2" value={pct} />
                     )}
                   </div>
-                  <div className="w-44 shrink-0 text-right text-[12px] text-muted tabular">
+                  <div className="w-24 shrink-0 text-right text-[12px] text-muted tabular md:w-44">
                     <div>{formatBytes(t.loaded)} / {formatBytes(t.size)}</div>
                     {t.status === 'uploading' && t.speed > 0 && (
                       <div className="text-subtle">{formatBytes(t.speed)}/s · {formatDuration(remaining)} left</div>
