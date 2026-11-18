@@ -953,3 +953,83 @@ async fn updates_spread_between_paired_devices() {
     let (_, status) = pc.call(Method::GET, "/updates", None).await;
     assert!(!status["carried"].as_array().unwrap().iter().any(|r| r["platform"] == "android-aarch64"), "{status}");
 }
+
+/// The ids of the devices `node` lists, besides itself, and who introduced
+/// each (`-` when paired directly).
+async fn peers_of(node: &Node) -> Vec<(String, String, String)> {
+    let (_, list) = node.call(Method::GET, "/devices", None).await;
+    let mut out: Vec<(String, String, String)> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["is_local"] == false)
+        .map(|d| {
+            (
+                d["name"].as_str().unwrap().to_string(),
+                d["introduced_by"].as_str().unwrap_or("-").to_string(),
+                d["role"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[tokio::test]
+async fn the_main_node_introduces_its_devices_to_each_other() {
+    let hub = node("hub").await;
+    let laptop = node("laptop").await;
+    let phone = node_with("phone", true).await;
+    laptop.pair_with(&hub).await;
+    phone.pair_with(&hub).await;
+    // The hub lets the phone only view its files.
+    let (s, _) = hub.call(Method::PATCH, &format!("/devices/{}", phone.device_id()), Some(json!({"role": "viewer"}))).await;
+    assert_eq!(s, 204);
+
+    nexus_api::introduce_devices(&hub.state).await;
+    let hub_id = hub.device_id().to_string();
+    assert_eq!(peers_of(&laptop).await, [("hub".into(), "-".into(), "editor".into()), ("phone".into(), hub_id.clone(), "viewer".into())]);
+    assert_eq!(peers_of(&phone).await, [("hub".into(), "-".into(), "editor".into()), ("laptop".into(), hub_id.clone(), "editor".into())]);
+
+    // They now reach each other directly, with signed requests.
+    nexus_api::peers::check_all_peers(&laptop.state).await;
+    nexus_api::peers::check_all_peers(&phone.state).await;
+    let (_, list) = laptop.call(Method::GET, "/devices", None).await;
+    let phone_seen = list.as_array().unwrap().iter().find(|d| d["name"] == "phone").unwrap().clone();
+    assert_eq!(phone_seen["online"], true, "{phone_seen}");
+    let root = laptop.add_root(laptop.storage.path()).await;
+    let (s, roots) = phone.call(Method::GET, &format!("/peers/{}/proxy/storage/roots", laptop.device_id()), None).await;
+    assert_eq!(s, 200, "{roots}");
+    assert!(roots.as_array().unwrap().iter().any(|r| r["id"] == root));
+
+    // Introduced devices do not introduce others.
+    nexus_api::introduce_devices(&laptop.state).await;
+    assert_eq!(peers_of(&phone).await.len(), 2);
+
+    // Removing a device on the hub removes it everywhere it was introduced.
+    let (s, _) = hub.call(Method::DELETE, &format!("/devices/{}", phone.device_id()), None).await;
+    assert_eq!(s, 204);
+    nexus_api::introduce_devices(&hub.state).await;
+    assert_eq!(peers_of(&laptop).await, [("hub".into(), "-".into(), "editor".into())]);
+    for _ in 0..50 {
+        if peers_of(&phone).await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(peers_of(&phone).await.is_empty(), "the phone forgets the hub and what it introduced");
+
+    // A device removed by hand is not brought back.
+    let tablet = node("tablet").await;
+    tablet.pair_with(&hub).await;
+    nexus_api::introduce_devices(&hub.state).await;
+    assert_eq!(peers_of(&laptop).await.len(), 2);
+    let (s, _) = laptop.call(Method::DELETE, &format!("/devices/{}", tablet.device_id()), None).await;
+    assert_eq!(s, 204);
+    nexus_api::introduce_devices(&hub.state).await;
+    assert_eq!(peers_of(&laptop).await, [("hub".into(), "-".into(), "editor".into())]);
+
+    // And turning introductions off on the hub stops them.
+    let (s, _) = hub.call(Method::PUT, "/devices/introductions", Some(json!({"enabled": false}))).await;
+    assert_eq!(s, 200);
+}

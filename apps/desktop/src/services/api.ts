@@ -85,6 +85,8 @@ export interface Device {
   allowed_roots: string[] | null
   roots: number
   indexed_bytes: number
+  /** The paired device that introduced this one; `null` if paired directly. */
+  introduced_by: string | null
 }
 
 export type NetworkState = 'off' | 'starting' | 'online' | 'local_only'
@@ -582,6 +584,8 @@ export const api = {
   checkUpdates: () => request<UpdateStatus>('POST', '/updates/check'),
   setAutoUpdate: (auto_install: boolean) => request<UpdateStatus>('PUT', '/updates/settings', { auto_install }),
   installUpdate: () => request<UpdateRelease>('POST', '/updates/install'),
+  introductions: () => request<{ enabled: boolean }>('GET', '/devices/introductions'),
+  setIntroductions: (enabled: boolean) => request<{ enabled: boolean }>('PUT', '/devices/introductions', { enabled }),
   autostart: () => request<{ supported: boolean; enabled: boolean }>('GET', '/system/autostart'),
   setAutostart: (enabled: boolean) => request<{ supported: boolean; enabled: boolean }>('PUT', '/system/autostart', { enabled }),
   removeDevice: (id: string) => request<void>('DELETE', `/devices/${id}`),

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { clearCache, setCacheScope } from '../lib/cache'
 import { api, ApiError, initConnection, onUnauthorized, setSessionToken, type Me } from '../services/api'
 import { startEvents, stopEvents } from '../services/events'
 
@@ -37,6 +38,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
       try {
         const me = await api.me()
+        setCacheScope(me.username)
         setPhase({ kind: 'ready', me, nodeName: status.node_name })
         startEvents()
       } catch (e) {
@@ -68,6 +70,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try { await api.logout() } catch { /* already gone */ }
     stopEvents()
     setSessionToken(null)
+    clearCache()
     await reload()
   }, [reload])
 

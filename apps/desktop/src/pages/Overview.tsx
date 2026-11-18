@@ -41,6 +41,9 @@ const ACTIONS: Record<string, string> = {
   'share.deleted': 'Took down a link',
   'share.service.changed': 'Changed Send service',
   'update.received': 'Received an update',
+  'device.introduced': 'Device introduced',
+  'devices.introduce.enabled': 'Device introductions on',
+  'devices.introduce.disabled': 'Device introductions off',
   'update.installing': 'Installing an update',
   'updates.auto.enabled': 'Automatic updates on',
   'updates.auto.disabled': 'Automatic updates off',
@@ -90,7 +93,7 @@ function summarise(id: string, name: string, roots: StorageRoot[]): DeviceStorag
 
 /** Storage on this computer and every paired device that answers, added up. */
 function useCloudStorage(local: StorageRoot[] | undefined) {
-  const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'))
+  const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'), 'devices')
   const peers = (devices.data ?? []).filter((d) => !d.is_local)
   const online = peers.filter((d) => d.online)
   const key = online.map((d) => d.id).join()
@@ -107,6 +110,7 @@ function useCloudStorage(local: StorageRoot[] | undefined) {
       ),
     [key],
     (e) => e.type.startsWith('storage.'),
+    `cloud:${key}`,
   )
   const here = local ? summarise('', `This ${thisDevice()}`, local) : null
   const reached = (remote.data ?? []).filter((d): d is DeviceStorage => !!d)
@@ -179,7 +183,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 
 export function Overview() {
   const { phase } = useSession()
-  const roots = useResource(() => api.roots(), [], (e) => e.type.startsWith('storage.'))
+  const roots = useResource(() => api.roots(), [], (e) => e.type.startsWith('storage.'), 'roots:')
   const recent = useResource(() => api.recent(8), [], (e) => e.type.startsWith('file.') || e.type === 'storage.scan.completed')
   const activity = useResource(() => api.activity(8), [], (e) => e.type.startsWith('file.') || e.type === 'storage.changed')
   const transfers = useTransfers()

@@ -324,6 +324,7 @@ async fn check_peer(state: &SharedState, device: Device) {
             }
             if device.status != "online" {
                 tracing::info!(device = %device.name, route = ?route, latency, "paired device is online");
+                state.introductions.notify_one();
             }
             state.events.emit(Event::DeviceOnline { device_id: device.id.clone(), latency_ms: latency });
         }
@@ -618,7 +619,9 @@ pub fn spawn_join_watcher(s: SharedState, join: JoinState) {
                                 .await;
                             s.events.emit(Event::DeviceChanged { device_id: join.host_device_id.clone() });
                             set_join(&s, &join.id, "approved", None);
+                            crate::routes::introductions::undecline(&s, &join.host_device_id).await;
                             s.net.peer_wake.notify_one();
+                            s.introductions.notify_one();
                         }
                         Err(e) => set_join(&s, &join.id, "failed", Some(e.to_string())),
                     }

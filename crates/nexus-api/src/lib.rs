@@ -13,6 +13,7 @@ mod routes;
 pub mod share;
 
 pub use routes::backup::spawn as spawn_backup;
+pub use routes::introductions::{introduce_now as introduce_devices, spawn as spawn_introductions};
 pub use routes::shares::spawn as spawn_shares;
 pub use routes::sync::spawn as spawn_sync;
 pub use routes::updates::{check as check_updates, spawn as spawn_updates};
@@ -58,7 +59,7 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
     frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{backup, devices, files, network, shares, storage, sync, system, transfers, updates, uploads, users};
+    use routes::{backup, devices, files, introductions, network, shares, storage, sync, system, transfers, updates, uploads, users};
 
     let api = Router::new()
         .route("/health", get(system::health))
@@ -72,6 +73,7 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         // Devices and pairing
         .route("/devices", get(devices::list))
         .route("/devices/{id}", patch(devices::update).delete(devices::remove))
+        .route("/devices/introductions", get(introductions::settings).put(introductions::set_settings))
         .route("/devices/pair", post(devices::create_invite))
         .route("/devices/pair/{id}", delete(devices::cancel_invite))
         .route("/devices/pair/requests", get(devices::list_requests))
@@ -84,6 +86,7 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         // Called by paired devices (signed requests)
         .route("/peer/hello", get(devices::hello))
         .route("/peer/unpair", post(devices::unpair))
+        .route("/peer/introductions", post(introductions::receive))
         .route("/peer/updates", get(updates::peer_list))
         .route("/peer/updates/{platform}", get(updates::peer_package))
         // Browse a paired device through this node

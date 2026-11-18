@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Download, RefreshCw } from 'lucide-react'
 import { androidBridge, api, isMobile, type UpdateStatus } from '../services/api'
 import { useResource } from '../hooks/useResource'
@@ -13,9 +13,31 @@ const PLATFORM_NAMES: Record<string, string> = {
 
 export const platformName = (p: string) => PLATFORM_NAMES[p] ?? p
 
-/** Update status, refreshed whenever the node reports a change. */
+/**
+ * Update status, refreshed whenever the node reports a change. While a
+ * check or download is running it is also asked every few seconds, and
+ * again when the app comes back to the foreground: a live connection
+ * dropped while the phone slept would otherwise leave it showing an old
+ * state.
+ */
 export function useUpdates() {
-  return useResource(() => api.updates(), [], (e) => e.type === 'updates.changed')
+  const updates = useResource(() => api.updates(), [], (e) => e.type === 'updates.changed')
+  const { reload } = updates
+  const busy = Boolean(updates.data?.checking || updates.data?.downloading)
+
+  useEffect(() => {
+    if (!busy) return
+    const timer = setInterval(reload, 3000)
+    return () => clearInterval(timer)
+  }, [busy, reload])
+
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && reload()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [reload])
+
+  return updates
 }
 
 /**

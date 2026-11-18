@@ -204,6 +204,7 @@ pub async fn run_with(
     nexus_api::spawn_backup(state.clone());
     nexus_api::spawn_shares(state.clone());
     nexus_api::spawn_updates(state.clone());
+    nexus_api::spawn_introductions(state.clone());
 
     // Keep the database's write-ahead log from growing without bound.
     let checkpoint_db = db.clone();

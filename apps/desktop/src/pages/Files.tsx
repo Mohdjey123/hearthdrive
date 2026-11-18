@@ -10,6 +10,7 @@ import {
 } from '../services/api'
 import { subscribe } from '../services/events'
 import { useResource } from '../hooks/useResource'
+import { cached, remember } from '../lib/cache'
 import { navigate, type Route } from '../hooks/useRoute'
 import { enqueueUploads, onUploadComplete } from '../stores/transfers'
 import { fileKind, formatBytes, formatDate, formatRelative, previewKind } from '../lib/format'
@@ -24,6 +25,9 @@ type Sort = 'name' | 'size' | 'modified' | 'type'
  *  devices (`''` = this device). Untagged results belong to the device being browsed. */
 type Found = FoundItem & { device_id?: string; device_name?: string }
 const PAGE = 300
+
+const listingKey = (fapi: FileApi, rootId: string, path: string, sort: Sort, order: string) =>
+  `list:${fapi.prefix}:${rootId}:${path.toLowerCase()}:${sort}:${order}`
 
 function useListing(fapi: FileApi, rootId: string | undefined, path: string, sort: Sort, order: 'asc' | 'desc') {
   const [items, setItems] = useState<FileEntry[]>([])
@@ -44,6 +48,7 @@ function useListing(fapi: FileApi, rootId: string | undefined, path: string, sor
         setItems((prev) => (append ? [...prev, ...res.items] : res.items))
         setTotal(res.total)
         setError(null)
+        if (!append) remember(listingKey(fapi, rootId, path, sort, order), { items: res.items.slice(0, PAGE), total: res.total })
       } catch (e) {
         if (id === seq.current) setError(e as ApiError)
       } finally {
@@ -53,10 +58,12 @@ function useListing(fapi: FileApi, rootId: string | undefined, path: string, sor
     [fapi, rootId, path, sort, order, items.length],
   )
 
-  // Reset when the location or ordering changes.
+  // Reset when the location or ordering changes: to what this folder
+  // showed last time, if it was seen before, while it loads again.
   useEffect(() => {
-    setItems([])
-    setTotal(0)
+    const known = rootId ? cached<{ items: FileEntry[]; total: number }>(listingKey(fapi, rootId, path, sort, order)) : undefined
+    setItems(known?.items ?? [])
+    setTotal(known?.total ?? 0)
     setError(null)
   }, [fapi, rootId, path, sort, order])
   const loadRef = useRef(load)
@@ -323,7 +330,7 @@ export function Files({ route }: { route: Route }) {
   const deviceId = route.params.get('device') ?? ''
   const prefix = deviceId ? peerPrefix(deviceId) : ''
   const fapi = fileApi(prefix)
-  const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'))
+  const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'), 'devices')
   const peers = (devices.data ?? []).filter((d) => !d.is_local)
   const device = peers.find((d) => d.id === deviceId)
   // Remember which device the roots came from, so switching never pairs one
@@ -332,6 +339,7 @@ export function Files({ route }: { route: Route }) {
     async () => ({ prefix, list: await fapi.roots() }),
     [fapi],
     (e) => !prefix && e.type === 'storage.changed',
+    `files-roots:${prefix}`,
   )
   const rootList = roots.data?.prefix === prefix ? roots.data.list : undefined
   const rootsError = roots.loading ? null : roots.error

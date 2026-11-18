@@ -58,6 +58,8 @@ pub struct AppState {
     pub updates: crate::routes::updates::UpdateControl,
     /// Keys whose signed releases this node accepts.
     pub update_keys: Vec<String>,
+    /// Pairing changed: introduce the paired devices to each other again.
+    pub introductions: tokio::sync::Notify,
 }
 
 impl AppState {
@@ -99,6 +101,7 @@ impl AppState {
             setup_needs_token: false,
             updates: Default::default(),
             update_keys: nexus_devices::release::TRUSTED_KEYS.iter().map(|k| k.to_string()).collect(),
+            introductions: tokio::sync::Notify::new(),
         }
     }
 

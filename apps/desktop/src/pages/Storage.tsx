@@ -10,7 +10,7 @@ import { Badge, Button, EmptyState, IconButton, Modal, PageHeader, ProgressBar, 
 import { rootStatusText, rootTone } from './Overview'
 
 export function Storage({ route }: { route: Route }) {
-  const roots = useResource(() => api.roots(), [], (e) => e.type.startsWith('storage.'))
+  const roots = useResource(() => api.roots(), [], (e) => e.type.startsWith('storage.'), 'roots:')
   const adding = route.params.get('add') === '1'
   const [removing, setRemoving] = useState<StorageRoot | null>(null)
   const [busy, setBusy] = useState(false)

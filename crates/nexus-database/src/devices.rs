@@ -3,7 +3,7 @@ use sqlx::AssertSqlSafe;
 use nexus_common::types::{Device, Role};
 use nexus_common::{NexusError, Result, new_id, time::now_ms};
 
-const COLUMNS: &str = "id, name, device_type, public_key, network_address, is_local, last_seen, status, created_at, \n                       role, addresses, latency_ms, paired_at, version, allowed_roots";
+const COLUMNS: &str = "id, name, device_type, public_key, network_address, is_local, last_seen, status, created_at, \n                       role, addresses, latency_ms, paired_at, version, allowed_roots, introduced_by";
 const LOCAL_DEVICE_KEY: &str = "local_device_id";
 
 impl Database {
@@ -29,6 +29,7 @@ impl Database {
             paired_at: None,
             version: None,
             allowed_roots: None,
+            introduced_by: None,
         };
         sqlx::query(
             "INSERT INTO devices (id, name, device_type, network_address, is_local, last_seen, status, created_at) \
@@ -110,7 +111,7 @@ impl Database {
         let now = now_ms();
         let addresses = serde_json::to_string(peer.addresses).map_err(NexusError::internal)?;
         sqlx::query(
-            "INSERT INTO devices (id, name, device_type, public_key, network_address, is_local, last_seen, status,                                   created_at, role, addresses, paired_at, version)              VALUES (?, ?, ?, ?, ?, 0, NULL, 'offline', ?, ?, ?, ?, ?)              ON CONFLICT(id) DO UPDATE SET name = excluded.name, device_type = excluded.device_type,                 public_key = excluded.public_key, network_address = excluded.network_address,                 role = excluded.role, addresses = excluded.addresses, paired_at = excluded.paired_at,                 version = excluded.version, status = 'offline'              WHERE devices.is_local = 0",
+            "INSERT INTO devices (id, name, device_type, public_key, network_address, is_local, last_seen, status,                                   created_at, role, addresses, paired_at, version)              VALUES (?, ?, ?, ?, ?, 0, NULL, 'offline', ?, ?, ?, ?, ?)              ON CONFLICT(id) DO UPDATE SET name = excluded.name, device_type = excluded.device_type,                 public_key = excluded.public_key, network_address = excluded.network_address,                 role = excluded.role, addresses = excluded.addresses, paired_at = excluded.paired_at,                 version = excluded.version, status = 'offline', introduced_by = NULL              WHERE devices.is_local = 0",
         )
         .bind(peer.id)
         .bind(peer.name)
@@ -195,6 +196,62 @@ pub struct NewPeer<'a> {
 }
 
 impl Database {
+    /// Adds or refreshes a device introduced by the paired device `by`, with
+    /// its role and storage limits. A device paired directly, or introduced
+    /// by another device, is left alone. Returns whether it was new.
+    pub async fn upsert_introduced_device(&self, peer: &NewPeer<'_>, by: &str, roots: Option<&[String]>) -> Result<bool> {
+        if self.get_setting(LOCAL_DEVICE_KEY).await?.as_deref() == Some(peer.id) {
+            return Ok(false);
+        }
+        let existing: Option<(Option<String>,)> = sqlx::query_as("SELECT introduced_by FROM devices WHERE id = ?")
+            .bind(peer.id)
+            .fetch_optional(&self.pool)
+            .await?;
+        if let Some((owner,)) = &existing
+            && owner.as_deref() != Some(by)
+        {
+            return Ok(false);
+        }
+        let addresses = serde_json::to_string(peer.addresses).map_err(NexusError::internal)?;
+        let roots = roots.map(|r| serde_json::to_string(r).unwrap_or_else(|_| "[]".into()));
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO devices (id, name, device_type, public_key, network_address, is_local, last_seen, status,                                   created_at, role, addresses, paired_at, version, allowed_roots, introduced_by)              VALUES (?, ?, ?, ?, ?, 0, NULL, 'offline', ?, ?, ?, ?, ?, ?, ?)              ON CONFLICT(id) DO UPDATE SET name = excluded.name, device_type = excluded.device_type,                 public_key = excluded.public_key, role = excluded.role, addresses = excluded.addresses,                 allowed_roots = excluded.allowed_roots              WHERE devices.is_local = 0 AND devices.introduced_by = excluded.introduced_by",
+        )
+        .bind(peer.id)
+        .bind(peer.name)
+        .bind(peer.device_type)
+        .bind(peer.public_key)
+        .bind(peer.addresses.first())
+        .bind(now)
+        .bind(peer.role)
+        .bind(addresses)
+        .bind(now)
+        .bind(peer.version)
+        .bind(roots)
+        .bind(by)
+        .execute(&self.pool)
+        .await?;
+        Ok(existing.is_none())
+    }
+
+    /// Forgets the devices `by` introduced, except `keep`. Returns the ids
+    /// forgotten.
+    pub async fn forget_introduced(&self, by: &str, keep: &[String]) -> Result<Vec<String>> {
+        let introduced: Vec<(String,)> = sqlx::query_as("SELECT id FROM devices WHERE introduced_by = ? AND is_local = 0")
+            .bind(by)
+            .fetch_all(&self.pool)
+            .await?;
+        let mut gone = Vec::new();
+        for (id,) in introduced {
+            if !keep.contains(&id) {
+                sqlx::query("DELETE FROM devices WHERE id = ? AND introduced_by = ?").bind(&id).bind(by).execute(&self.pool).await?;
+                gone.push(id);
+            }
+        }
+        Ok(gone)
+    }
+
     /// Limits a paired device to some storage locations (`None` = all).
     pub async fn set_device_roots(&self, id: &str, roots: Option<&[String]>) -> Result<()> {
         let json = roots.map(|r| serde_json::to_string(r).unwrap_or_else(|_| "[]".into()));

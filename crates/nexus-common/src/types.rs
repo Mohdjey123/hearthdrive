@@ -89,6 +89,9 @@ pub struct Device {
     /// JSON array of the storage root ids this device may see; `None` = all.
     #[serde(skip)]
     pub allowed_roots: Option<String>,
+    /// The paired device that introduced this one, if it was introduced
+    /// rather than paired directly.
+    pub introduced_by: Option<String>,
 }
 
 impl Device {

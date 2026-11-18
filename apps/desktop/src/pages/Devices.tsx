@@ -221,7 +221,44 @@ function AccessModal({ device, onClose }: { device: Device; onClose: () => void 
   )
 }
 
-function DeviceCard({ d, onRemove }: { d: Device; onRemove: (d: Device) => void }) {
+/** Whether this node introduces its paired devices to each other. */
+function IntroductionsToggle() {
+  const state = useResource(() => api.introductions(), [])
+  const [busy, setBusy] = useState(false)
+  if (!state.data) return null
+  const toggle = async (enabled: boolean) => {
+    setBusy(true)
+    try {
+      await api.setIntroductions(enabled)
+      toast(enabled ? 'Your devices will be paired with each other' : 'Devices are no longer introduced to each other')
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+      state.reload()
+    }
+  }
+  return (
+    <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-line bg-panel p-4">
+      <input
+        type="checkbox"
+        className="mt-0.5 accent-[var(--nx-accent)]"
+        checked={state.data.enabled}
+        disabled={busy}
+        onChange={(e) => void toggle(e.target.checked)}
+      />
+      <span>
+        <span className="font-medium">Pair my devices with each other</span>
+        <span className="mt-0.5 block text-[12px] text-subtle">
+          Every device paired with this {thisDevice()} is introduced to the others, so they pair without scanning a code. An introduced device gets no
+          more access than this {thisDevice()} has there, and is removed everywhere when you remove it here.
+        </span>
+      </span>
+    </label>
+  )
+}
+
+function DeviceCard({ d, introducer, onRemove }: { d: Device; introducer: string | null; onRemove: (d: Device) => void }) {
   const Icon = deviceIcon(d.device_type)
   const [role, setRole] = useState<Role>(d.role)
   const [editingAccess, setEditingAccess] = useState(false)
@@ -244,6 +281,7 @@ function DeviceCard({ d, onRemove }: { d: Device; onRemove: (d: Device) => void 
             <span className="truncate font-medium">{d.name}</span>
             {d.is_local && <Badge tone="accent">This {thisDevice()}</Badge>}
           </div>
+          {d.introduced_by && <div className="mt-0.5 truncate text-[12px] text-subtle">Introduced by {introducer ?? 'a paired device'}</div>}
           <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-muted">
             <StatusDot tone={d.online ? 'online' : 'offline'} />
             {d.is_local ? 'Online' : d.online ? `Online${d.latency_ms != null ? ` · ${d.latency_ms} ms` : ''}` : d.last_seen ? `Offline · seen ${formatRelative(d.last_seen)}` : 'Offline · not seen yet'}
@@ -322,7 +360,7 @@ function DeviceCard({ d, onRemove }: { d: Device; onRemove: (d: Device) => void 
 }
 
 export function Devices() {
-  const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.') || e.type === 'network.changed')
+  const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.') || e.type === 'network.changed', 'devices')
   const requests = useResource(() => api.pairingRequests().catch(() => []), [], (e) => e.type.startsWith('pairing.') || e.type.startsWith('device.'))
   const [inviting, setInviting] = useState(false)
   // `#/devices?join=1` opens the join dialog straight away.
@@ -371,7 +409,7 @@ export function Devices() {
         <Spinner />
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
-          {list.map((d) => <DeviceCard key={`${d.id}-${d.role}-${d.allowed_roots?.join(',') ?? 'all'}`} d={d} onRemove={setRemoving} />)}
+          {list.map((d) => <DeviceCard key={`${d.id}-${d.role}-${d.allowed_roots?.join(',') ?? 'all'}`} d={d} introducer={list.find((x) => x.id === d.introduced_by)?.name ?? null} onRemove={setRemoving} />)}
           {peers.length === 0 && (
             <button
               onClick={() => setInviting(true)}
@@ -384,6 +422,8 @@ export function Devices() {
           )}
         </div>
       )}
+
+      <IntroductionsToggle />
 
       <div className="mt-4"><NetworkPanel /></div>
 

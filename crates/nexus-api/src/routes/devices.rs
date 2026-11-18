@@ -138,6 +138,7 @@ pub async fn update(
         audit(&s, &user, "device.access.changed", Some(&format!("{} → {summary}", device.name))).await;
     }
     s.events.emit(Event::DeviceChanged { device_id: id });
+    s.introductions.notify_one();
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -150,9 +151,15 @@ pub async fn remove(State(s): State<SharedState>, user: AuthUser, Path(id): Path
     if device.is_local {
         return Err(NexusError::invalid("This computer cannot remove itself").into());
     }
+    if device.introduced_by.is_some() {
+        // Removed by hand: introductions must not bring it back.
+        super::introductions::decline(&s, &id).await;
+    }
     s.db.delete_peer_device(&id).await?;
+    super::introductions::forget_all_from(&s, &id).await;
     audit(&s, &user, "device.removed", Some(&device.name)).await;
     s.events.emit(Event::DeviceRemoved { device_id: id.clone() });
+    s.introductions.notify_one();
 
     let notify = s.clone();
     tokio::spawn(async move {
@@ -310,8 +317,10 @@ pub async fn approve(
     }
     s.db.close_pairing_session(&req.session_id).await?;
     audit(&s, &user, "device.paired", Some(&req.name)).await;
+    super::introductions::undecline(&s, &req.device_id).await;
     s.events.emit(Event::DeviceChanged { device_id: req.device_id.clone() });
     s.net.peer_wake.notify_one();
+    s.introductions.notify_one();
     Ok(Json(json!({ "device_id": req.device_id })))
 }
 
@@ -549,7 +558,12 @@ pub async fn hello(State(s): State<SharedState>, user: AuthUser, headers: Header
 pub async fn unpair(State(s): State<SharedState>, user: AuthUser) -> ApiResult<StatusCode> {
     let caller = user.require_device()?.to_string();
     let device = s.db.get_device(&caller).await?;
+    if device.introduced_by.is_some() {
+        super::introductions::decline(&s, &caller).await;
+    }
     s.db.delete_peer_device(&caller).await?;
+    super::introductions::forget_all_from(&s, &caller).await;
+    s.introductions.notify_one();
     if let Some(key) = device.public_key.as_deref().and_then(nexus_network::public_key) {
         s.net.p2p.forget(&key);
     }

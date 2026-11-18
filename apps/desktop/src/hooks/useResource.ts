@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { subscribe, type NexusEvent } from '../services/events'
+import { cached, remember } from '../lib/cache'
 
 interface Resource<T> {
   data: T | undefined
@@ -10,14 +11,18 @@ interface Resource<T> {
 
 /**
  * Loads data and keeps it fresh. `refreshOn` decides which live events
- * should trigger a (debounced) reload.
+ * should trigger a (debounced) reload. With `cacheKey`, the last answer is
+ * shown at once (also after a restart) while the fresh one loads.
  */
 export function useResource<T>(
   load: () => Promise<T>,
   deps: unknown[],
   refreshOn?: (e: NexusEvent) => boolean,
+  cacheKey?: string,
 ): Resource<T> {
-  const [data, setData] = useState<T>()
+  const [data, setData] = useState<T | undefined>(() => cached<T>(cacheKey))
+  const keyRef = useRef(cacheKey)
+  keyRef.current = cacheKey
   const [error, setError] = useState<Error | null>(null)
   const [loading, setLoading] = useState(true)
   const seq = useRef(0)
@@ -31,12 +36,16 @@ export function useResource<T>(
     inFlight.current = true
     again.current = false
     setLoading(true)
+    const key = keyRef.current
+    const known = cached<T>(key)
+    if (known !== undefined) setData(known)
     loadRef
       .current()
       .then((d) => {
         if (id !== seq.current) return
         setData(d)
         setError(null)
+        remember(key, d)
       })
       .catch((e: Error) => {
         if (id === seq.current) setError(e)
