@@ -234,7 +234,7 @@ export interface ShareServices {
 /** A copy or sync running on this node. */
 export interface Job {
   id: string
-  kind: 'copy' | 'sync' | 'backup' | 'share'
+  kind: 'copy' | 'sync' | 'backup' | 'share' | 'check'
   title: string
   /** "This computer → Laptop" */
   route: string
@@ -390,7 +390,7 @@ export function androidBridge(): AndroidBridge | null {
   return (window as unknown as { NexusAndroid?: AndroidBridge }).NexusAndroid ?? null
 }
 
-export type SyncMode = 'two_way' | 'upload' | 'download'
+export type SyncMode = 'two_way' | 'upload' | 'download' | 'copy'
 
 export interface SyncPair {
   id: string
@@ -411,6 +411,78 @@ export interface SyncPair {
   last_error: string | null
   created_at: number
   running: boolean
+  /** Copies: days a file removed here stays on the copy. */
+  keep_days: number
+  /** Copies: the last read-back of the copy. */
+  last_check_at: number | null
+  last_check_result: string | null
+  checking: boolean
+  /** Copies: files removed here that the copy still keeps. */
+  held_files: number
+  held_bytes: number
+}
+
+/** A file removed here that a copy still keeps. */
+export interface HeldFile {
+  path: string
+  is_dir: boolean
+  size: number
+  gone_at: number
+}
+
+/** What Windows reports about a physical disk. */
+export interface PhysicalDisk {
+  number: string
+  model: string
+  media: 'hdd' | 'ssd' | 'unknown'
+  bus: string
+  health: 'healthy' | 'warning' | 'unhealthy' | 'unknown'
+  status: string
+  size: number
+  letters: string[]
+  temperature_c: number | null
+  temperature_max_c: number | null
+  wear_percent: number | null
+  power_on_hours: number | null
+  read_errors: number | null
+  write_errors: number | null
+  /** Whether temperature, wear and errors could be read (needs administrator rights). */
+  details: boolean
+  /** NEXUS storage locations on this disk. */
+  storage: string[]
+}
+
+export interface DamagedFile {
+  file_id: string
+  path: string
+  size: number
+  found_at: number
+  unreadable: boolean
+  /** Where a repair would take the right content from. */
+  repair_from: string[]
+}
+
+export interface RootHealth {
+  id: string
+  name: string
+  path: string
+  online: boolean
+  since: number | null
+  removable: boolean
+  total_bytes: number | null
+  available_bytes: number | null
+  disk: string | null
+  last_check: { checked_at: number; files: number; bytes: number; damaged: number; result: string } | null
+  verifying: boolean
+  damaged: DamagedFile[]
+}
+
+export interface StorageHealth {
+  checked_at: number | null
+  disks: PhysicalDisk[]
+  disks_error: string | null
+  roots: RootHealth[]
+  problems: { level: 'error' | 'warning'; text: string; root_id: string | null }[]
 }
 
 interface UploadProgress { id: string; offset: number; size: number }
@@ -664,9 +736,25 @@ export const api = {
   restoreSnapshot: (id: string, snap: string, b: { paths: string[]; to: 'beside' | 'original' }) =>
     request<{ job_id: string; folder: string }>('POST', `/snapshots/${id}/${snap}/restore`, b),
   syncPairs: () => request<SyncPair[]>('GET', '/sync'),
-  createSync: (b: { local_root_id: string; local_path: string; device_id: string; remote_root_id: string; remote_path: string; mode: SyncMode }) =>
-    request<SyncPair>('POST', '/sync', b),
-  updateSync: (id: string, b: { enabled?: boolean; mode?: SyncMode }) => request<SyncPair>('PATCH', `/sync/${id}`, b),
+  createSync: (b: {
+    local_root_id: string
+    local_path: string
+    device_id: string
+    remote_root_id: string
+    remote_path: string
+    mode: SyncMode
+    keep_days?: number
+  }) => request<SyncPair>('POST', '/sync', b),
+  updateSync: (id: string, b: { enabled?: boolean; mode?: SyncMode; keep_days?: number }) => request<SyncPair>('PATCH', `/sync/${id}`, b),
+  checkCopy: (id: string) => request<void>('POST', `/sync/${id}/check`),
+  heldFiles: (id: string) => request<HeldFile[]>('GET', `/sync/${id}/held`),
+  bringBack: (id: string, paths: string[]) => request<{ job_id: string }>('POST', `/sync/${id}/held/restore`, { paths }),
+  /** Drive health here, or on a paired device with its proxy prefix. */
+  storageHealth: (prefix = '') => request<StorageHealth>('GET', `${prefix}/storage/health`),
+  refreshHealth: () => request<StorageHealth>('POST', '/storage/health/refresh'),
+  verifyRoot: (id: string) => request<void>('POST', `/storage/roots/${id}/verify`),
+  repairDamaged: (fileId: string) => request<{ job_id: string }>('POST', `/storage/health/damaged/${fileId}/repair`),
+  acceptDamaged: (fileId: string) => request<void>('POST', `/storage/health/damaged/${fileId}/accept`),
   removeSync: (id: string) => request<void>('DELETE', `/sync/${id}`),
   runSync: (id: string) => request<void>('POST', `/sync/${id}/run`),
 

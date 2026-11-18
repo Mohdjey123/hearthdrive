@@ -13,6 +13,8 @@ import { Transfers } from './pages/Transfers'
 import { Sync } from './pages/Sync'
 import { Backup } from './pages/Backup'
 import { Backups } from './pages/Backups'
+import { Copies } from './pages/Copies'
+import { Health } from './pages/Health'
 import { Shares } from './pages/Shares'
 import { ShareInbox } from './components/ShareInbox'
 import { UpdateBanner } from './components/Updates'
@@ -36,6 +38,8 @@ function Shell() {
         {page === 'devices' && <Devices />}
         {page === 'sync' && <Sync />}
         {page === 'backups' && <Backups />}
+        {page === 'copies' && <Copies />}
+        {page === 'health' && <Health />}
         {page === 'backup' && <Backup />}
         {page === 'shares' && <Shares />}
         {page === 'transfers' && <Transfers />}

@@ -13,7 +13,7 @@ const MODES: { mode: SyncMode; label: string; detail: string }[] = [
   { mode: 'download', label: 'Only from the device', detail: 'This folder becomes a copy of the device’s. Changes made here are overwritten.' },
 ]
 
-const ARROW = { two_way: ArrowLeftRight, upload: ArrowRight, download: ArrowLeft }
+const ARROW = { two_way: ArrowLeftRight, upload: ArrowRight, download: ArrowLeft, copy: ArrowRight }
 
 function status(p: SyncPair): { tone: 'online' | 'offline' | 'busy' | 'error'; text: string } {
   if (p.running) return { tone: 'busy', text: 'Syncing now…' }
@@ -228,7 +228,8 @@ export function Sync() {
   const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'))
   const peers = (devices.data ?? []).filter((d) => !d.is_local && d.public_key)
   const [adding, setAdding] = useState(false)
-  const list = pairs.data ?? []
+  // Extra copies have their own page.
+  const list = (pairs.data ?? []).filter((p) => p.mode !== 'copy')
 
   return (
     <div>

@@ -47,6 +47,8 @@ pub struct AppState {
     pub sync: crate::routes::sync::SyncControl,
     /// Backups as snapshots.
     pub snapshots: crate::routes::snapshots::SnapshotControl,
+    /// Drive health: disks, missing storage, full reads of files.
+    pub health: crate::routes::health::HealthControl,
     /// The phone's shared storage (`/storage/emulated/0`), where photos and
     /// videos are backed up from. `None` on computers.
     pub media_dir: Option<PathBuf>,
@@ -98,6 +100,7 @@ impl AppState {
             jobs: Default::default(),
             sync: Default::default(),
             snapshots: Default::default(),
+            health: Default::default(),
             media_dir: None,
             share_inbox: None,
             backup: Default::default(),

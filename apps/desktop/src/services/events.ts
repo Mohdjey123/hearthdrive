@@ -20,6 +20,7 @@ export type NexusEvent =
   | { type: 'sync.updated'; id: string }
   | { type: 'snapshots.updated'; id: string }
   | { type: 'updates.changed' }
+  | { type: 'health.updated' }
 
 type Handler = (event: NexusEvent) => void
 type StatusHandler = (connected: boolean) => void

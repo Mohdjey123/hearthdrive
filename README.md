@@ -29,6 +29,9 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - [Connecting your computers](#connecting-your-computers)
 - [Working across devices](#working-across-devices)
 - [Sync and versions](#sync-and-versions)
+- [Backups](#backups)
+- [Extra copies](#extra-copies)
+- [Drive health](#drive-health)
 - [Phone backup and the share menu](#phone-backup-and-the-share-menu)
 - [Share links](#share-links)
 - [Updates](#updates)
@@ -42,6 +45,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - **One view of everything.** Browse, search, preview, stream, download and upload files on any of your devices from any other.
 - **Built-in, encrypted networking.** Devices connect directly whenever possible and through an encrypted relay otherwise. No VPN, port forwarding or account with anyone.
 - **Copy and sync between devices.** Background copies that resume after a dropped connection; one-way or two-way folder sync with conflict copies, a safety stop and version history.
+- **Extra copies and drive health.** Keep a checked copy of a folder on one or more other computers, with removed files held back for a while; watch every disk's health and free space, and find and repair files a drive has silently damaged.
 - **Phone app.** The Android app runs the same node: browse your computers, back up photos and videos, and send files to a computer from any app's **Share** menu.
 - **Share links.** Send anyone a link to a file or folder. With Send it is encrypted on your computer first, so the host never sees what it holds; links expire and can be limited to a number of downloads and protected with a password.
 - **You decide who sees what.** Accounts with roles, and per-device and per-person limits to chosen storage locations, enforced on every device.
@@ -62,6 +66,8 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Across devices | Browse, search, preview, stream, download, upload, rename, move and trash files on a paired device, relayed by your own node with signed requests; background copies of files and folders that resume after a dropped connection; pause, resume, run next and retry failed files; a shared speed limit, transfers at once and transfer hours; copies checked against the original's BLAKE3 hash |
 | Sync | One-way and two-way folder sync between devices; conflict copies; removals go to the trash; a safety stop for mass removals; the last ten versions of every replaced file |
 | Backups | Scheduled snapshots of a folder on a paired computer, each content stored once by BLAKE3; keep rules (latest, daily, weekly, monthly) with cleanup; stored contents read back and repaired; browse and restore any snapshot, beside or over the original; encrypted with a recovery key, and openable from another computer |
+| Copies | A one-way, checked copy of a folder on one or more paired computers ("2 copies", "3 copies"); files removed here kept on the copy for a chosen time and brought back on request; copies read back weekly and repaired; a check for room before starting |
+| Drive health | Windows' health verdict for every disk (temperature, wear and error counts where Windows allows); free-space warnings; storage that goes missing or comes back; a monthly read of every file against its BLAKE3 hash to find silent damage, repaired from an extra copy or a backup; the same view of your other devices; a text report |
 | Share links | Links to a file or folder (sent as a zip) that anyone can open: end-to-end encrypted through [Send](https://github.com/timvisee/send) (AES-GCM, key only in the link) with expiry, a download limit and an optional password, or unencrypted through temp.sh for larger files; take a link down at any time; uploads appear under Transfers |
 | Updates | Signed packages (Ed25519 over the version, size and BLAKE3 hash) passed between paired devices; computers keep packages for every platform to pass on; Windows installs by itself when its window is closed and nothing is copying, Android opens the system installer |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices |
@@ -172,6 +178,28 @@ Sync keeps folders the same; a backup keeps their **history**, so you can bring 
 * **Encrypted.** New backups are encrypted (you can turn it off when setting one up). Every content and snapshot list is encrypted with ChaCha20-Poly1305 in 64 KiB chunks, so damage, reordering or a cut-off file is noticed, and contents are stored under keyed names that do not reveal their hashes. The backup's 256-bit key is kept on this computer protected for your Windows account (DPAPI). Unencrypted backups store contents under their plain BLAKE3 and snapshot lists as `.json`.
 * **Recovery key.** When an encrypted backup is set up, NEXUS shows its recovery key once (14 groups of four letters and digits, with a checksum against typing mistakes). Keep it away from this computer. The key icon on the backup shows it again after you enter your password.
 * **Open a backup from another computer.** If the computer that made a backup is lost or set up again, open **Backups** → **Open a backup** on any computer paired with the device holding it: choose the device, the backup's folder there, a folder here to restore into, and enter the recovery key. Its snapshots appear, ready to browse and restore; it starts paused, and resuming it continues the backup from this computer into the same place.
+
+## Extra copies
+
+Sync keeps two folders the same both ways, and a backup keeps history in its own format. An **extra copy** is the simple middle: an ordinary folder on another computer that always holds what the folder here holds, so a failed drive or a stolen laptop does not take your files with it.
+
+* **Keep a copy.** Open **Copies** → **Keep a copy**, choose a folder here, a paired computer and a place on it. NEXUS checks there is room, copies everything over, and from then on copies new and changed files within a minute (every five minutes while nothing changes). **Add another** keeps a further copy on another computer; the page shows how many up-to-date copies each folder has.
+* **Removed files are kept.** A file removed here is not removed from the copy straight away: it stays there for 30 days (7 days to a year, or not at all), listed under **… removed here are kept**, where you can **Bring back** any of it. After that it goes to that computer's trash. So a mistake here never wipes the copy too.
+* **The copy follows this computer.** A file changed on the other computer is replaced by the one here (its content there kept as a version). Files that only exist on the other computer are left alone.
+* **Checked.** Every copied file is checked against its BLAKE3 hash. Once a week part of the copy is read back and compared with the files here; **Check** reads all of it. A copy that no longer matches is sent again.
+* **Not a backup.** A copy holds only the current files. For earlier versions of files, also set up a backup.
+
+## Drive health
+
+**Drive health** shows, for this computer and each paired one:
+
+* **Disks.** Windows' own verdict for every physical disk (healthy, warning, failing), read every half hour, with temperature, wear and uncorrected errors when Windows shares them (it only does with programs running as administrator).
+* **Free space.** A drive is *nearly full* under 10% free and *almost full* under 3% or 1 GB.
+* **Missing storage.** Each storage location is looked at every minute. One that disappears (a drive unplugged or failing) is shown until it is back, and both events go into the activity log.
+* **Silent damage.** Once a month (or when you press **Verify files**) NEXUS reads every file of a storage location and compares it with the hash taken when it was indexed. A file whose content changed while its size and date did not was damaged on the disk. It is listed with where a good copy is (an extra copy or a backup); **Repair** puts the right content back and keeps what was there as a version. If a program changed the file on purpose without changing its date, **It is fine** accepts its current content.
+* **Report.** **Copy report** puts a plain-text summary of all of it on the clipboard.
+
+Problems also show at the top of **Overview**.
 
 ## Phone backup and the share menu
 

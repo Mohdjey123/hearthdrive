@@ -2,6 +2,8 @@ import { ArrowUpDown, Clock, HardDrive, Monitor, Plus } from 'lucide-react'
 import { api, fileApi, peerPrefix, thisDevice, type StorageRoot } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { navigate } from '../hooks/useRoute'
+import { pageAvailable } from '../components/Sidebar'
+import { HealthAlert } from './Health'
 import { useTransfers } from '../stores/transfers'
 import { useSession } from '../stores/session'
 import { formatBytes, formatCount, formatRelative } from '../lib/format'
@@ -52,6 +54,16 @@ const ACTIONS: Record<string, string> = {
   'backup.changed': 'Changed a backup',
   'backup.removed': 'Stopped a backup',
   'backup.restored': 'Restored from a backup',
+  'backup.opened': 'Opened a backup',
+  'backup.key_shown': 'Showed a recovery key',
+  'copy.created': 'Set up an extra copy',
+  'copy.brought_back': 'Brought files back from a copy',
+  'storage.disconnected': 'Storage went missing',
+  'storage.reconnected': 'Storage came back',
+  'storage.damaged': 'Found damaged files',
+  'storage.verify': 'Verified storage',
+  'storage.repaired': 'Repaired a damaged file',
+  'storage.damage_accepted': 'Kept a changed file',
 }
 
 export function rootTone(r: StorageRoot): 'online' | 'offline' | 'busy' | 'error' {
@@ -217,6 +229,8 @@ export function Overview() {
           </Button>
         }
       />
+
+      {pageAvailable('health') && <HealthAlert onOpen={() => navigate('health')} />}
 
       <CloudStorage local={roots.data} />
 

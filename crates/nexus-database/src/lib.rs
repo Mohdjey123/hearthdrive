@@ -8,6 +8,7 @@ mod backup;
 mod devices;
 mod pairing;
 mod files;
+mod health;
 mod roots;
 mod sessions;
 mod settings;
@@ -21,9 +22,10 @@ pub use backup::{Backup, NewBackup};
 pub use devices::NewPeer;
 pub use pairing::NewPairingRequest;
 pub use files::{RootStats, SortField, UnhashedFile};
+pub use health::{DamagedFile, HashedFile, RootCheck};
 pub use shares::{NewShare, Share};
 pub use snapshots::{NewSnapshotSet, Schedule, Snapshot, SnapshotFile, SnapshotSet};
-pub use sync::{FileVersion, Fingerprints, NewSyncPair, StateChange, SyncPair, SyncState, UploadSession};
+pub use sync::{FileVersion, Fingerprints, HeldFile, NewSyncPair, StateChange, SyncPair, SyncState, UploadSession};
 
 use nexus_common::Result;
 use sqlx::sqlite::{

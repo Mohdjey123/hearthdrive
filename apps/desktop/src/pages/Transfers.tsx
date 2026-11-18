@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpDown, CheckCircle2, ChevronsUp, CopyPlus, FolderSync, ImageUp, Link2, Pause, Play, RotateCcw, Upload, X, XCircle } from 'lucide-react'
+import { ArrowUpDown, CheckCircle2, ChevronsUp, CopyPlus, FolderSync, ImageUp, Link2, Pause, Play, RotateCcw, ShieldCheck, Upload, X, XCircle } from 'lucide-react'
 import { cancelTransfer, clearFinished, retryTransfer, useTransfers, type Transfer } from '../stores/transfers'
 import { api, type Job, type TransferSettings } from '../services/api'
 import { useResource } from '../hooks/useResource'
@@ -23,8 +23,9 @@ const JOB_WORDS: Record<Job['kind'], [string, string]> = {
   sync: ['Syncing', 'synced'],
   backup: ['Backing up', 'backed up'],
   share: ['Uploading', 'shared'],
+  check: ['Checking', 'checked'],
 }
-const JOB_ICONS = { copy: CopyPlus, sync: FolderSync, backup: ImageUp, share: Link2 }
+const JOB_ICONS = { copy: CopyPlus, sync: FolderSync, backup: ImageUp, share: Link2, check: ShieldCheck }
 
 function JobBadge({ job }: { job: Job }) {
   switch (job.status) {

@@ -5,6 +5,7 @@
 //! is read or written.
 
 pub mod drives;
+pub mod health;
 mod manager;
 pub mod paths;
 

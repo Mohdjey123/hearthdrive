@@ -3506,6 +3506,7 @@ dependencies = [
  "nexus-common",
  "nexus-database",
  "serde",
+ "serde_json",
  "sysinfo",
  "tempfile",
  "tokio",

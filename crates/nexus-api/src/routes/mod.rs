@@ -2,6 +2,7 @@ pub mod backup;
 pub mod devices;
 pub mod events;
 pub mod files;
+pub mod health;
 pub mod introductions;
 pub mod network;
 pub mod sealed;

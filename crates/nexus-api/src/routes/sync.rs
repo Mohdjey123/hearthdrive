@@ -16,6 +16,16 @@
 //! * replacing a file always keeps the old content as a version.
 //!
 //! Nothing is ever deleted outright: removals go to the trash on that device.
+//!
+//! **Extra copies** use the same machinery in mode `copy`: a one-way copy
+//! of a folder kept on a paired device, so the files exist on two (or more)
+//! computers. It differs from upload sync in two ways that make it a safe
+//! second copy rather than a mirror of mistakes:
+//!
+//! * a file removed here stays on the copy for `keep_days` (30 by default)
+//!   and can be brought back; only then does it go to the device's trash;
+//! * the copy is read back now and then and compared with the files' hashes
+//!   here, and copies that do not match are sent again.
 
 use super::audit;
 use super::files::{TreeItem, tree_of};
@@ -34,7 +44,9 @@ use nexus_database::{Fingerprints, NewSyncPair, StateChange, SyncPair, SyncState
 use nexus_security::Action;
 use nexus_storage::paths;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use futures_util::StreamExt;
+use nexus_database::HeldFile;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -46,7 +58,11 @@ const INTERVAL_MS: i64 = 5 * 60 * 1000;
 const SETTLE_MS: i64 = 10 * 1000;
 const TICK: Duration = Duration::from_secs(10);
 
-pub const MODES: &[&str] = &["two_way", "upload", "download"];
+pub const MODES: &[&str] = &["two_way", "upload", "download", "copy"];
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+/// Copies are read back (a sample of this many bytes) at least this often.
+const CHECK_EVERY_MS: i64 = 7 * DAY_MS;
+const CHECK_SAMPLE: u64 = 256 * 1024 * 1024;
 
 /// Wakes the sync loop and tracks what needs a run.
 #[derive(Default)]
@@ -58,6 +74,8 @@ pub struct SyncControl {
     dirty: Mutex<BTreeMap<String, i64>>,
     /// Pairs running right now.
     running: Mutex<HashSet<String>>,
+    /// Copies being read back right now.
+    checking: Mutex<HashSet<String>>,
 }
 
 impl SyncControl {
@@ -68,6 +86,10 @@ impl SyncControl {
 
     fn is_running(&self, pair_id: &str) -> bool {
         self.running.lock().unwrap().contains(pair_id)
+    }
+
+    fn is_checking(&self, pair_id: &str) -> bool {
+        self.checking.lock().unwrap().contains(pair_id)
     }
 }
 
@@ -142,11 +164,13 @@ pub enum Op {
     Forget(String),
     /// Cannot be synced (a file on one side, a folder on the other).
     Clash(String),
+    /// Copies: removed here; the copy keeps it for a while.
+    Hold(String),
 }
 
 impl Op {
     fn is_change(&self) -> bool {
-        !matches!(self, Op::Record(_) | Op::Forget(_))
+        !matches!(self, Op::Record(_) | Op::Forget(_) | Op::Hold(_))
     }
 }
 
@@ -166,7 +190,7 @@ fn under(rel: &str, dirs: &[String]) -> bool {
     dirs.iter().any(|d| rel.len() > d.len() && rel.starts_with(d.as_str()) && rel.as_bytes()[d.len()] == b'/')
 }
 
-/// Decides what to do. `mode` is `two_way`, `upload` or `download`.
+/// Decides what to do. `mode` is `two_way`, `upload`, `download` or `copy`.
 pub fn plan(mode: &str, local: &BTreeMap<String, Entry>, remote: &BTreeMap<String, Entry>, state: &SyncState) -> Vec<Op> {
     let paths: BTreeSet<&String> = local.keys().chain(remote.keys()).chain(state.keys()).collect();
     let mut ops = Vec::new();
@@ -223,6 +247,14 @@ pub fn plan(mode: &str, local: &BTreeMap<String, Entry>, remote: &BTreeMap<Strin
                     trashed.push(rel.clone());
                 }
                 _ => {} // only on the device and never synced: leave it alone
+            },
+            "copy" => match (l, r) {
+                (Some(a), _) => push(&mut ops, a),
+                (None, Some(_)) if st.is_some() => {
+                    ops.push(Op::Hold(rel.clone()));
+                    trashed.push(rel.clone());
+                }
+                _ => {}
             },
             "download" => match (l, r) {
                 (_, Some(b)) => pull(&mut ops, b),
@@ -341,6 +373,7 @@ async fn run_pair(s: &SharedState, pair: &SyncPair, confirmed: bool) -> Result<S
     let remote = to_map(mover.tree(&remote_side, &pair.remote_root_id, &pair.remote_path).await?);
     let state = s.db.load_sync_state(&pair.id).await?;
     let mut ops = plan(&pair.mode, &local, &remote, &state);
+    let (expired, newly_held) = resolve_holds(s, pair, &mut ops, &remote).await?;
     let mut held_back = None;
     if let Some((here, there)) = mass_removal(&ops, &state).filter(|_| !confirmed) {
         ops.retain(|o| !matches!(o, Op::TrashLocal(_) | Op::TrashRemote(_)));
@@ -367,19 +400,29 @@ async fn run_pair(s: &SharedState, pair: &SyncPair, confirmed: bool) -> Result<S
         ))),
         None => result,
     };
+    let copy = pair.mode == "copy";
+    let kept_note = |text: String| match newly_held {
+        0 => text,
+        n => format!(
+            "{text}; {n} removed here {} kept on {} for {} days",
+            if n == 1 { "is" } else { "are" },
+            device.name,
+            pair.keep_days
+        ),
+    };
     if work.is_empty() {
         s.db.save_sync_state(&pair.id, &changes).await?;
-        return held(Ok("Up to date".into()));
+        return held(Ok(kept_note("Up to date".into())));
     }
 
     let folder = paths::split_parent(&pair.local_path).1;
-    let title = format!("Sync {}", if folder.is_empty() { &root.name } else { &folder });
+    let title = format!("{} {}", if copy { "Copy" } else { "Sync" }, if folder.is_empty() { &root.name } else { &folder });
     let arrow = match pair.mode.as_str() {
-        "upload" => "→",
+        "upload" | "copy" => "→",
         "download" => "←",
         _ => "⇄",
     };
-    let job = s.jobs.add("sync", title, format!("This computer {arrow} {}", device.name), user.username.clone());
+    let job = s.jobs.add(if copy { "copy" } else { "sync" }, title, format!("This computer {arrow} {}", device.name), user.username.clone());
     let Some(_slot) = s.jobs.start(s, &job).await else {
         return Ok("Cancelled".into());
     };
@@ -473,6 +516,9 @@ async fn run_pair(s: &SharedState, pair: &SyncPair, confirmed: bool) -> Result<S
                 Op::TrashRemote(rel) => {
                     mover.trash(&remote_side, &remote[rel].id).await?;
                     changes.push((rel.clone(), None));
+                    if expired.contains(rel) {
+                        s.db.release_held(&pair.id, std::slice::from_ref(rel)).await?;
+                    }
                 }
                 Op::TrashLocal(rel) => {
                     mover.trash(&Side::Local, &local[rel].id).await?;
@@ -481,7 +527,7 @@ async fn run_pair(s: &SharedState, pair: &SyncPair, confirmed: bool) -> Result<S
                 Op::Clash(rel) => {
                     return Err(NexusError::Conflict(format!("\"{rel}\" is a file on one side and a folder on the other")));
                 }
-                Op::Record(_) | Op::Forget(_) => {}
+                Op::Record(_) | Op::Forget(_) | Op::Hold(_) => {}
             }
             Ok(())
         }
@@ -498,13 +544,230 @@ async fn run_pair(s: &SharedState, pair: &SyncPair, confirmed: bool) -> Result<S
     if info.1 > 0 {
         return Err(NexusError::Unavailable(format!("{} changes synced, {} could not be: {}", info.0, info.1, info.2)));
     }
-    held(Ok(format!("{} change{} synced", info.0, if info.0 == 1 { "" } else { "s" })))
+    held(Ok(kept_note(format!("{} change{} {}", info.0, if info.0 == 1 { "" } else { "s" }, if copy { "copied" } else { "synced" }))))
+}
+
+/// Copies: turns each `Hold` into keeping the file on the copy (noting
+/// when it went), or, once it has been kept long enough, into moving it to
+/// the device's trash. Forgets held files that came back here or are gone
+/// from the copy. Returns the paths now due for the trash, and how many
+/// files started being kept in this run.
+async fn resolve_holds(s: &AppState, pair: &SyncPair, ops: &mut [Op], remote: &BTreeMap<String, Entry>) -> Result<(HashSet<String>, usize)> {
+    if pair.mode != "copy" {
+        return Ok((HashSet::new(), 0));
+    }
+    let held: HashMap<String, HeldFile> = s.db.held_files(&pair.id).await?.into_iter().map(|h| (h.rel_path.clone(), h)).collect();
+    let now = now_ms();
+    let keep_ms = pair.keep_days.max(0) * DAY_MS;
+    let mut expired = HashSet::new();
+    let mut holding = HashSet::new();
+    let mut newly = 0;
+    for op in ops.iter_mut() {
+        let Op::Hold(rel) = op else { continue };
+        let rel = rel.clone();
+        let Some(entry) = remote.get(&rel) else { continue };
+        let due = match held.get(&rel) {
+            Some(h) => now - h.gone_at >= keep_ms,
+            None if keep_ms == 0 => true,
+            None => {
+                let size = if entry.is_dir {
+                    let prefix = format!("{rel}/");
+                    remote.range(prefix.clone()..).take_while(|(k, _)| k.starts_with(&prefix)).map(|(_, e)| e.size.max(0)).sum()
+                } else {
+                    entry.size
+                };
+                let file = HeldFile { rel_path: rel.clone(), path: entry.path.clone(), is_dir: entry.is_dir, size, gone_at: now };
+                s.db.hold_file(&pair.id, &file).await?;
+                newly += 1;
+                false
+            }
+        };
+        if due {
+            *op = Op::TrashRemote(rel.clone());
+            expired.insert(rel);
+        } else {
+            holding.insert(rel);
+        }
+    }
+    let stale: Vec<String> = held.into_keys().filter(|k| !holding.contains(k) && !expired.contains(k)).collect();
+    if !stale.is_empty() {
+        s.db.release_held(&pair.id, &stale).await?;
+    }
+    Ok((expired, newly))
+}
+
+// ---------------------------------------------------------------------------
+// Reading a copy back
+
+/// Hashes a file on the device by reading it.
+async fn remote_hash(mover: &Mover<'_>, side: &Side, id: &str) -> Result<String> {
+    let mut stream = mover.open(side, id, 0).await?.into_data_stream();
+    let mut hasher = blake3::Hasher::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| NexusError::PeerUnreachable(e.to_string()))?;
+        hasher.update(&chunk);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// Reads the copy back and compares each file with its hash here; copies
+/// that differ are sent again. Only files in step since the last run are
+/// read (others are on their way anyway). `budget` reads a rotating sample
+/// of about that many bytes instead of everything.
+async fn check_copy(s: &SharedState, pair: &SyncPair, budget: Option<u64>) -> Result<String> {
+    let user = acting_user(s, pair).await?;
+    user.require_root(&pair.local_root_id).map_err(|e| e.0)?;
+    let device = peer_target(s, &pair.device_id).await?;
+    let remote_side = Side::Peer(device.clone());
+    let mover = Mover { s, user: &user };
+    let root = s.db.get_root(&pair.local_root_id).await?;
+    s.storage.ensure_online(&root)?;
+    let local = to_map(tree_of(s, &root.id, &pair.local_path).await?);
+    let remote = to_map(mover.tree(&remote_side, &pair.remote_root_id, &pair.remote_path).await?);
+    let state = s.db.load_sync_state(&pair.id).await?;
+
+    let mut order: Vec<(&String, &Entry, &Entry)> = local
+        .iter()
+        .filter(|(_, e)| !e.is_dir)
+        .filter_map(|(k, l)| {
+            let r = remote.get(k)?;
+            let (sl, sr) = state.get(k)?;
+            (sl.as_deref() == Some(l.fingerprint().as_str()) && sr.as_deref() == Some(r.fingerprint().as_str()) && !r.is_dir)
+                .then_some((k, l, r))
+        })
+        .collect();
+    if order.is_empty() {
+        return Ok("Nothing to check yet".into());
+    }
+    if budget.is_some() {
+        let start = (now_ms() / 1000) as usize % order.len();
+        order.rotate_left(start);
+    }
+    let job = budget.is_none().then(|| {
+        s.jobs.add("check", format!("Check the copy on {}", device.name), format!("{} → this computer", device.name), user.username.clone())
+    });
+    let _slot = match &job {
+        Some(job) => match s.jobs.start(s, job).await {
+            Some(slot) => Some(slot),
+            None => return Ok("Check cancelled".into()),
+        },
+        None => None,
+    };
+    if let Some(job) = &job {
+        job.update(|i| {
+            i.files_total = order.len() as u64;
+            i.bytes_total = order.iter().map(|(_, l, _)| l.size.max(0) as u64).sum();
+        });
+    }
+    let mut read = 0u64;
+    let mut checked = 0usize;
+    let mut bad: Vec<&String> = Vec::new();
+    for (key, l, r) in &order {
+        if budget.is_some_and(|limit| read >= limit) || job.as_ref().is_some_and(|j| j.is_cancelled()) {
+            break;
+        }
+        if let Some(job) = &job {
+            job.update(|i| i.current = Some(l.path.clone()));
+        }
+        // Files not hashed yet here are hashed now.
+        let hash = match &l.hash {
+            Some(h) => h.clone(),
+            None => {
+                let item = TreeItem { id: l.id.clone(), path: l.path.clone(), is_dir: false, size: l.size, modified_at: l.modified_at, content_hash: None };
+                match super::snapshots::hash_local(s, &root, &pair.local_path, &item).await {
+                    Ok(h) => h,
+                    Err(_) => continue, // changed or gone since listing; the next run sees to it
+                }
+            }
+        };
+        match remote_hash(&mover, &remote_side, &r.id).await {
+            Ok(found) if found == hash => {}
+            Ok(_) => bad.push(key),
+            Err(NexusError::NotFound(_)) => bad.push(key),
+            Err(e) => return Err(e),
+        }
+        read += l.size.max(0) as u64;
+        checked += 1;
+        if let Some(job) = &job {
+            job.update(|i| i.files_done += 1);
+            job.set_bytes(read);
+        }
+    }
+    if let Some(job) = &job {
+        finish_job(s, job);
+    }
+
+    // Send the files again whose copies are wrong.
+    let mut repaired = 0;
+    if !bad.is_empty() {
+        let fix = s.jobs.add("copy", format!("Repair the copy on {}", device.name), format!("This computer → {}", device.name), user.username.clone());
+        if let Some(_slot) = s.jobs.start(s, &fix).await {
+            let mut changes: Vec<StateChange> = Vec::new();
+            for key in &bad {
+                let src = &local[*key];
+                let (parent, name) = paths::split_parent(&src.path);
+                let meta = Meta {
+                    id: src.id.clone(),
+                    root_id: pair.local_root_id.clone(),
+                    relative_path: paths::join(&pair.local_path, &src.path),
+                    filename: name.clone(),
+                    is_dir: false,
+                    size: src.size,
+                    modified_at: src.modified_at,
+                    content_hash: src.hash.clone(),
+                };
+                let req = NewUpload {
+                    root_id: pair.remote_root_id.clone(),
+                    path: paths::join(&pair.remote_path, &parent),
+                    name,
+                    size: src.size as u64,
+                    on_conflict: Some("replace".into()),
+                    modified_at: src.modified_at,
+                    make_parents: true,
+                };
+                fix.update(|i| i.current = Some(src.path.clone()));
+                match mover.send_file(&fix, &Side::Local, &meta, &remote_side, req).await {
+                    Ok(placed) => {
+                        repaired += 1;
+                        fix.update(|i| i.files_done += 1);
+                        let after = Entry { path: src.path.clone(), id: placed.id, is_dir: false, size: placed.size, modified_at: placed.modified_at, hash: placed.content_hash };
+                        changes.push(((*key).clone(), Some((Some(src.fingerprint()), Some(after.fingerprint())))));
+                    }
+                    Err(e) => fix.fail_file(&src.path, &e),
+                }
+            }
+            s.db.save_sync_state(&pair.id, &changes).await?;
+            finish_job(s, &fix);
+        }
+    }
+    let files = |n: usize| format!("{n} file{}", if n == 1 { "" } else { "s" });
+    let what = if budget.is_some() { format!("{} checked (a sample)", files(checked)) } else { format!("{} checked", files(checked)) };
+    Ok(match (bad.len(), repaired) {
+        (0, _) => format!("{what}, all intact"),
+        (b, r) if r == b => format!("{what}; {} damaged or missing on {} and sent again", files(b), device.name),
+        (b, r) => format!("{what}; {} damaged or missing on {}, {} could not be sent again", files(b), device.name, b - r),
+    })
+}
+
+async fn check_and_record(s: &SharedState, pair: &SyncPair, budget: Option<u64>) {
+    s.sync.checking.lock().unwrap().insert(pair.id.clone());
+    s.events.emit(Event::SyncUpdated { id: pair.id.clone() });
+    let text = match check_copy(s, pair, budget).await {
+        Ok(text) => text,
+        Err(NexusError::PeerUnreachable(_)) => format!("Could not check: {} is not reachable", s.db.get_device(&pair.device_id).await.map(|d| d.name).unwrap_or_default()),
+        Err(e) => format!("Could not check: {e}"),
+    };
+    if let Err(e) = s.db.record_copy_check(&pair.id, &text).await {
+        tracing::warn!(error = %e, "could not record a copy check");
+    }
+    s.sync.checking.lock().unwrap().remove(&pair.id);
+    s.events.emit(Event::SyncUpdated { id: pair.id.clone() });
 }
 
 fn op_path(op: &Op) -> &str {
     match op {
         Op::Push(p) | Op::Pull(p) | Op::MkdirRemote(p) | Op::MkdirLocal(p) | Op::TrashRemote(p) | Op::TrashLocal(p) => p,
-        Op::KeepRemoteCopy(p) | Op::KeepLocalCopy(p) | Op::Record(p) | Op::Forget(p) | Op::Clash(p) => p,
+        Op::KeepRemoteCopy(p) | Op::KeepLocalCopy(p) | Op::Record(p) | Op::Forget(p) | Op::Clash(p) | Op::Hold(p) => p,
     }
 }
 
@@ -581,6 +844,18 @@ pub fn spawn(s: SharedState) {
                 if forced || changed_here || now - last >= INTERVAL_MS {
                     run_and_record(&s, &pair, forced).await;
                 }
+                // Copies: read a sample back once a week, after a good run.
+                if pair.mode == "copy"
+                    && pair.enabled
+                    && pair.last_error.is_none()
+                    && pair.last_ok_at.is_some()
+                    && now - pair.last_check_at.unwrap_or(pair.created_at) >= CHECK_EVERY_MS
+                    && !s.sync.is_checking(&pair.id)
+                    && let Ok(pair) = s.db.get_sync_pair(&pair.id).await
+                    && pair.last_error.is_none()
+                {
+                    check_and_record(&s, &pair, Some(CHECK_SAMPLE)).await;
+                }
             }
         }
     });
@@ -596,6 +871,11 @@ pub struct PairView {
     device_name: String,
     local_label: String,
     running: bool,
+    /// Copies: being read back now.
+    checking: bool,
+    /// Copies: files removed here that the copy still keeps.
+    held_files: usize,
+    held_bytes: i64,
 }
 
 async fn view(s: &AppState, pair: SyncPair) -> PairView {
@@ -603,7 +883,10 @@ async fn view(s: &AppState, pair: SyncPair) -> PairView {
     let root = s.db.get_root(&pair.local_root_id).await.map(|r| r.name).unwrap_or_else(|_| "Removed storage".into());
     let local_label = if pair.local_path.is_empty() { root } else { format!("{root} / {}", pair.local_path) };
     let running = s.sync.is_running(&pair.id);
-    PairView { pair, device_name, local_label, running }
+    let checking = s.sync.is_checking(&pair.id);
+    let held = if pair.mode == "copy" { s.db.held_files(&pair.id).await.unwrap_or_default() } else { Vec::new() };
+    let held_bytes = held.iter().map(|h| h.size).sum();
+    PairView { pair, device_name, local_label, running, checking, held_files: held.len(), held_bytes }
 }
 
 /// Whether the caller may see a pair: its folder here must be visible to them.
@@ -643,6 +926,17 @@ pub struct CreatePair {
     #[serde(default)]
     remote_path: String,
     mode: String,
+    /// Copies: days a file removed here stays on the copy.
+    keep_days: Option<i64>,
+}
+
+const KEEP_DAYS_MAX: i64 = 3650;
+
+fn check_keep_days(days: Option<i64>) -> Result<()> {
+    match days {
+        Some(d) if !(0..=KEEP_DAYS_MAX).contains(&d) => Err(NexusError::invalid("Keep removed files for 0 to 3650 days")),
+        _ => Ok(()),
+    }
 }
 
 pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Json<CreatePair>) -> ApiResult<(StatusCode, Json<PairView>)> {
@@ -655,8 +949,10 @@ pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Jso
     if !MODES.contains(&req.mode.as_str()) {
         return Err(NexusError::invalid("Choose how to sync").into());
     }
+    check_keep_days(req.keep_days)?;
+    let copy = req.mode == "copy";
     let root = s.db.get_root(&req.local_root_id).await?;
-    if root.read_only && req.mode != "upload" {
+    if root.read_only && req.mode != "upload" && !copy {
         return Err(NexusError::invalid(format!("{} is read-only here, so it can only be uploaded from", root.name)).into());
     }
     let local_path = paths::normalize_relative(&req.local_path)?;
@@ -693,7 +989,22 @@ pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Jso
         p.local_root_id == root.id && p.local_path.eq_ignore_ascii_case(&local_path) && p.device_id == req.device_id
             && p.remote_root_id == req.remote_root_id && p.remote_path.eq_ignore_ascii_case(&remote_path)
     }) {
-        return Err(NexusError::Conflict("These folders are already synced".into()).into());
+        return Err(NexusError::Conflict(if copy { "This folder already has a copy there" } else { "These folders are already synced" }.into()).into());
+    }
+    if copy {
+        // A copy needs room: compare the folder's size with the free space there.
+        let size = s.db.subtree_size(&root.id, &local_path).await?.max(0) as u64;
+        if let Some(free) = remote_free_space(&s, &user, &device, &req.remote_root_id).await
+            && size > free
+        {
+            return Err(NexusError::invalid(format!(
+                "{} has {} free there, but this folder holds {}. Choose a place with more room.",
+                device.name,
+                super::snapshots::human_bytes(free as i64),
+                super::snapshots::human_bytes(size as i64)
+            ))
+            .into());
+        }
     }
 
     let pair = s
@@ -708,17 +1019,39 @@ pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Jso
             mode: &req.mode,
             created_by: &user.username,
             created_role: user.role.as_str(),
+            keep_days: req.keep_days.unwrap_or(30),
         })
         .await?;
-    audit(&s, &user, "sync.created", Some(&format!("{} ⇄ {}: {remote_label}", view(&s, pair.clone()).await.local_label, device.name))).await;
+    let arrow = if copy { "→" } else { "⇄" };
+    audit(&s, &user, if copy { "copy.created" } else { "sync.created" }, Some(&format!("{} {arrow} {}: {remote_label}", view(&s, pair.clone()).await.local_label, device.name))).await;
     s.sync.run_now(&pair.id);
     Ok((StatusCode::CREATED, Json(view(&s, pair).await)))
+}
+
+/// Free space where a storage location on a device lives, if it says.
+async fn remote_free_space(s: &AppState, user: &AuthUser, device: &crate::peers::Target, root_id: &str) -> Option<u64> {
+    #[derive(Deserialize)]
+    struct Stats {
+        disk: Option<Disk>,
+    }
+    #[derive(Deserialize)]
+    struct Disk {
+        available_bytes: u64,
+    }
+    let url = format!("/api/v1/storage/roots/{}/stats", super::files::percent_encode(root_id));
+    let (stats, _): (Stats, _) = s
+        .peers
+        .call(device, axum::http::Method::GET, &url, None::<&()>, Some(crate::peers::Acting::of(user)), crate::peers::CALL_TIMEOUT)
+        .await
+        .ok()?;
+    stats.disk.map(|d| d.available_bytes)
 }
 
 #[derive(Deserialize)]
 pub struct UpdatePair {
     enabled: Option<bool>,
     mode: Option<String>,
+    keep_days: Option<i64>,
 }
 
 pub async fn update(
@@ -733,8 +1066,14 @@ pub async fn update(
         && !MODES.contains(&mode.as_str()) {
             return Err(NexusError::invalid("Choose how to sync").into());
         }
-    manageable(&s, &user, &id).await?;
-    let pair = s.db.update_sync_pair(&id, req.enabled, req.mode.as_deref()).await?;
+    check_keep_days(req.keep_days)?;
+    let before = manageable(&s, &user, &id).await?;
+    if let Some(mode) = &req.mode
+        && (mode == "copy") != (before.mode == "copy")
+    {
+        return Err(NexusError::invalid("A copy cannot become a sync, or a sync a copy; remove it and set it up again").into());
+    }
+    let pair = s.db.update_sync_pair(&id, req.enabled, req.mode.as_deref(), req.keep_days).await?;
     audit(&s, &user, "sync.changed", Some(&pair.remote_label)).await;
     if pair.enabled {
         s.sync.run_now(&pair.id);
@@ -758,6 +1097,133 @@ pub async fn run(State(s): State<SharedState>, user: AuthUser, Path(id): Path<St
     manageable(&s, &user, &id).await?;
     s.sync.run_now(&id);
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn a_copy(s: &AppState, user: &AuthUser, id: &str) -> Result<SyncPair> {
+    let pair = manageable(s, user, id).await?;
+    if pair.mode != "copy" {
+        return Err(NexusError::NotFound("Copy".into()));
+    }
+    Ok(pair)
+}
+
+/// `POST /sync/{id}/check`: reads the whole copy back now (copies only).
+pub async fn check(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    user.require_person()?;
+    user.require(Action::Write)?;
+    let pair = a_copy(&s, &user, &id).await?;
+    if s.sync.is_checking(&id) {
+        return Err(NexusError::Conflict("This copy is being checked already".into()).into());
+    }
+    tokio::spawn(async move { check_and_record(&s, &pair, None).await });
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// `GET /sync/{id}/held`: files removed here that the copy still keeps.
+pub async fn held(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Vec<HeldFile>>> {
+    user.require_person()?;
+    user.require(Action::Read)?;
+    let pair = s.db.get_sync_pair(&id).await?;
+    if !sees(&user, &pair) || pair.mode != "copy" {
+        return Err(NexusError::NotFound("Copy".into()).into());
+    }
+    Ok(Json(s.db.held_files(&id).await?))
+}
+
+#[derive(Deserialize)]
+pub struct BringBack {
+    /// Paths as listed by `held`.
+    paths: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct Started {
+    job_id: String,
+}
+
+/// `POST /sync/{id}/held/restore`: copies files the copy kept back here,
+/// under their old names (beside anything that took the name since).
+pub async fn bring_back(
+    State(s): State<SharedState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+    Json(req): Json<BringBack>,
+) -> ApiResult<(StatusCode, Json<Started>)> {
+    user.require_person()?;
+    user.require(Action::Write)?;
+    let pair = a_copy(&s, &user, &id).await?;
+    let held = s.db.held_files(&id).await?;
+    let wanted: HashSet<String> = req.paths.iter().map(|p| p.to_lowercase()).collect();
+    let chosen: Vec<HeldFile> = held.into_iter().filter(|h| wanted.contains(&h.rel_path)).collect();
+    if chosen.is_empty() {
+        return Err(NexusError::invalid("Choose files the copy keeps").into());
+    }
+    let device = peer_target(&s, &pair.device_id).await?;
+    let job = s.jobs.add("sync", "Bring back from the copy".into(), format!("{} → this computer", device.name), user.username.clone());
+    let job_id = job.id.clone();
+    tokio::spawn(async move {
+        let Some(_slot) = s.jobs.start(&s, &job).await else { return };
+        let side = Side::Peer(device.clone());
+        let mover = Mover { s: &s, user: &user };
+        let outcome: Result<()> = async {
+            let remote = to_map(mover.tree(&side, &pair.remote_root_id, &pair.remote_path).await?);
+            // Each chosen path, and for folders everything under them.
+            let mut todo: Vec<&Entry> = Vec::new();
+            for h in &chosen {
+                let prefix = format!("{}/", h.rel_path);
+                todo.extend(remote.iter().filter(|(k, _)| **k == h.rel_path || k.starts_with(&prefix)).map(|(_, e)| e));
+            }
+            job.update(|i| {
+                i.files_total = todo.iter().filter(|e| !e.is_dir).count() as u64;
+                i.bytes_total = todo.iter().map(|e| e.size.max(0) as u64).sum();
+            });
+            for e in todo {
+                if job.is_cancelled() {
+                    break;
+                }
+                let (parent, name) = paths::split_parent(&e.path);
+                if e.is_dir {
+                    mover.mkdir(&Side::Local, &pair.local_root_id, &paths::join(&pair.local_path, &parent), &name).await?;
+                    continue;
+                }
+                let meta = Meta {
+                    id: e.id.clone(),
+                    root_id: pair.remote_root_id.clone(),
+                    relative_path: paths::join(&pair.remote_path, &e.path),
+                    filename: name.clone(),
+                    is_dir: false,
+                    size: e.size,
+                    modified_at: e.modified_at,
+                    content_hash: e.hash.clone(),
+                };
+                let req = NewUpload {
+                    root_id: pair.local_root_id.clone(),
+                    path: paths::join(&pair.local_path, &parent),
+                    name,
+                    size: e.size as u64,
+                    on_conflict: Some("rename".into()),
+                    modified_at: e.modified_at,
+                    make_parents: true,
+                };
+                job.update(|i| i.current = Some(e.path.clone()));
+                match mover.send_file(&job, &side, &meta, &Side::Local, req).await {
+                    Ok(_) => job.update(|i| i.files_done += 1),
+                    Err(_) if job.is_cancelled() => break,
+                    Err(err) => job.fail_file(&e.path, &err),
+                }
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(e) = outcome {
+            job.fail_file("Bring back", &e);
+        }
+        finish_job(&s, &job);
+        let n = chosen.len();
+        audit(&s, &user, "copy.brought_back", Some(&format!("{n} item{} from {}", if n == 1 { "" } else { "s" }, device.name))).await;
+        s.sync.run_now(&pair.id);
+    });
+    Ok((StatusCode::ACCEPTED, Json(Started { job_id })))
 }
 
 #[cfg(test)]
@@ -854,6 +1320,31 @@ mod tests {
             plan("download", &local, &remote, &state),
             vec![Op::Pull("a.txt".into()), Op::Pull("theirs.txt".into())]
         );
+    }
+
+    #[test]
+    fn copies_keep_what_was_removed_here() {
+        let a = file(1, 10);
+        let d = dir();
+        let x = file(2, 20);
+        let state = synced(&[("a.txt", &a), ("d", &d), ("d/x", &x)]);
+        let local = map(&[("new.txt", file(3, 30))]);
+        let remote = map(&[("a.txt", a.clone()), ("d", d.clone()), ("d/x", x.clone()), ("theirs.txt", file(4, 40))]);
+        // Removed here: held (a folder whole), never trashed by the plan;
+        // files only on the device are left alone.
+        assert_eq!(
+            plan("copy", &local, &remote, &state),
+            vec![Op::Hold("a.txt".into()), Op::Hold("d".into()), Op::Push("new.txt".into())]
+        );
+        // A copy changed on the device is replaced by the file here.
+        let local = map(&[("a.txt", a.clone())]);
+        let remote = map(&[("a.txt", file(9, 90))]);
+        assert_eq!(plan("copy", &local, &remote, &synced(&[("a.txt", &a)])), vec![Op::Push("a.txt".into())]);
+        // Holding is not removing: no mass-removal alarm.
+        let files: Vec<(String, Entry)> = (0..30).map(|i| (format!("f{i}"), file(i, i))).collect();
+        let state: SyncState = files.iter().map(|(p, e)| (p.clone(), (Some(e.fingerprint()), Some(e.fingerprint())))).collect();
+        let remote: BTreeMap<String, Entry> = files.into_iter().collect();
+        assert_eq!(mass_removal(&plan("copy", &BTreeMap::new(), &remote, &state), &state), None);
     }
 
     #[test]

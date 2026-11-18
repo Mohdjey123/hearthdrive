@@ -52,6 +52,10 @@ pub enum Event {
     /// An update arrived, or checking for one started or finished.
     #[serde(rename = "updates.changed")]
     UpdatesChanged,
+    /// Drive health changed: disks read, a storage location went missing or
+    /// came back, or a verification started or finished.
+    #[serde(rename = "health.updated")]
+    HealthUpdated,
 }
 
 impl Event {

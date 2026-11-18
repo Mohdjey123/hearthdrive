@@ -369,7 +369,7 @@ async fn acting_user(s: &AppState, set: &SnapshotSet) -> Result<AuthUser> {
 }
 
 /// Hashes a file here that the indexer has not hashed yet.
-async fn hash_local(s: &AppState, root: &nexus_common::types::StorageRoot, base: &str, item: &TreeItem) -> Result<String> {
+pub(crate) async fn hash_local(s: &AppState, root: &nexus_common::types::StorageRoot, base: &str, item: &TreeItem) -> Result<String> {
     let path = s.storage.resolve(root, &paths::join(base, &item.path))?;
     let hash = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
         let mut file = std::fs::File::open(path)?;
@@ -592,7 +592,7 @@ async fn prune(s: &AppState, store: &Store<'_>, set: &SnapshotSet) -> Result<Str
     })
 }
 
-fn human_bytes(b: i64) -> String {
+pub(crate) fn human_bytes(b: i64) -> String {
     let b = b as f64;
     if b >= 1e9 {
         format!("{:.1} GB", b / 1e9)
@@ -771,6 +771,33 @@ async fn restore(s: &SharedState, user: &AuthUser, job: &Arc<super::transfers::J
     }
     finish_job(s, job);
     audit(s, user, "backup.restored", Some(&format!("{} → {}", set.name, if dest.is_empty() { "/" } else { &dest }))).await;
+}
+
+/// Puts one file's content from a backup back over the file here (drive
+/// health repairs). `parent` is the file's folder in the storage location;
+/// the content currently there is kept as a version.
+pub(crate) async fn repair_file(
+    s: &AppState,
+    user: &AuthUser,
+    job: &Arc<super::transfers::Job>,
+    set: &SnapshotSet,
+    f: &SnapshotFile,
+    parent: &str,
+) -> Result<()> {
+    let device = peer_target(s, &set.device_id).await?;
+    let store = store_of(s, user, set, device).await?;
+    let present = store.objects().await?;
+    let object = present.get(&store.name_of(&f.h)).ok_or_else(|| NexusError::NotFound("Its content in the backup".into()))?;
+    let req = NewUpload {
+        root_id: set.local_root_id.clone(),
+        path: parent.to_string(),
+        name: paths::split_parent(&f.p).1,
+        size: f.s as u64,
+        on_conflict: Some("replace".into()),
+        modified_at: f.m,
+        make_parents: true,
+    };
+    store.get(job, object, f, req).await
 }
 
 // ---------------------------------------------------------------------------

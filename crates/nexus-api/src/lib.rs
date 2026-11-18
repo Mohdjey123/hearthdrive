@@ -14,6 +14,7 @@ pub mod share;
 
 pub use routes::backup::spawn as spawn_backup;
 pub use routes::introductions::{introduce_now as introduce_devices, spawn as spawn_introductions};
+pub use routes::health::spawn as spawn_health;
 pub use routes::shares::spawn as spawn_shares;
 pub use routes::sync::spawn as spawn_sync;
 pub use routes::snapshots::spawn as spawn_snapshots;
@@ -61,7 +62,7 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
     frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{backup, devices, files, introductions, network, shares, snapshots, storage, sync, system, transfers, updates, uploads, users};
+    use routes::{backup, devices, files, health, introductions, network, shares, snapshots, storage, sync, system, transfers, updates, uploads, users};
 
     let api = Router::new()
         .route("/health", get(system::health))
@@ -117,6 +118,9 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/sync", get(sync::list).post(sync::create))
         .route("/sync/{id}", patch(sync::update).delete(sync::remove))
         .route("/sync/{id}/run", post(sync::run))
+        .route("/sync/{id}/check", post(sync::check))
+        .route("/sync/{id}/held", get(sync::held))
+        .route("/sync/{id}/held/restore", post(sync::bring_back))
         .route("/backup", get(backup::get).put(backup::set).patch(backup::update).delete(backup::remove))
         .route("/backup/run", post(backup::run))
         .route("/shared", get(backup::shared))
@@ -141,6 +145,11 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/storage/roots/{id}", delete(storage::remove_root))
         .route("/storage/roots/{id}/stats", get(storage::root_stats))
         .route("/storage/roots/{id}/scan", post(storage::rescan_root))
+        .route("/storage/roots/{id}/verify", post(health::verify))
+        .route("/storage/health", get(health::get))
+        .route("/storage/health/refresh", post(health::refresh))
+        .route("/storage/health/damaged/{file_id}/repair", post(health::repair_damaged))
+        .route("/storage/health/damaged/{file_id}/accept", post(health::accept_damaged))
         .route("/files", get(files::list))
         .route("/files/folder", post(files::create_folder))
         .route(

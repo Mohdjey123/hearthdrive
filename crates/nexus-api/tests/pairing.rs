@@ -72,6 +72,7 @@ async fn node_with(name: &str, phone: bool) -> Node {
     nexus_api::spawn_backup(state.clone());
     nexus_api::spawn_transfers(state.clone());
     nexus_api::spawn_snapshots(state.clone());
+    nexus_api::spawn_health(state.clone());
     tokio::spawn(async move {
         axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
     });
@@ -1317,4 +1318,176 @@ async fn encrypted_backups_open_on_another_computer() {
     assert_eq!(s, 200);
     let set = laptop.backup_run(&opened_id).await;
     assert_eq!(set["last_result"], "2 files, 0 new", "{set}");
+}
+
+impl Node {
+    /// The sync pair (or copy) as listed.
+    async fn pair_view(&self, id: &str) -> Value {
+        let (_, all) = self.call(Method::GET, "/sync", None).await;
+        all.as_array().unwrap().iter().find(|p| p["id"] == id).unwrap().clone()
+    }
+
+    /// Asks for a full read-back of a copy and waits for it.
+    async fn check_copy(&self, id: &str) -> Value {
+        let before = self.pair_view(id).await["last_check_at"].as_i64().unwrap_or(0);
+        let (s, v) = self.call(Method::POST, &format!("/sync/{id}/check"), None).await;
+        assert_eq!(s, 202, "{v}");
+        for _ in 0..400 {
+            let p = self.pair_view(id).await;
+            if p["last_check_at"].as_i64().unwrap_or(0) > before && p["checking"] == false {
+                return p;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("copy {id} was not checked");
+    }
+
+    /// Asks for a storage location to be verified and waits for it.
+    async fn verify(&self, root: &str) -> Value {
+        let before = |v: &Value| {
+            v["roots"].as_array().unwrap().iter().find(|r| r["id"] == root).unwrap()["last_check"]["checked_at"].as_i64().unwrap_or(0)
+        };
+        let (_, h) = self.call(Method::GET, "/storage/health", None).await;
+        let start = before(&h);
+        let (s, v) = self.call(Method::POST, &format!("/storage/roots/{root}/verify"), None).await;
+        assert_eq!(s, 202, "{v}");
+        for _ in 0..400 {
+            let (_, h) = self.call(Method::GET, "/storage/health", None).await;
+            let r = h["roots"].as_array().unwrap().iter().find(|r| r["id"] == root).unwrap();
+            if before(&h) > start && r["verifying"] == false {
+                return h;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("{root} was not verified");
+    }
+}
+
+/// Writes new bytes over a file without changing its size or date, as
+/// damage on a disk would.
+fn damage(path: &std::path::Path, bytes: &[u8]) {
+    use std::io::Write;
+    let when = std::fs::metadata(path).unwrap().modified().unwrap();
+    let mut f = std::fs::File::options().write(true).open(path).unwrap();
+    f.write_all(bytes).unwrap();
+    f.set_modified(when).unwrap();
+}
+
+#[tokio::test]
+async fn extra_copies_keep_removed_files_and_repair_damage() {
+    let pc = node("pc").await;
+    let nas = node("nas").await;
+    pc.pair_with(&nas).await;
+
+    let docs = pc.storage.path().join("docs");
+    old_file(&docs.join("a.txt"), b"alpha");
+    old_file(&docs.join("sub").join("b.txt"), b"bravo");
+    std::fs::create_dir_all(nas.storage.path().join("copy")).unwrap();
+    let here = pc.add_root(pc.storage.path()).await;
+    let there = nas.add_root(nas.storage.path()).await;
+
+    let make = |keep: i64| {
+        json!({"local_root_id": here, "local_path": "docs", "device_id": nas.device_id(), "remote_root_id": there,
+               "remote_path": "copy", "mode": "copy", "keep_days": keep})
+    };
+    let (s, v) = pc.call(Method::POST, "/sync", Some(make(99999))).await;
+    assert_eq!(s, 400, "{v}");
+    let (s, pair) = pc.call(Method::POST, "/sync", Some(make(30))).await;
+    assert_eq!(s, 201, "{pair}");
+    let id = pair["id"].as_str().unwrap().to_string();
+    let p = pc.sync_now(&id).await;
+    assert!(p["last_error"].is_null(), "{p}");
+    let copy = nas.storage.path().join("copy");
+    assert_eq!(files_in(&copy), ["a.txt", "sub/b.txt"]);
+    // A copy cannot be turned into a sync.
+    let (s, _) = pc.call(Method::PATCH, &format!("/sync/{id}"), Some(json!({"mode": "two_way"}))).await;
+    assert_eq!(s, 400);
+
+    // Removed here: the copy keeps it, and it can be brought back.
+    std::fs::remove_file(docs.join("a.txt")).unwrap();
+    pc.state.indexer.reindex_path(&pc.state.db.get_root(&here).await.unwrap(), "docs/a.txt").await.unwrap();
+    let p = pc.sync_now(&id).await;
+    assert!(p["last_result"].as_str().unwrap().contains("1 removed here is kept on nas for 30 days"), "{p}");
+    assert_eq!((p["held_files"].as_u64(), p["held_bytes"].as_i64()), (Some(1), Some(5)), "{p}");
+    assert!(copy.join("a.txt").exists());
+    let (_, held) = pc.call(Method::GET, &format!("/sync/{id}/held"), None).await;
+    assert_eq!(held[0]["path"], "a.txt", "{held}");
+    let (s, started) = pc.call(Method::POST, &format!("/sync/{id}/held/restore"), Some(json!({"paths": ["a.txt"]}))).await;
+    assert_eq!(s, 202, "{started}");
+    let job = pc.wait_job(started["job_id"].as_str().unwrap()).await;
+    assert_eq!((job["status"].as_str(), job["files_done"].as_u64()), (Some("done"), Some(1)), "{job}");
+    assert_eq!(std::fs::read(docs.join("a.txt")).unwrap(), b"alpha");
+    let p = pc.sync_now(&id).await;
+    assert_eq!(p["held_files"], 0, "{p}");
+
+    // Damage on the copy is found by reading it back, and sent again.
+    damage(&copy.join("sub").join("b.txt"), b"brXvo");
+    let p = pc.check_copy(&id).await;
+    let result = p["last_check_result"].as_str().unwrap();
+    assert!(result.starts_with("2 files checked; 1 file damaged or missing on nas and sent again"), "{result}");
+    assert_eq!(std::fs::read(copy.join("sub").join("b.txt")).unwrap(), b"bravo");
+    let p = pc.check_copy(&id).await;
+    assert_eq!(p["last_check_result"], "2 files checked, all intact", "{p}");
+
+    // Damage here is found by verifying, and repaired from the copy.
+    damage(&docs.join("sub").join("b.txt"), b"brav0");
+    let health = pc.verify(&here).await;
+    let root = health["roots"].as_array().unwrap().iter().find(|r| r["id"] == here).unwrap().clone();
+    assert_eq!(root["last_check"]["damaged"], 1, "{root}");
+    let bad = &root["damaged"][0];
+    assert_eq!((bad["path"].as_str(), bad["unreadable"].as_bool()), (Some("docs/sub/b.txt"), Some(false)), "{bad}");
+    assert_eq!(bad["repair_from"][0], "the copy on nas", "{bad}");
+    assert!(health["problems"].as_array().unwrap().iter().any(|p| p["text"].as_str().unwrap().contains("damaged on the disk")), "{health}");
+    let (s, started) = pc.call(Method::POST, &format!("/storage/health/damaged/{}/repair", bad["file_id"].as_str().unwrap()), None).await;
+    assert_eq!(s, 202, "{started}");
+    let job = pc.wait_job(started["job_id"].as_str().unwrap()).await;
+    assert_eq!((job["status"].as_str(), job["files_done"].as_u64()), (Some("done"), Some(1)), "{job}");
+    assert_eq!(std::fs::read(docs.join("sub").join("b.txt")).unwrap(), b"bravo");
+    let (_, health) = pc.call(Method::GET, "/storage/health", None).await;
+    let root = health["roots"].as_array().unwrap().iter().find(|r| r["id"] == here).unwrap().clone();
+    assert_eq!(root["damaged"].as_array().unwrap().len(), 0, "{root}");
+
+    // With nothing kept, a file removed here goes to the device's trash.
+    let (s, v) = pc.call(Method::PATCH, &format!("/sync/{id}"), Some(json!({"keep_days": 0}))).await;
+    assert_eq!(s, 200, "{v}");
+    std::fs::remove_file(docs.join("a.txt")).unwrap();
+    pc.state.indexer.reindex_path(&pc.state.db.get_root(&here).await.unwrap(), "docs/a.txt").await.unwrap();
+    pc.sync_now(&id).await;
+    assert!(!copy.join("a.txt").exists());
+    assert_eq!(files_in(&copy), ["sub/b.txt"]);
+
+    // Without the copy, a backup that holds the right content repairs it.
+    let (s, _) = pc.call(Method::DELETE, &format!("/sync/{id}"), None).await;
+    assert_eq!(s, 204);
+    let (s, set) = pc
+        .call(
+            Method::POST,
+            "/snapshots",
+            Some(json!({"local_root_id": here, "local_path": "docs", "device_id": nas.device_id(), "remote_root_id": there,
+                        "remote_path": "", "encrypt": false})),
+        )
+        .await;
+    assert_eq!(s, 201, "{set}");
+    let set = pc.backup_set_after(set["id"].as_str().unwrap(), "last_run_at", 0).await;
+    assert!(set["last_error"].is_null(), "{set}");
+    damage(&docs.join("sub").join("b.txt"), b"Bravo");
+    let health = pc.verify(&here).await;
+    let root = health["roots"].as_array().unwrap().iter().find(|r| r["id"] == here).unwrap().clone();
+    let bad = &root["damaged"][0];
+    assert_eq!(bad["repair_from"], json!([format!("the backup {}", set["name"].as_str().unwrap())]), "{bad}");
+    let (s, started) = pc.call(Method::POST, &format!("/storage/health/damaged/{}/repair", bad["file_id"].as_str().unwrap()), None).await;
+    assert_eq!(s, 202, "{started}");
+    let job = pc.wait_job(started["job_id"].as_str().unwrap()).await;
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(std::fs::read(docs.join("sub").join("b.txt")).unwrap(), b"bravo");
+
+    // Accepting a change instead: the file's current content becomes the right one.
+    damage(&docs.join("sub").join("b.txt"), b"BRAVO");
+    let health = pc.verify(&here).await;
+    let root = health["roots"].as_array().unwrap().iter().find(|r| r["id"] == here).unwrap().clone();
+    let (s, _) = pc.call(Method::POST, &format!("/storage/health/damaged/{}/accept", root["damaged"][0]["file_id"].as_str().unwrap()), None).await;
+    assert_eq!(s, 204);
+    let health = pc.verify(&here).await;
+    let root = health["roots"].as_array().unwrap().iter().find(|r| r["id"] == here).unwrap().clone();
+    assert_eq!(root["last_check"]["damaged"], 0, "{root}");
 }

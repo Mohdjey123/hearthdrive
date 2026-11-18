@@ -58,6 +58,22 @@ pub struct SyncPair {
     pub last_result: Option<String>,
     pub last_error: Option<String>,
     pub created_at: i64,
+    /// Copies only: days a file removed here stays on the copy.
+    pub keep_days: i64,
+    /// Copies only: the last read-back check of the copy.
+    pub last_check_at: Option<i64>,
+    pub last_check_result: Option<String>,
+}
+
+/// A file removed here that a copy still holds.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct HeldFile {
+    #[serde(skip)]
+    pub rel_path: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub size: i64,
+    pub gone_at: i64,
 }
 
 pub struct NewSyncPair<'a> {
@@ -70,6 +86,7 @@ pub struct NewSyncPair<'a> {
     pub mode: &'a str,
     pub created_by: &'a str,
     pub created_role: &'a str,
+    pub keep_days: i64,
 }
 
 /// Fingerprints of one path on each side (here, there) after it was last in step.
@@ -83,7 +100,7 @@ const UPLOAD_COLUMNS: &str =
 const VERSION_COLUMNS: &str =
     "id, file_id, root_id, relative_path, size, modified_at, content_hash, created_at, created_by";
 const PAIR_COLUMNS: &str = "id, local_root_id, local_path, device_id, remote_root_id, remote_path, remote_label, mode, \
-     enabled, created_by, created_role, last_run_at, last_ok_at, last_result, last_error, created_at";
+     enabled, created_by, created_role, last_run_at, last_ok_at, last_result, last_error, created_at,      keep_days, last_check_at, last_check_result";
 
 impl Database {
     // -- uploads ----------------------------------------------------------
@@ -213,7 +230,7 @@ impl Database {
         let id = new_id();
         sqlx::query(
             "INSERT INTO sync_pairs (id, local_root_id, local_path, device_id, remote_root_id, remote_path, remote_label, \
-             mode, enabled, created_by, created_role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+             mode, enabled, created_by, created_role, created_at, keep_days) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(p.local_root_id)
@@ -226,6 +243,7 @@ impl Database {
         .bind(p.created_by)
         .bind(p.created_role)
         .bind(now_ms())
+        .bind(p.keep_days)
         .execute(&self.pool)
         .await?;
         self.get_sync_pair(&id).await
@@ -245,7 +263,10 @@ impl Database {
             .await?)
     }
 
-    pub async fn update_sync_pair(&self, id: &str, enabled: Option<bool>, mode: Option<&str>) -> Result<SyncPair> {
+    pub async fn update_sync_pair(&self, id: &str, enabled: Option<bool>, mode: Option<&str>, keep_days: Option<i64>) -> Result<SyncPair> {
+        if let Some(days) = keep_days {
+            sqlx::query("UPDATE sync_pairs SET keep_days = ? WHERE id = ?").bind(days).bind(id).execute(&self.pool).await?;
+        }
         if let Some(enabled) = enabled {
             sqlx::query("UPDATE sync_pairs SET enabled = ? WHERE id = ?").bind(enabled).bind(id).execute(&self.pool).await?;
         }
@@ -274,6 +295,57 @@ impl Database {
         .bind(id)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    pub async fn record_copy_check(&self, id: &str, result: &str) -> Result<()> {
+        sqlx::query("UPDATE sync_pairs SET last_check_at = ?, last_check_result = ? WHERE id = ?")
+            .bind(now_ms())
+            .bind(result)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // -- files a copy holds after they were removed here ------------------
+
+    pub async fn held_files(&self, pair_id: &str) -> Result<Vec<HeldFile>> {
+        Ok(sqlx::query_as::<_, HeldFile>(
+            "SELECT rel_path, path, is_dir, size, gone_at FROM copy_held WHERE pair_id = ? ORDER BY gone_at DESC, path",
+        )
+        .bind(pair_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    pub async fn hold_file(&self, pair_id: &str, f: &HeldFile) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO copy_held (pair_id, rel_path, path, is_dir, size, gone_at) VALUES (?, ?, ?, ?, ?, ?)              ON CONFLICT (pair_id, rel_path) DO NOTHING",
+        )
+        .bind(pair_id)
+        .bind(&f.rel_path)
+        .bind(&f.path)
+        .bind(f.is_dir)
+        .bind(f.size)
+        .bind(f.gone_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Forgets held paths (and everything under them).
+    pub async fn release_held(&self, pair_id: &str, rel_paths: &[String]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        for rel in rel_paths {
+            sqlx::query("DELETE FROM copy_held WHERE pair_id = ? AND (rel_path = ? OR rel_path LIKE ? ESCAPE '\')")
+                .bind(pair_id)
+                .bind(rel)
+                .bind(format!("{}/%", like_escape(rel)))
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
