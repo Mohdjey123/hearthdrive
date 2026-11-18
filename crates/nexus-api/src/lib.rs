@@ -136,6 +136,17 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/trash/{id}", delete(files::purge))
         .route("/search", get(files::search))
         .route("/recent", get(files::recent))
+        // An address this service does not know: most likely an app newer
+        // than the service (or a paired device running an older version).
+        .fallback(|| async {
+            (
+                StatusCode::NOT_FOUND,
+                axum::Json(serde_json::json!({ "error": {
+                    "code": "unknown_route",
+                    "message": "This NEXUS service does not support this yet. It may be an older version: restart NEXUS, or update the device it runs on.",
+                } })),
+            )
+        })
         .with_state(state.clone());
 
     let mut app = Router::new().nest("/api/v1", api);

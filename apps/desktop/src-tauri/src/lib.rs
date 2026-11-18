@@ -23,7 +23,7 @@ struct Connection {
 #[cfg(desktop)]
 mod host {
     use super::Connection;
-    use nexus_common::runtime::{RUNTIME_FILE, RuntimeInfo, default_data_dir};
+    use nexus_common::runtime::{RUNTIME_FILE, RuntimeInfo, default_data_dir, program_stamp};
     use std::net::{SocketAddr, TcpStream};
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
@@ -64,6 +64,49 @@ mod host {
         command.spawn().map(|_| ()).map_err(|e| format!("Could not start the NEXUS service: {e}"))
     }
 
+    /// Whether the running service is the program next to this app, as it
+    /// is on disk now. Services from before this check say neither.
+    fn is_current(info: &RuntimeInfo) -> bool {
+        let Ok(ours) = service_executable() else { return true };
+        let same_file = info.exe.as_deref().is_some_and(|exe| {
+            match (std::fs::canonicalize(exe), std::fs::canonicalize(&ours)) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            }
+        });
+        same_file && info.exe_modified.is_some() && info.exe_modified == program_stamp(&ours)
+    }
+
+    fn stop_service(pid: u32) {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            // The image-name filter makes sure a reused process id is left alone.
+            let _ = Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string(), "/FI", "IMAGENAME eq nexus-service.exe"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = Command::new("kill").arg(pid.to_string()).status();
+        }
+    }
+
+    fn wait_until_stopped(data_dir: &Path) -> bool {
+        for _ in 0..40 {
+            if read_live_runtime(data_dir).is_none() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(125));
+        }
+        false
+    }
+
     fn connect() -> Result<Connection, String> {
         let data_dir = default_data_dir();
         let to_connection = |info: RuntimeInfo| Connection {
@@ -73,7 +116,18 @@ mod host {
             shell: "desktop",
         };
         if let Some(info) = read_live_runtime(&data_dir) {
-            return Ok(to_connection(info));
+            if is_current(&info) {
+                return Ok(to_connection(info));
+            }
+            // An older service is still running (the app was updated, or
+            // rebuilt during development): replace it with the one that
+            // matches this app. If it cannot be stopped, use it anyway.
+            stop_service(info.pid);
+            if !wait_until_stopped(&data_dir)
+                && let Some(info) = read_live_runtime(&data_dir)
+            {
+                return Ok(to_connection(info));
+            }
         }
         spawn_service()?;
         for _ in 0..60 {

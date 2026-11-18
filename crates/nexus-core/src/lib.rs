@@ -216,12 +216,15 @@ pub async fn run_with(
     });
 
     let runtime_path = config.data_dir.join(RUNTIME_FILE);
+    let exe = std::env::current_exe().ok();
     let runtime = RuntimeInfo {
         pid: std::process::id(),
         port: address.port(),
         base_url: format!("http://{address}"),
         local_token,
         started_at: now_ms(),
+        exe_modified: exe.as_deref().and_then(nexus_common::runtime::program_stamp),
+        exe: exe.map(|p| p.to_string_lossy().into_owned()),
     };
     write_runtime(&runtime_path, &runtime)?;
     tracing::info!(%address, "NEXUS service listening");

@@ -18,6 +18,18 @@ pub struct RuntimeInfo {
     /// Grants owner access to processes running as this Windows user.
     pub local_token: String,
     pub started_at: i64,
+    /// The service's program file and when it was written, so an app that
+    /// was updated can tell that an older service is still running.
+    #[serde(default)]
+    pub exe: Option<String>,
+    #[serde(default)]
+    pub exe_modified: Option<i64>,
+}
+
+/// When a program file was last written, in milliseconds.
+pub fn program_stamp(path: &std::path::Path) -> Option<i64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    Some(modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as i64)
 }
 
 /// `%LOCALAPPDATA%\NEXUS Cloud` on Windows, overridable with `NEXUS_DATA_DIR`.

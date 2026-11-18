@@ -306,3 +306,11 @@ async fn refuses_system_locations() {
         assert_eq!(s, StatusCode::FORBIDDEN, "{path}: {v}");
     }
 }
+
+#[tokio::test]
+async fn unknown_api_addresses_answer_with_an_error_not_the_web_page() {
+    let h = harness([127, 0, 0, 1]).await;
+    let (s, v) = call(&h.app, Method::GET, "/api/v1/no-such-thing", Some(LOCAL_TOKEN), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(v["error"]["code"], "unknown_route");
+}
