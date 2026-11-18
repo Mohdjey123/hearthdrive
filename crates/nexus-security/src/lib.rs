@@ -1,6 +1,9 @@
 //! Authentication primitives. No custom cryptography: Argon2id for
 //! passwords, the OS CSPRNG for tokens and keyed BLAKE3 as a MAC.
 
+pub mod totp;
+pub mod webauthn;
+
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, SaltString};
 use argon2::{Argon2, PasswordHasher, PasswordVerifier};

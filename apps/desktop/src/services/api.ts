@@ -87,6 +87,8 @@ export interface Device {
   indexed_bytes: number
   /** The paired device that introduced this one; `null` if paired directly. */
   introduced_by: string | null
+  /** When it was blocked: its requests are refused and nothing is sent to it. */
+  blocked_at: number | null
 }
 
 export type NetworkState = 'off' | 'starting' | 'online' | 'local_only'
@@ -152,8 +154,53 @@ export interface User {
   /** Storage locations (here or on paired devices) the person is limited to; `null` = all. */
   allowed_roots: string[] | null
 }
+/** An account as People lists it, with how it signs in. */
+export interface Person extends User {
+  two_factor: boolean
+  passkeys: number
+  locked_at: number | null
+}
 export interface Me { user_id: string | null; username: string; role: Role; local: boolean; device_id: string | null }
 export interface Session { token: string; expires_at: number; user: User }
+/** The password was right; a code from the authenticator app is needed next. */
+export interface CodeNeeded { two_factor: true; ticket: string }
+
+export interface Passkey { id: string; name: string; created_at: number; last_used_at: number | null }
+export interface SignInSession {
+  id: string
+  /** The browser's user agent. */
+  client: string | null
+  /** password, password+code, password+recovery, passkey or setup. */
+  method: string | null
+  created_at: number
+  last_used_at: number | null
+  expires_at: number
+  current: boolean
+}
+export interface SecurityStatus {
+  two_factor: boolean
+  two_factor_since: number | null
+  recovery_codes_left: number
+  passkeys: Passkey[]
+  sessions: SignInSession[]
+  /** Whether passkeys can be used from this page. */
+  passkeys_here: boolean
+}
+/** What the browser needs to make a passkey (base64url fields). */
+export interface PasskeyOptions {
+  challenge: string
+  rp: { id: string; name: string }
+  user: { id: string; name: string; display_name: string }
+  algorithms: number[]
+  exclude: string[]
+}
+export interface PasskeyAnswer {
+  credential_id: string
+  client_data: string
+  authenticator_data: string
+  signature: string
+  user_handle: string | null
+}
 
 export interface SystemInfo {
   node: { device_id: string; name: string; hostname: string; version: string; platform: string }
@@ -577,7 +624,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       code = j.error?.code ?? code
       message = j.error?.message ?? message
     } catch { /* not JSON */ }
-    if (res.status === 401 && path !== '/auth/login') unauthorizedHandler?.()
+    if (res.status === 401 && !path.startsWith('/auth/login')) unauthorizedHandler?.()
     throw new ApiError(res.status, code, message)
   }
   if (res.status === 204) return undefined as T
@@ -674,7 +721,21 @@ export const api = {
   health: () => request<{ status: string; version: string }>('GET', '/health'),
   setupStatus: () => request<{ needs_setup: boolean; node_name: string }>('GET', '/setup/status'),
   setup: (b: { node_name: string; username: string; password: string }) => request<Session>('POST', '/setup', b),
-  login: (username: string, password: string) => request<Session>('POST', '/auth/login', { username, password }),
+  login: (username: string, password: string) => request<Session | CodeNeeded>('POST', '/auth/login', { username, password }),
+  loginCode: (ticket: string, code: string) => request<Session>('POST', '/auth/login/code', { ticket, code }),
+  passkeyStart: () => request<{ challenge: string; rp_id: string }>('POST', '/auth/passkey/start'),
+  passkeySignIn: (b: PasskeyAnswer & { challenge: string }) => request<Session>('POST', '/auth/passkey', b),
+  security: () => request<SecurityStatus>('GET', '/auth/security'),
+  securityLog: (limit = 100) => request<ActivityEntry[]>('GET', `/auth/security/log${q({ limit })}`),
+  setupTwoFactor: (password: string) => request<{ secret: string; uri: string }>('POST', '/auth/2fa/setup', { password }),
+  enableTwoFactor: (code: string) => request<{ recovery_codes: string[] }>('POST', '/auth/2fa/enable', { code }),
+  disableTwoFactor: (password: string, code: string) => request<void>('POST', '/auth/2fa/disable', { password, code }),
+  newRecoveryCodes: (password: string, code: string) => request<{ recovery_codes: string[] }>('POST', '/auth/2fa/recovery-codes', { password, code }),
+  addPasskeyStart: (password: string, code?: string) => request<PasskeyOptions>('POST', '/auth/passkeys/start', { password, code }),
+  addPasskey: (b: { challenge: string; client_data: string; attestation_object: string; name: string }) => request<Passkey>('POST', '/auth/passkeys', b),
+  removePasskey: (id: string) => request<void>('DELETE', `/auth/passkeys/${id}`),
+  endSession: (id: string) => request<void>('DELETE', `/auth/sessions/${id}`),
+  endOtherSessions: () => request<{ ended: number }>('POST', '/auth/sessions/end-others'),
   logout: () => request<void>('POST', '/auth/logout'),
   me: () => request<Me>('GET', '/auth/me'),
   activity: (limit = 20) => request<ActivityEntry[]>('GET', `/activity${q({ limit })}`),
@@ -685,12 +746,12 @@ export const api = {
   rescanRoot: (id: string) => request<void>('POST', `/storage/roots/${id}/scan`),
 
   devices: () => request<Device[]>('GET', '/devices'),
-  updateDevice: (id: string, b: { name?: string; role?: Role; allowed_roots?: string[]; all_roots?: boolean }) =>
+  updateDevice: (id: string, b: { name?: string; role?: Role; allowed_roots?: string[]; all_roots?: boolean; blocked?: boolean }) =>
     request<void>('PATCH', `/devices/${id}`, b),
 
-  users: () => request<User[]>('GET', '/users'),
+  users: () => request<Person[]>('GET', '/users'),
   createUser: (b: { username: string; password: string; role: Role }) => request<User>('POST', '/users', b),
-  updateUser: (id: string, b: { role?: Role; password?: string; allowed_roots?: string[]; all_roots?: boolean }) =>
+  updateUser: (id: string, b: { role?: Role; password?: string; allowed_roots?: string[]; all_roots?: boolean; locked?: boolean; two_factor?: false }) =>
     request<User>('PATCH', `/users/${id}`, b),
   removeUser: (id: string) => request<void>('DELETE', `/users/${id}`),
 
@@ -725,7 +786,8 @@ export const api = {
     request<SnapshotSet & { recovery_key: string | null }>('POST', '/snapshots', b),
   openSnapshotSet: (b: { device_id: string; remote_root_id: string; remote_path: string; recovery_key: string; local_root_id: string; local_path: string }) =>
     request<SnapshotSet>('POST', '/snapshots/open', b),
-  snapshotRecoveryKey: (id: string, password: string) => request<{ recovery_key: string }>('POST', `/snapshots/${id}/recovery-key`, { password }),
+  snapshotRecoveryKey: (id: string, password: string, code?: string) =>
+    request<{ recovery_key: string }>('POST', `/snapshots/${id}/recovery-key`, { password, code }),
   updateSnapshotSet: (id: string, b: { enabled?: boolean; schedule?: BackupSchedule }) => request<SnapshotSet>('PATCH', `/snapshots/${id}`, b),
   removeSnapshotSet: (id: string) => request<void>('DELETE', `/snapshots/${id}`),
   runSnapshotSet: (id: string) => request<void>('POST', `/snapshots/${id}/run`),

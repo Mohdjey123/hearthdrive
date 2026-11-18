@@ -7,6 +7,10 @@
 //! People other than owners and administrators can be limited to some
 //! storage locations, here or on paired devices. The limit applies from
 //! their next request, wherever it is sent.
+//!
+//! An account can be locked (it cannot sign in and is signed out
+//! everywhere), and someone who lost their authenticator app can have
+//! two-step sign-in turned off for them.
 
 use super::audit;
 use crate::auth::AuthUser;
@@ -18,7 +22,7 @@ use axum::http::StatusCode;
 use nexus_common::NexusError;
 use nexus_common::types::{Role, User};
 use nexus_security::{Action, hash_password};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 fn validate_username(username: &str) -> Result<(), NexusError> {
     let ok = (3..=32).contains(&username.len())
@@ -38,10 +42,41 @@ async fn hash(password: String) -> Result<String, NexusError> {
     tokio::task::spawn_blocking(move || hash_password(&password)).await.map_err(NexusError::internal)?
 }
 
-pub async fn list(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Vec<User>>> {
+/// An account with how it signs in.
+#[derive(Serialize)]
+pub struct UserView {
+    #[serde(flatten)]
+    user: User,
+    two_factor: bool,
+    passkeys: i64,
+    locked_at: Option<i64>,
+}
+
+async fn views(s: &SharedState, users: Vec<User>) -> Result<Vec<UserView>, NexusError> {
+    let security = s.db.user_security().await?;
+    Ok(users
+        .into_iter()
+        .map(|user| {
+            let found = security.iter().find(|x| x.user_id == user.id);
+            UserView {
+                two_factor: found.is_some_and(|x| x.two_factor),
+                passkeys: found.map_or(0, |x| x.passkeys),
+                locked_at: found.and_then(|x| x.locked_at),
+                user,
+            }
+        })
+        .collect())
+}
+
+async fn view(s: &SharedState, id: &str) -> Result<UserView, NexusError> {
+    let user = s.db.get_user(id).await?;
+    Ok(views(s, vec![user]).await?.remove(0))
+}
+
+pub async fn list(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Vec<UserView>>> {
     user.require_person()?;
     user.require(Action::ManageUsers)?;
-    Ok(Json(s.db.list_users().await?))
+    Ok(Json(views(&s, s.db.list_users().await?).await?))
 }
 
 #[derive(Deserialize)]
@@ -73,6 +108,10 @@ pub struct UpdateUser {
     allowed_roots: Option<Vec<String>>,
     /// …or let them see everything again.
     all_roots: Option<bool>,
+    /// Lock the account (signing it out everywhere) or unlock it.
+    locked: Option<bool>,
+    /// `false` turns two-step sign-in off for someone who lost their app.
+    two_factor: Option<bool>,
 }
 
 /// Root ids are generated ids; anything else is a mistake or an attack.
@@ -86,12 +125,13 @@ pub async fn update(
     user: AuthUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateUser>,
-) -> ApiResult<Json<User>> {
+) -> ApiResult<Json<UserView>> {
     user.require_person()?;
     let target = s.db.get_user(&id).await?;
     let own_account = user.user_id.as_deref() == Some(id.as_str());
     // Anyone may change their own password; everything else needs the right.
-    let changes_access = req.role.is_some() || req.allowed_roots.is_some() || req.all_roots.is_some();
+    let changes_access =
+        req.role.is_some() || req.allowed_roots.is_some() || req.all_roots.is_some() || req.locked.is_some() || req.two_factor.is_some();
     if !(own_account && !changes_access) {
         user.require(Action::ManageUsers)?;
     }
@@ -128,6 +168,20 @@ pub async fn update(
     if let Some(password) = &req.password {
         validate_password(password)?;
     }
+    if req.locked == Some(true) {
+        if own_account {
+            return Err(NexusError::invalid("You cannot lock your own account").into());
+        }
+        if matches!(target.role, Role::Owner) && !s.db.user_locked(&id).await? && s.db.count_unlocked_owners().await? <= 1 {
+            return Err(NexusError::Conflict("This is the only owner who can sign in. It cannot be locked.".into()).into());
+        }
+    }
+    if req.two_factor == Some(true) {
+        return Err(NexusError::invalid("People turn on two-step sign-in themselves, in Settings → Security").into());
+    }
+    if req.two_factor == Some(false) && own_account {
+        return Err(NexusError::invalid("Turn off your own two-step sign-in in Settings → Security").into());
+    }
 
     if let Some(role) = req.role {
         s.db.set_user_role(&id, role).await?;
@@ -145,7 +199,17 @@ pub async fn update(
         s.db.set_user_password(&id, &hash(password).await?).await?;
         audit(&s, &user, "user.password.changed", Some(&target.username)).await;
     }
-    Ok(Json(s.db.get_user(&id).await?))
+    if let Some(locked) = req.locked
+        && locked != s.db.user_locked(&id).await?
+    {
+        s.db.set_user_locked(&id, locked).await?;
+        audit(&s, &user, if locked { "user.locked" } else { "user.unlocked" }, Some(&target.username)).await;
+    }
+    if req.two_factor == Some(false) && super::security::two_factor_on(&s, &id).await? {
+        s.db.disable_totp(&id).await?;
+        audit(&s, &user, "user.2fa.reset", Some(&target.username)).await;
+    }
+    Ok(Json(view(&s, &id).await?))
 }
 
 pub async fn remove(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {

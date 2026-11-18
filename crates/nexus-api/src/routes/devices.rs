@@ -80,6 +80,8 @@ pub struct UpdateDevice {
     allowed_roots: Option<Vec<String>>,
     /// …or let it see all of them again.
     all_roots: Option<bool>,
+    /// Block the device (a lost or stolen one) or let it in again.
+    blocked: Option<bool>,
 }
 
 /// Renames this node, or changes what a paired device may do here.
@@ -136,6 +138,24 @@ pub async fn update(
             Some(list) => format!("{} storage location(s)", list.len()),
         };
         audit(&s, &user, "device.access.changed", Some(&format!("{} → {summary}", device.name))).await;
+    }
+    if let Some(blocked) = req.blocked {
+        if device.is_local {
+            return Err(NexusError::invalid("This computer cannot block itself").into());
+        }
+        if blocked != device.blocked_at.is_some() {
+            s.db.set_device_blocked(&id, blocked).await?;
+            if blocked {
+                s.db.mark_peer_offline(&id).await?;
+                if let Some(key) = device.public_key.as_deref().and_then(nexus_network::public_key) {
+                    s.net.p2p.forget(&key);
+                }
+            }
+            audit(&s, &user, if blocked { "device.blocked" } else { "device.unblocked" }, Some(&device.name)).await;
+            if !blocked {
+                s.net.peer_wake.notify_one();
+            }
+        }
     }
     s.events.emit(Event::DeviceChanged { device_id: id });
     s.introductions.notify_one();

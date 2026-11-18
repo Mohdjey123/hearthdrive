@@ -92,6 +92,9 @@ pub struct Device {
     /// The paired device that introduced this one, if it was introduced
     /// rather than paired directly.
     pub introduced_by: Option<String>,
+    /// When the device was blocked: its requests are refused and nothing is
+    /// sent to it.
+    pub blocked_at: Option<i64>,
 }
 
 impl Device {

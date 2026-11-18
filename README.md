@@ -32,6 +32,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - [Backups](#backups)
 - [Extra copies](#extra-copies)
 - [Drive health](#drive-health)
+- [Signing in safely](#signing-in-safely)
 - [Phone backup and the share menu](#phone-backup-and-the-share-menu)
 - [Share links](#share-links)
 - [Updates](#updates)
@@ -50,7 +51,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - **Share links.** Send anyone a link to a file or folder. With Send it is encrypted on your computer first, so the host never sees what it holds; links expire and can be limited to a number of downloads and protected with a password.
 - **You decide who sees what.** Accounts with roles, and per-device and per-person limits to chosen storage locations, enforced on every device.
 - **Updates from your own devices.** Publish a signed update on one computer and every paired computer and phone picks it up. Computers install it by themselves once their window is closed; phones ask first.
-- **Built to be safe.** Loopback-only API, signed requests between devices, Argon2id passwords, path validation against traversal and link escapes, and an audit log.
+- **Built to be safe.** Loopback-only API, signed requests between devices, Argon2id passwords, two-step sign-in and passkeys, locking accounts and blocking lost devices, path validation against traversal and link escapes, and a security log.
 
 ## What works today
 
@@ -70,9 +71,10 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Drive health | Windows' health verdict for every disk (temperature, wear and error counts where Windows allows); free-space warnings; storage that goes missing or comes back; a monthly read of every file against its BLAKE3 hash to find silent damage, repaired from an extra copy or a backup; the same view of your other devices; a text report |
 | Share links | Links to a file or folder (sent as a zip) that anyone can open: end-to-end encrypted through [Send](https://github.com/timvisee/send) (AES-GCM, key only in the link) with expiry, a download limit and an optional password, or unencrypted through temp.sh for larger files; take a link down at any time; uploads appear under Transfers |
 | Updates | Signed packages (Ed25519 over the version, size and BLAKE3 hash) passed between paired devices; computers keep packages for every platform to pass on; Windows installs by itself when its window is closed and nothing is copying, Android opens the system installer |
-| People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices |
+| People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices; locked accounts; two-step sign-in turned off for someone who lost their phone |
+| Sign-in | Two-step sign-in with an authenticator app (TOTP, RFC 6238; each code works once) and ten one-time recovery codes; passkeys (WebAuthn: Windows Hello, a phone or a security key; ES256, EdDSA and RS256 checked on the node); sessions listed with browser, sign-in method and last use, signed out one by one or all at once; the password and a code asked again before sensitive changes; wrong codes slowed down per account; a security log with refused sign-ins |
 | Android | The same node inside the app; QR pairing; photo and video backup to a computer; NEXUS in the system share menu |
-| Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; a strict Content Security Policy on the web interface; user content and everything shown from a paired device served with `CSP: sandbox`; origin check on the live event stream; per-person limits enforced on downloads too; phones accept first-run setup only from the app itself and keep their data out of Android backups; audit log |
+| Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; a strict Content Security Policy on the web interface; user content and everything shown from a paired device served with `CSP: sandbox`; origin check on the live event stream; per-person limits enforced on downloads too; blocked devices refused and sent nothing; phones accept first-run setup only from the app itself and keep their data out of Android backups; audit log |
 
 ## Repository layout
 
@@ -155,7 +157,7 @@ How it works: every connection is QUIC with TLS 1.3, authenticated with the two 
 * **Copy between devices.** Select one or more files and choose **Copy to another device**. Pick the device, storage and folder. Folders are copied with everything inside them. The copy runs in the background (see **Transfers**); the content streams from the source to the destination through your node, nothing is stored in between, and a dropped connection continues from where it stopped.
 * **Control transfers.** On **Transfers**, pause a copy, sync or backup and resume it later (each file continues from where it stopped), choose **Run next** to put a waiting one first, and **Retry what failed** to send only the files a copy could not. **Settings** there sets how many transfers run at once, a speed limit shared by all of them, and hours to transfer in (for example 22:00–07:00; outside them transfers wait and running ones pause). A copied file is checked against the original's BLAKE3 hash when the original has been hashed, sent once more if they differ, and counted as **checked**.
 * **Limit what a device sees.** On **Devices**, each paired device shows **Storage it can see here**. Choose all storage or specific locations. Everything else is invisible to that device: it cannot list, search, download or upload there.
-* **People.** Under **Settings** → **People**, an owner or administrator can add accounts (administrator, editor or viewer), change roles and remove people. People sign in from a browser on the computer itself. The only owner cannot be removed or demoted.
+* **People.** Under **Settings** → **People**, an owner or administrator can add accounts (administrator, editor or viewer), change roles, lock accounts and remove people. People sign in from a browser on the computer itself (see [Signing in safely](#signing-in-safely)). The only owner cannot be removed or demoted.
 * **Limit what a person sees.** Next to each editor or viewer, the storage button opens **What … can use**: all storage, or chosen locations on this computer and on your paired devices. Everything else is invisible to them, on every device, including in search, sync, transfers and the activity log. Owners and administrators always see everything. A change applies to their very next request.
 * **Start with Windows.** **Settings** → **Start with Windows** registers the storage service to start when you sign in (a per-user start-up entry; no administrator rights).
 
@@ -200,6 +202,23 @@ Sync keeps two folders the same both ways, and a backup keeps history in its own
 * **Report.** **Copy report** puts a plain-text summary of all of it on the clipboard.
 
 Problems also show at the top of **Overview**.
+
+## Signing in safely
+
+People sign in to a computer's NEXUS from a browser on that computer (the app itself signs in by itself). **Settings** → **Security** has:
+
+* **Two-step sign-in.** **Turn on**, enter your password, scan the QR code with an authenticator app (Microsoft Authenticator, Google Authenticator, 2FAS, Aegis and others) and type the code it shows. From then on, signing in asks for a six-digit code after the password. Each code works once. You also get ten **recovery codes**, shown once: keep them away from this computer, and use one when your phone is not at hand. **New recovery codes** replaces them.
+* **Passkeys.** **Add a passkey** to sign in with Windows Hello (face, fingerprint or PIN), your phone or a security key instead of a password and code. Passkeys are made for `localhost`, so open the web interface at `http://localhost:47100` rather than `http://127.0.0.1:47100` (the sign-in page links to it). On the sign-in page, **Sign in with a passkey**.
+* **Where you are signed in.** Every browser session with its browser, how it signed in and when it was last used. **Sign out** ends one; **Sign out everywhere else** ends all but this one.
+* **Confirming it is you.** Turning two-step sign-in off, making new recovery codes, adding a passkey and showing a backup's recovery key ask for your password again, and a code when two-step sign-in is on.
+* **Security log.** Sign-ins (with how), refused sign-ins (wrong password or code, a locked account, an unknown passkey), and changes to accounts and devices. Owners and administrators see everyone's; others see their own.
+
+Owners and administrators can also, under **Settings** → **People**:
+
+* **Lock** an account: the person is signed out everywhere and cannot sign in, with a password or a passkey, until it is unlocked. The last owner who can sign in cannot be locked.
+* **Turn off two-step** for someone who lost their phone and their recovery codes; they then sign in with their password and can set it up again.
+
+And on **Devices**, **Block** a paired device that was lost or stolen: its requests are refused at once, and this computer stops syncing, copying and backing up to it. It stays paired, so **Unblock** needs no new pairing.
 
 ## Phone backup and the share menu
 
@@ -267,7 +286,7 @@ Following the product spec's phases. Each phase ships a working application.
 - [x] **Phase 3 — Android:** native app with the node built in, QR pairing, remote browsing, previews, downloads, uploads
 - [x] **Phase 4 — Multi-node storage:** search across all devices, copying files and folders between devices, resumable uploads and copies
 - [x] **Phase 5 — Synchronization:** one-way and two-way folder sync, conflict copies, version history (no real-time change journal yet: devices are checked every five minutes)
-- [x] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access, end-to-end encrypted share links
+- [x] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access, end-to-end encrypted share links, two-step sign-in, passkeys, locked accounts and blocked devices
 - [ ] **Phase 7 — Release:** Windows installer, start-with-Windows and updates between your devices are done; a store-signed Android release is not
 
 ## Documentation

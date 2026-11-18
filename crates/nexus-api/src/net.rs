@@ -146,39 +146,53 @@ pub fn spawn_network_monitor(state: SharedState) {
     });
 }
 
-/// Counts failed password and pairing-code attempts per address.
-#[derive(Default)]
-pub struct Throttle {
-    failures: Mutex<HashMap<IpAddr, (u32, i64)>>,
+/// Counts failed password, code and pairing-code attempts per address (or
+/// per account, for codes).
+pub struct Throttle<K = IpAddr> {
+    failures: Mutex<HashMap<K, (u32, i64)>>,
+    max: u32,
 }
 
 const MAX_FAILURES: u32 = 10;
 const WINDOW_MS: i64 = 10 * 60 * 1000;
 
-impl Throttle {
-    pub fn check(&self, ip: IpAddr) -> Result<(), NexusError> {
+impl<K> Default for Throttle<K> {
+    fn default() -> Self {
+        Self::with_limit(MAX_FAILURES)
+    }
+}
+
+impl<K> Throttle<K> {
+    /// Refuses after `max` failures within ten minutes.
+    pub fn with_limit(max: u32) -> Self {
+        Self { failures: Mutex::new(HashMap::new()), max }
+    }
+}
+
+impl<K: std::hash::Hash + Eq> Throttle<K> {
+    pub fn check(&self, key: K) -> Result<(), NexusError> {
         let map = self.failures.lock().unwrap_or_else(|e| e.into_inner());
-        match map.get(&ip) {
-            Some((count, since)) if *count >= MAX_FAILURES && now_ms() - since < WINDOW_MS => Err(NexusError::RateLimited),
+        match map.get(&key) {
+            Some((count, since)) if *count >= self.max && now_ms() - since < WINDOW_MS => Err(NexusError::RateLimited),
             _ => Ok(()),
         }
     }
 
-    pub fn fail(&self, ip: IpAddr) {
+    pub fn fail(&self, key: K) {
         let now = now_ms();
         let mut map = self.failures.lock().unwrap_or_else(|e| e.into_inner());
         if map.len() > 10_000 {
             map.retain(|_, (_, since)| now - *since < WINDOW_MS);
         }
-        let entry = map.entry(ip).or_insert((0, now));
+        let entry = map.entry(key).or_insert((0, now));
         if now - entry.1 >= WINDOW_MS {
             *entry = (0, now);
         }
         entry.0 += 1;
     }
 
-    pub fn clear(&self, ip: IpAddr) {
-        self.failures.lock().unwrap_or_else(|e| e.into_inner()).remove(&ip);
+    pub fn clear(&self, key: K) {
+        self.failures.lock().unwrap_or_else(|e| e.into_inner()).remove(&key);
     }
 }
 

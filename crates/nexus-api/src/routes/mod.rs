@@ -6,6 +6,7 @@ pub mod health;
 pub mod introductions;
 pub mod network;
 pub mod sealed;
+pub mod security;
 pub mod shares;
 pub mod snapshots;
 pub mod storage;

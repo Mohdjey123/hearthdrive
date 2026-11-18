@@ -6,15 +6,14 @@ use axum::Json;
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use nexus_common::time::now_ms;
-use nexus_common::types::{ActivityEntry, User};
+use nexus_common::types::ActivityEntry;
 use nexus_common::{NexusError, VERSION};
-use nexus_security::{generate_token, hash_password, hash_token, token_matches, verify_password};
-use serde::{Deserialize, Serialize};
+use super::security::{LoginReply, SessionResponse, after_password, issue_session, log_failed};
+use nexus_security::{hash_password, hash_token, token_matches, verify_password};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::time::Duration;
-
-const SESSION_DAYS: i64 = 30;
 
 pub async fn health() -> Json<Value> {
     Json(json!({ "status": "ok", "version": VERSION }))
@@ -33,13 +32,6 @@ pub struct SetupRequest {
     password: String,
 }
 
-#[derive(Serialize)]
-pub struct SessionResponse {
-    token: String,
-    expires_at: i64,
-    user: User,
-}
-
 fn validate_username(username: &str) -> Result<(), NexusError> {
     let ok = (3..=32).contains(&username.len())
         && username.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
@@ -48,13 +40,6 @@ fn validate_username(username: &str) -> Result<(), NexusError> {
     } else {
         Err(NexusError::invalid("Usernames are 3–32 letters, digits, '.', '_' or '-'"))
     }
-}
-
-async fn issue_session(s: &SharedState, user: User, client: Option<&str>) -> ApiResult<SessionResponse> {
-    let token = generate_token();
-    let expires_at = now_ms() + SESSION_DAYS * 24 * 60 * 60 * 1000;
-    s.db.create_session(&user.id, &hash_token(&token), expires_at, client).await?;
-    Ok(SessionResponse { token, expires_at, user })
 }
 
 /// First-run setup: names this node and creates the owner account.
@@ -102,8 +87,7 @@ pub async fn setup(
         allowed_roots: None,
     };
     audit(&s, &caller, "setup.completed", Some(node_name)).await;
-    let client = headers.get("user-agent").and_then(|v| v.to_str().ok());
-    Ok(Json(issue_session(&s, user, client).await?))
+    Ok(Json(issue_session(&s, user, &headers, "setup").await?))
 }
 
 #[derive(Deserialize)]
@@ -117,7 +101,7 @@ pub async fn login(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> ApiResult<Json<SessionResponse>> {
+) -> ApiResult<Json<LoginReply>> {
     s.throttle.check(peer.ip())?;
     let found = s.db.find_credentials(req.username.trim()).await?;
     let password = req.password.clone();
@@ -133,23 +117,15 @@ pub async fn login(
     .await
     .map_err(NexusError::internal)?;
 
-    let Some((user, _)) = found.filter(|_| valid) else {
+    if !valid {
         s.throttle.fail(peer.ip());
+        log_failed(&s, found.as_ref().map(|(u, _)| u), &req.username, "wrong password").await;
         tokio::time::sleep(Duration::from_millis(400)).await;
         return Err(NexusError::Unauthorized.into());
-    };
-    let caller = crate::auth::AuthUser {
-        user_id: Some(user.id.clone()),
-        username: user.username.clone(),
-        role: user.role,
-        local: false,
-        device_id: None,
-        allowed_roots: None,
-    };
+    }
+    let Some((user, _)) = found else { return Err(NexusError::Unauthorized.into()) };
     s.throttle.clear(peer.ip());
-    audit(&s, &caller, "auth.login", None).await;
-    let client = headers.get("user-agent").and_then(|v| v.to_str().ok());
-    Ok(Json(issue_session(&s, user, client).await?))
+    Ok(Json(after_password(&s, user, &headers).await?))
 }
 
 pub async fn logout(State(s): State<SharedState>, user: AuthUser, headers: HeaderMap) -> ApiResult<StatusCode> {

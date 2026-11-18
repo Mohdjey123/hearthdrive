@@ -40,4 +40,6 @@ tracing = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
+# A passkey in memory, to sign in with in tests.
+nexus-security = { workspace = true, features = ["soft-authenticator"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }

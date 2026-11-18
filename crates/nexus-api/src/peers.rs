@@ -53,6 +53,9 @@ pub struct Target {
 
 impl Target {
     pub fn of(device: &Device) -> Result<Self> {
+        if device.blocked_at.is_some() {
+            return Err(NexusError::PermissionDenied(format!("{} is blocked. Unblock it on the Devices page first.", device.name)));
+        }
         let key = device
             .public_key
             .as_deref()
@@ -302,7 +305,7 @@ pub fn spawn_peer_monitor(state: SharedState) {
 pub async fn check_all_peers(state: &SharedState) {
     match state.db.list_peer_devices().await {
         Ok(peers) => {
-            join_all(peers.into_iter().map(|p| check_peer(state, p))).await;
+            join_all(peers.into_iter().filter(|p| p.blocked_at.is_none()).map(|p| check_peer(state, p))).await;
         }
         Err(e) => tracing::warn!(error = %e, "could not list paired devices"),
     }

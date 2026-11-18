@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
-import { HardDrive, LogOut, Monitor, Moon, Sun, Trash2, UserPlus } from 'lucide-react'
-import { api, connection, fileApi, isMobile, peerPrefix, thisDevice, type Device, type Role, type StorageRoot, type User } from '../services/api'
+import { HardDrive, Lock, LockOpen, LogOut, Monitor, Moon, Sun, Trash2, UserPlus } from 'lucide-react'
+import { api, connection, fileApi, isMobile, peerPrefix, thisDevice, type Device, type Person, type Role, type StorageRoot, type User } from '../services/api'
+import { SecurityPanel } from '../components/Security'
 import { toast, toastError } from '../components/Toasts'
 import { useResource } from '../hooks/useResource'
 import { useSession } from '../stores/session'
@@ -169,6 +170,8 @@ function People({ meId }: { meId: string | null }) {
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<User | null>(null)
   const [access, setAccess] = useState<User | null>(null)
+  const [locking, setLocking] = useState<Person | null>(null)
+  const [resetting, setResetting] = useState<Person | null>(null)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<Role>('viewer')
@@ -197,6 +200,18 @@ function People({ meId }: { meId: string | null }) {
     try {
       await api.updateUser(u.id, { role: next })
       toast(`${u.username} is now ${next === 'administrator' || next === 'editor' ? 'an' : 'a'} ${next}`)
+    } catch (e) {
+      toastError(e)
+    }
+    users.reload()
+  }
+
+  const change = async (u: Person, b: { locked?: boolean; two_factor?: false }, done: string) => {
+    try {
+      await api.updateUser(u.id, b)
+      toast(done)
+      setLocking(null)
+      setResetting(null)
     } catch (e) {
       toastError(e)
     }
@@ -232,6 +247,9 @@ function People({ meId }: { meId: string | null }) {
             <li key={u.id} className="flex items-center gap-3 px-4 py-2.5">
               <span className="min-w-0 flex-1 truncate font-medium">
                 {u.username} {u.id === meId && <span className="font-normal text-subtle">(you)</span>}
+                {u.locked_at !== null && <> <Badge tone="danger">Locked</Badge></>}
+                {u.two_factor && <> <Badge>Two-step</Badge></>}
+                {u.passkeys > 0 && <> <Badge>{u.passkeys} passkey{u.passkeys === 1 ? '' : 's'}</Badge></>}
               </span>
               {u.role === 'owner' || u.id === meId ? (
                 <Badge tone="accent">{u.role}</Badge>
@@ -252,6 +270,18 @@ function People({ meId }: { meId: string | null }) {
                   {accessLabel(u)}
                 </Button>
               )}
+              {u.id !== meId && u.two_factor && (
+                <Button size="sm" variant="ghost" onClick={() => setResetting(u)} title="For someone who lost their authenticator app">
+                  Turn off two-step
+                </Button>
+              )}
+              {u.id !== meId && (u.locked_at === null ? (
+                <Button size="sm" variant="ghost" className="hover:text-danger" icon={<Lock className="size-3.5" />} onClick={() => setLocking(u)}>Lock</Button>
+              ) : (
+                <Button size="sm" variant="ghost" icon={<LockOpen className="size-3.5" />} onClick={() => void change(u, { locked: false }, `${u.username} can sign in again`)}>
+                  Unlock
+                </Button>
+              ))}
               {u.role !== 'owner' && u.id !== meId && (
                 <Button size="sm" variant="ghost" className="hover:text-danger" icon={<Trash2 className="size-3.5" />} onClick={() => setRemoving(u)}>
                   Remove
@@ -262,8 +292,9 @@ function People({ meId }: { meId: string | null }) {
         </ul>
       )}
       <p className="border-t border-line px-4 py-2.5 text-[12px] text-subtle">
-        People sign in with their own name and password in a browser on this computer. Owners and administrators see all storage;
-        others can be limited to some locations. Paired devices are managed under Devices.
+        People sign in with their own name and password in a browser on this computer, with a code or a passkey if they set one up.
+        Owners and administrators see all storage; others can be limited to some locations. A locked account cannot sign in. Paired
+        devices are managed under Devices.
       </p>
 
       {access && <PersonAccess user={access} onClose={() => setAccess(null)} onSaved={users.reload} />}
@@ -298,6 +329,37 @@ function People({ meId }: { meId: string | null }) {
           <ErrorNote>{error}</ErrorNote>
           <button type="submit" hidden />
         </form>
+      </Modal>
+
+      <Modal
+        open={!!locking}
+        onClose={() => setLocking(null)}
+        title={`Lock ${locking?.username}'s account?`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setLocking(null)}>Cancel</Button>
+            <Button variant="danger" onClick={() => locking && void change(locking, { locked: true }, `Locked ${locking.username}'s account`)}>Lock</Button>
+          </>
+        }
+      >
+        <p>{locking?.username} is signed out everywhere and cannot sign in, with a password or a passkey, until you unlock the account. Nothing else changes.</p>
+      </Modal>
+
+      <Modal
+        open={!!resetting}
+        onClose={() => setResetting(null)}
+        title={`Turn off two-step sign-in for ${resetting?.username}?`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setResetting(null)}>Cancel</Button>
+            <Button variant="danger" onClick={() => resetting && void change(resetting, { two_factor: false }, `Two-step sign-in is off for ${resetting.username}`)}>Turn off</Button>
+          </>
+        }
+      >
+        <p>
+          For someone who lost their phone and recovery codes. {resetting?.username} then signs in with just their password and can turn
+          two-step sign-in on again in Settings → Security.
+        </p>
       </Modal>
 
       <Modal
@@ -406,6 +468,8 @@ export function Settings() {
           </Row>
         </div>
       </Panel>
+
+      {!isMobile() && me?.user_id && !me.device_id && <SecurityPanel />}
 
       {!isMobile() && me && (me.role === 'owner' || me.role === 'administrator') && <People meId={me.user_id} />}
 

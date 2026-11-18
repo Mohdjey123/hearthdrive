@@ -62,13 +62,27 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
     frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{backup, devices, files, health, introductions, network, shares, snapshots, storage, sync, system, transfers, updates, uploads, users};
+    use routes::{backup, devices, files, health, introductions, network, security, shares, snapshots, storage, sync, system, transfers, updates, uploads, users};
 
     let api = Router::new()
         .route("/health", get(system::health))
         .route("/setup/status", get(system::setup_status))
         .route("/setup", post(system::setup))
         .route("/auth/login", post(system::login))
+        .route("/auth/login/code", post(security::login_code))
+        .route("/auth/passkey/start", post(security::passkey_start))
+        .route("/auth/passkey", post(security::passkey_sign_in))
+        .route("/auth/security", get(security::get))
+        .route("/auth/security/log", get(security::log))
+        .route("/auth/2fa/setup", post(security::setup_two_factor))
+        .route("/auth/2fa/enable", post(security::enable_two_factor))
+        .route("/auth/2fa/disable", post(security::disable_two_factor))
+        .route("/auth/2fa/recovery-codes", post(security::new_recovery_codes))
+        .route("/auth/passkeys/start", post(security::add_passkey_start))
+        .route("/auth/passkeys", post(security::add_passkey))
+        .route("/auth/passkeys/{id}", delete(security::remove_passkey))
+        .route("/auth/sessions/{id}", delete(security::end_session))
+        .route("/auth/sessions/end-others", post(security::end_other_sessions))
         .route("/auth/logout", post(system::logout))
         .route("/auth/me", get(system::me))
         .route("/system/info", get(system::info))

@@ -5,6 +5,7 @@ import { useResource } from '../hooks/useResource'
 import { formatBytes, formatRelative } from '../lib/format'
 import { PlacePicker } from './Sync'
 import { toast, toastError } from '../components/Toasts'
+import { ConfirmFields } from '../components/Security'
 import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, PageHeader, Spinner, StatusDot, cx } from '../components/ui'
 
 const DEFAULT_SCHEDULE: BackupSchedule = { every_hours: 24, keep_last: 7, keep_daily: 14, keep_weekly: 8, keep_monthly: 12 }
@@ -96,7 +97,10 @@ function RecoveryKeyNote({ name, recoveryKey, first, onClose }: { name: string; 
 }
 
 function ShowRecoveryKey({ set, onClose }: { set: SnapshotSet; onClose: () => void }) {
+  const security = useResource(() => api.security().catch(() => null), [])
+  const twoFactor = !!security.data?.two_factor
   const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
   const [shown, setShown] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -105,7 +109,7 @@ function ShowRecoveryKey({ set, onClose }: { set: SnapshotSet; onClose: () => vo
     setBusy(true)
     setError('')
     try {
-      setShown((await api.snapshotRecoveryKey(set.id, password)).recovery_key)
+      setShown((await api.snapshotRecoveryKey(set.id, password, twoFactor ? code.trim() : undefined)).recovery_key)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -120,14 +124,12 @@ function ShowRecoveryKey({ set, onClose }: { set: SnapshotSet; onClose: () => vo
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={busy} disabled={!password} onClick={() => void show()}>Show the key</Button>
+          <Button variant="primary" loading={busy} disabled={!password || (twoFactor && !code.trim())} onClick={() => void show()}>Show the key</Button>
         </>
       }
     >
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (password) void show() }}>
-        <Field label="Your password">
-          <Input type="password" autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </Field>
+        <ConfirmFields twoFactor={twoFactor} password={password} code={code} onPassword={setPassword} onCode={setCode} />
         {error && <ErrorNote>{error}</ErrorNote>}
       </form>
     </Modal>

@@ -3492,9 +3492,13 @@ name = "nexus-security"
 version = "0.1.3"
 dependencies = [
  "argon2",
+ "base64 0.22.1",
  "blake3",
  "nexus-common",
  "rand_core 0.6.4",
+ "ring",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

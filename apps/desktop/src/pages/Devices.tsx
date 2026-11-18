@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  FolderOpen, Laptop, Link2, Monitor, Network, QrCode, RefreshCw, ShieldCheck, Smartphone, Trash2,
+  Ban, FolderOpen, Laptop, Link2, Monitor, Network, QrCode, RefreshCw, ShieldCheck, Smartphone, Trash2,
 } from 'lucide-react'
 import { api, isMobile, thisDevice, type Device, type NetworkInfo, type Role, type StorageRoot } from '../services/api'
 import { useResource } from '../hooks/useResource'
@@ -258,7 +258,12 @@ function IntroductionsToggle() {
   )
 }
 
-function DeviceCard({ d, introducer, onRemove }: { d: Device; introducer: string | null; onRemove: (d: Device) => void }) {
+function DeviceCard({ d, introducer, onRemove, onBlock }: {
+  d: Device
+  introducer: string | null
+  onRemove: (d: Device) => void
+  onBlock: (d: Device, blocked: boolean) => void
+}) {
   const Icon = deviceIcon(d.device_type)
   const [role, setRole] = useState<Role>(d.role)
   const [editingAccess, setEditingAccess] = useState(false)
@@ -280,11 +285,12 @@ function DeviceCard({ d, introducer, onRemove }: { d: Device; introducer: string
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{d.name}</span>
             {d.is_local && <Badge tone="accent">This {thisDevice()}</Badge>}
+            {d.blocked_at !== null && <Badge tone="danger">Blocked</Badge>}
           </div>
           {d.introduced_by && <div className="mt-0.5 truncate text-[12px] text-subtle">Introduced by {introducer ?? 'a paired device'}</div>}
           <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-muted">
-            <StatusDot tone={d.online ? 'online' : 'offline'} />
-            {d.is_local ? 'Online' : d.online ? `Online${d.latency_ms != null ? ` · ${d.latency_ms} ms` : ''}` : d.last_seen ? `Offline · seen ${formatRelative(d.last_seen)}` : 'Offline · not seen yet'}
+            <StatusDot tone={d.blocked_at !== null ? 'error' : d.online ? 'online' : 'offline'} />
+            {d.blocked_at !== null ? `Blocked ${formatRelative(d.blocked_at)}: nothing goes to or from it` : d.is_local ? 'Online' : d.online ? `Online${d.latency_ms != null ? ` · ${d.latency_ms} ms` : ''}` : d.last_seen ? `Offline · seen ${formatRelative(d.last_seen)}` : 'Offline · not seen yet'}
           </div>
         </div>
       </div>
@@ -348,8 +354,17 @@ function DeviceCard({ d, introducer, onRemove }: { d: Device; introducer: string
       </dl>
       {!d.is_local && (
         <div className="mt-4 flex gap-2 border-t border-line pt-3">
-          <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => navigate('files', { device: d.id })}>Browse files</Button>
-          <Button size="sm" variant="ghost" className="ml-auto hover:text-danger" icon={<Trash2 className="size-3.5" />} onClick={() => onRemove(d)}>
+          {d.blocked_at === null ? (
+            <>
+              <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => navigate('files', { device: d.id })}>Browse files</Button>
+              <Button size="sm" variant="ghost" className="ml-auto hover:text-danger" icon={<Ban className="size-3.5" />} onClick={() => onBlock(d, true)}>
+                Block
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" icon={<Ban className="size-3.5" />} onClick={() => onBlock(d, false)}>Unblock</Button>
+          )}
+          <Button size="sm" variant="ghost" className={d.blocked_at === null ? 'hover:text-danger' : 'ml-auto hover:text-danger'} icon={<Trash2 className="size-3.5" />} onClick={() => onRemove(d)}>
             Remove
           </Button>
         </div>
@@ -366,7 +381,22 @@ export function Devices() {
   // `#/devices?join=1` opens the join dialog straight away.
   const [joining, setJoining] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('join') === '1')
   const [removing, setRemoving] = useState<Device | null>(null)
+  const [blocking, setBlocking] = useState<Device | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const setBlocked = async (d: Device, blocked: boolean) => {
+    setBusy(true)
+    try {
+      await api.updateDevice(d.id, { blocked })
+      toast(blocked ? `Blocked ${d.name}` : `${d.name} can connect again`)
+      setBlocking(null)
+      devices.reload()
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const remove = async () => {
     if (!removing) return
@@ -409,7 +439,7 @@ export function Devices() {
         <Spinner />
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
-          {list.map((d) => <DeviceCard key={`${d.id}-${d.role}-${d.allowed_roots?.join(',') ?? 'all'}`} d={d} introducer={list.find((x) => x.id === d.introduced_by)?.name ?? null} onRemove={setRemoving} />)}
+          {list.map((d) => <DeviceCard key={`${d.id}-${d.role}-${d.allowed_roots?.join(',') ?? 'all'}`} d={d} introducer={list.find((x) => x.id === d.introduced_by)?.name ?? null} onRemove={setRemoving} onBlock={(d, blocked) => (blocked ? setBlocking(d) : void setBlocked(d, false))} />)}
           {peers.length === 0 && (
             <button
               onClick={() => setInviting(true)}
@@ -437,6 +467,23 @@ export function Devices() {
 
       <InviteModal open={inviting} onClose={() => { setInviting(false); requests.reload(); devices.reload() }} />
       <JoinModal open={joining} onClose={() => { setJoining(false); devices.reload() }} />
+      <Modal
+        open={!!blocking}
+        onClose={() => setBlocking(null)}
+        title={`Block ${blocking?.name}?`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setBlocking(null)}>Cancel</Button>
+            <Button variant="danger" loading={busy} onClick={() => blocking && void setBlocked(blocking, true)}>Block device</Button>
+          </>
+        }
+      >
+        <p>
+          For a lost or stolen device: <span className="font-medium">{blocking?.name}</span> can no longer reach anything on this {thisDevice()},
+          and nothing is synced, copied or backed up to it until you unblock it. It stays paired, so unblocking needs no new pairing.
+          Files already on it stay there.
+        </p>
+      </Modal>
       <Modal
         open={!!removing}
         onClose={() => setRemoving(null)}

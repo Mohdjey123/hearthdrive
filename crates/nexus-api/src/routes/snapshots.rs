@@ -1013,6 +1013,9 @@ pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Jso
 #[derive(Deserialize)]
 pub struct ShowKey {
     password: String,
+    /// Needed when two-step sign-in is on.
+    #[serde(default)]
+    code: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1022,17 +1025,15 @@ pub struct RecoveryKey {
 
 /// `POST /snapshots/{id}/recovery-key`: shows an encrypted backup's
 /// recovery key again, after the person enters their password.
-pub async fn recovery_key(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>, Json(req): Json<ShowKey>) -> ApiResult<Json<RecoveryKey>> {
+pub async fn recovery_key(
+    State(s): State<SharedState>,
+    user: AuthUser,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    Path(id): Path<String>,
+    Json(req): Json<ShowKey>,
+) -> ApiResult<Json<RecoveryKey>> {
     let set = find_set(&s, &user, &id, true).await?;
-    let found = s.db.find_credentials(&user.username).await?;
-    let password = req.password;
-    let valid = tokio::task::spawn_blocking(move || found.is_some_and(|(_, hash)| nexus_security::verify_password(&password, &hash)))
-        .await
-        .map_err(NexusError::internal)?;
-    if !valid {
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        return Err(NexusError::PermissionDenied("That password is not right".into()).into());
-    }
+    super::security::confirm_identity(&s, &user, peer.ip(), &req.password, req.code.as_deref()).await?;
     let key = key_of(&s, &set).await?.ok_or_else(|| NexusError::invalid("This backup is not encrypted"))?;
     audit(&s, &user, "backup.key_shown", Some(&set.name)).await;
     Ok(Json(RecoveryKey { recovery_key: key.recovery_key() }))

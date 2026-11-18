@@ -3,7 +3,7 @@ use sqlx::AssertSqlSafe;
 use nexus_common::types::{Device, Role};
 use nexus_common::{NexusError, Result, new_id, time::now_ms};
 
-const COLUMNS: &str = "id, name, device_type, public_key, network_address, is_local, last_seen, status, created_at, \n                       role, addresses, latency_ms, paired_at, version, allowed_roots, introduced_by";
+const COLUMNS: &str = "id, name, device_type, public_key, network_address, is_local, last_seen, status, created_at, \n                       role, addresses, latency_ms, paired_at, version, allowed_roots, introduced_by, blocked_at";
 const LOCAL_DEVICE_KEY: &str = "local_device_id";
 
 impl Database {
@@ -30,6 +30,7 @@ impl Database {
             version: None,
             allowed_roots: None,
             introduced_by: None,
+            blocked_at: None,
         };
         sqlx::query(
             "INSERT INTO devices (id, name, device_type, network_address, is_local, last_seen, status, created_at) \
@@ -135,6 +136,16 @@ impl Database {
             .execute(&self.pool)
             .await?;
         Ok(done.rows_affected() > 0)
+    }
+
+    /// Blocks a paired device (or lets it in again).
+    pub async fn set_device_blocked(&self, id: &str, blocked: bool) -> Result<()> {
+        sqlx::query("UPDATE devices SET blocked_at = ? WHERE id = ? AND is_local = 0")
+            .bind(blocked.then(now_ms))
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn set_device_role(&self, id: &str, role: Role) -> Result<()> {

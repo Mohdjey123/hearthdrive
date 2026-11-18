@@ -115,7 +115,7 @@ fn directly_paired(device: &Device) -> bool {
 fn list_for(peer: &Device, all: &[Device]) -> Introductions {
     let devices = all
         .iter()
-        .filter(|d| directly_paired(d) && d.id != peer.id)
+        .filter(|d| directly_paired(d) && d.id != peer.id && d.blocked_at.is_none())
         .filter_map(|d| {
             Some(Introduced {
                 id: d.id.clone(),

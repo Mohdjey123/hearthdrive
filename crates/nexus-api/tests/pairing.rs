@@ -575,6 +575,21 @@ async fn two_nodes_pair_browse_and_revoke() {
     let (_, roots) = b.call(Method::GET, &format!("{proxy}/storage/roots"), None).await;
     assert_eq!(roots.as_array().unwrap().len(), 1);
 
+    // A blocks B (a lost laptop): B's requests are refused and A sends B
+    // nothing. Unblocked, everything works again.
+    let (s, _) = a.call(Method::PATCH, &format!("/devices/{}", b.device_id()), Some(json!({"blocked": true}))).await;
+    assert_eq!(s, 204);
+    let (s, _) = b.call(Method::GET, &format!("{proxy}/storage/roots"), None).await;
+    assert!(s >= 400, "a blocked device is refused, got {s}");
+    let (s, v) = a.call(Method::GET, &format!("/peers/{}/proxy/storage/roots", b.device_id()), None).await;
+    assert_eq!(s, 403, "{v}");
+    let (_, devices) = a.call(Method::GET, "/devices", None).await;
+    assert!(devices.as_array().unwrap().iter().any(|d| d["id"] == b.device_id() && d["blocked_at"].is_i64()));
+    let (s, _) = a.call(Method::PATCH, &format!("/devices/{}", b.device_id()), Some(json!({"blocked": false}))).await;
+    assert_eq!(s, 204);
+    let (s, _) = b.call(Method::GET, &format!("{proxy}/storage/roots"), None).await;
+    assert_eq!(s, 200);
+
     // Accounts: the owner adds a viewer, who can read but not manage people.
     let (s, viewer) = a.call(Method::POST, "/users", Some(json!({"username": "guest", "password": "guest password", "role": "viewer"}))).await;
     assert_eq!(s, 201, "{viewer}");

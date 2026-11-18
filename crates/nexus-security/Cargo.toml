@@ -11,3 +11,13 @@ argon2 = { workspace = true }
 blake3 = { workspace = true }
 # Enables the OS random source (`OsRng`) re-exported through argon2.
 rand_core = { workspace = true }
+# Authenticator-app codes (HMAC-SHA1, as RFC 6238 requires) and passkey
+# signatures (P-256, Ed25519, RSA).
+ring = "0.17"
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+# A passkey kept in memory, for tests of code that signs in with passkeys.
+soft-authenticator = []

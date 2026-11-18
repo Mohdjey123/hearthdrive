@@ -161,6 +161,9 @@ pub fn same_key(a: &str, b: &str) -> bool {
 pub async fn authenticate_device(state: &AppState, signed: &SignedHeaders, via: &P2pPeer) -> Result<AuthUser> {
     let device = state.db.get_device(&signed.device_id).await.map_err(|_| NexusError::Unauthorized)?;
     let key = device.public_key.as_deref().filter(|_| !device.is_local).ok_or(NexusError::Unauthorized)?;
+    if device.blocked_at.is_some() {
+        return Err(NexusError::PermissionDenied("This device is blocked".into()));
+    }
     if !same_key(key, &via.0) {
         tracing::warn!(device = %device.name, "rejected a peer request sent from another device's connection");
         return Err(NexusError::Unauthorized);
