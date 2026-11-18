@@ -10,6 +10,7 @@ members = [
     "crates/nexus-devices",
     "crates/nexus-api",
     "crates/nexus-core",
+    "crates/nexus-vdrive",
     "apps/desktop/src-tauri",
 ]
 # `cargo build` / `cargo test` at the root build the service only.
@@ -24,6 +25,7 @@ default-members = [
     "crates/nexus-devices",
     "crates/nexus-api",
     "crates/nexus-core",
+    "crates/nexus-vdrive",
 ]
 
 [workspace.package]
@@ -43,6 +45,7 @@ nexus-network = { path = "crates/nexus-network" }
 nexus-devices = { path = "crates/nexus-devices" }
 nexus-api = { path = "crates/nexus-api" }
 nexus-core = { path = "crates/nexus-core" }
+nexus-vdrive = { path = "crates/nexus-vdrive" }
 
 anyhow = "1"
 argon2 = "0.5"

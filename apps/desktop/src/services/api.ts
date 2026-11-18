@@ -173,6 +173,17 @@ export interface ListResponse {
   limit: number
 }
 
+/** Paired devices in File Explorer (Windows). */
+export interface VirtualDriveStatus {
+  supported: boolean
+  enabled: boolean
+  /** Registered and serving File Explorer right now. */
+  running: boolean
+  path: string
+  default_path: string
+  error: string | null
+}
+
 export interface TrashItem {
   id: string
   root_id: string
@@ -587,6 +598,8 @@ export const api = {
   introductions: () => request<{ enabled: boolean }>('GET', '/devices/introductions'),
   setIntroductions: (enabled: boolean) => request<{ enabled: boolean }>('PUT', '/devices/introductions', { enabled }),
   autostart: () => request<{ supported: boolean; enabled: boolean }>('GET', '/system/autostart'),
+  virtualDrive: () => request<VirtualDriveStatus>('GET', '/vdrive'),
+  setVirtualDrive: (b: { enabled: boolean; path?: string }) => request<VirtualDriveStatus>('PUT', '/vdrive', b),
   setAutostart: (enabled: boolean) => request<{ supported: boolean; enabled: boolean }>('PUT', '/system/autostart', { enabled }),
   removeDevice: (id: string) => request<void>('DELETE', `/devices/${id}`),
   createInvite: () => request<Invite>('POST', '/devices/pair'),

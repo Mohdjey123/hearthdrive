@@ -12,6 +12,7 @@ pub mod transfers;
 pub mod updates;
 pub mod uploads;
 pub mod users;
+pub mod vdrive;
 
 use crate::auth::AuthUser;
 use crate::state::AppState;

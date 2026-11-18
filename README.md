@@ -189,6 +189,17 @@ Updates do not come from a download server. They are published on one of your co
 
 Versions before 0.1.2 cannot update themselves: install 0.1.2 by hand once on each device.
 
+## Virtual drive
+
+On Windows, Settings → Virtual drive puts every paired device's storage in File Explorer, under **NEXUS** in the navigation pane (default folder `%USERPROFILE%\NEXUS`, laid out as `<device>\<storage location>\...`). It is a cloud sync root using the Windows Cloud Files API, the mechanism OneDrive uses; no driver is installed. The code is in `crates/nexus-vdrive`.
+
+- Folders are listed when first opened; files download from their device when an app reads them (16 MiB read-ahead), through the node's own peer proxy.
+- Right-click → **Always keep on this device** downloads and keeps files; **Free up space** makes them cloud-only again. Explorer's Status column shows cloud / available / always available / syncing.
+- Changes on a device appear within about a minute (checked on the device's presence heartbeat). A device that cannot be reached is marked "Device offline"; its cloud-only files fail to open with a "network unavailable" error, never as empty files.
+- **Read-only for now.** Deleting, renaming or moving items is refused. Files you edit or add inside the drive stay on this computer (shown "Sync pending"), are never sent back, and are never overwritten.
+- Turning the drive off (or moving it) unregisters it and deletes its placeholders and downloaded copies, keeping anything you changed or added there.
+- Not yet: this computer's own storage locations (already on disk), writing back, and pushed change notifications from devices (they are polled).
+
 ## Windows installer
 
 ```bash
