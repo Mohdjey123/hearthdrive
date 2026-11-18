@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpDown, CheckCircle2, CopyPlus, FolderSync, ImageUp, RotateCcw, Upload, X, XCircle } from 'lucide-react'
+import { ArrowUpDown, CheckCircle2, CopyPlus, FolderSync, ImageUp, Link2, RotateCcw, Upload, X, XCircle } from 'lucide-react'
 import { cancelTransfer, clearFinished, retryTransfer, useTransfers, type Transfer } from '../stores/transfers'
 import { api, type Job } from '../services/api'
 import { useResource } from '../hooks/useResource'
@@ -17,10 +17,19 @@ function StatusBadge({ t }: { t: Transfer }) {
   }
 }
 
+/** What each kind of job is doing, and what it failed to do. */
+const JOB_WORDS: Record<Job['kind'], [string, string]> = {
+  copy: ['Copying', 'copied'],
+  sync: ['Syncing', 'synced'],
+  backup: ['Backing up', 'backed up'],
+  share: ['Uploading', 'shared'],
+}
+const JOB_ICONS = { copy: CopyPlus, sync: FolderSync, backup: ImageUp, share: Link2 }
+
 function JobBadge({ job }: { job: Job }) {
   switch (job.status) {
     case 'queued': return <Badge>Waiting</Badge>
-    case 'running': return <Badge tone="accent">{job.kind === 'sync' ? 'Syncing' : job.kind === 'backup' ? 'Backing up' : 'Copying'}</Badge>
+    case 'running': return <Badge tone="accent">{JOB_WORDS[job.kind]?.[0] ?? 'Running'}</Badge>
     case 'done':
       return job.errors.length ? <Badge tone="warn">Done, {job.errors.length} skipped</Badge> : <Badge tone="accent"><CheckCircle2 className="size-3" /> Done</Badge>
     case 'cancelled': return <Badge>Cancelled</Badge>
@@ -46,7 +55,7 @@ function useJobs() {
 function JobRow({ job, onChanged }: { job: Job; onChanged: () => void }) {
   const [open, setOpen] = useState(false)
   const pct = job.bytes_total ? job.bytes_done / job.bytes_total : job.status === 'done' ? 1 : 0
-  const Icon = job.kind === 'sync' ? FolderSync : job.kind === 'backup' ? ImageUp : CopyPlus
+  const Icon = JOB_ICONS[job.kind] ?? CopyPlus
   const elapsed = job.started_at ? Date.now() - job.started_at : 0
   const speed = elapsed > 2000 ? (job.bytes_done / elapsed) * 1000 : 0
   const remaining = speed > 0 ? ((job.bytes_total - job.bytes_done) / speed) * 1000 : 0
@@ -85,7 +94,7 @@ function JobRow({ job, onChanged }: { job: Job; onChanged: () => void }) {
       {job.errors.length > 0 && (
         <div className="mt-2 pl-7">
           <button className="text-[12px] text-accent hover:underline" onClick={() => setOpen((v) => !v)}>
-            {open ? 'Hide' : 'Show'} what could not be {job.kind === 'sync' ? 'synced' : job.kind === 'backup' ? 'backed up' : 'copied'} ({job.errors.length})
+            {open ? 'Hide' : 'Show'} what could not be {JOB_WORDS[job.kind]?.[1] ?? 'copied'} ({job.errors.length})
           </button>
           {open && (
             <ul className="mt-1 max-h-40 space-y-0.5 overflow-auto text-[12px] text-danger">

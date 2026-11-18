@@ -10,8 +10,10 @@ pub mod net;
 pub mod p2p;
 pub mod peers;
 mod routes;
+pub mod share;
 
 pub use routes::backup::spawn as spawn_backup;
+pub use routes::shares::spawn as spawn_shares;
 pub use routes::sync::spawn as spawn_sync;
 mod state;
 
@@ -50,7 +52,7 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
     frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{backup, devices, files, network, storage, sync, system, transfers, uploads, users};
+    use routes::{backup, devices, files, network, shares, storage, sync, system, transfers, uploads, users};
 
     let api = Router::new()
         .route("/health", get(system::health))
@@ -93,6 +95,10 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/shared", get(backup::shared))
         .route("/shared/send", post(backup::send_shared))
         .route("/shared/discard", post(backup::discard_shared))
+        .route("/shares", get(shares::list).post(shares::create))
+        .route("/shares/services", get(shares::services).put(shares::set_services))
+        .route("/shares/refresh", post(shares::refresh))
+        .route("/shares/{id}", delete(shares::remove))
         .route("/users", get(users::list).post(users::create))
         .route("/users/{id}", patch(users::update).delete(users::remove))
         .route("/system/autostart", get(system::autostart).put(system::set_autostart))

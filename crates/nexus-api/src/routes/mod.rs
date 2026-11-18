@@ -3,6 +3,7 @@ pub mod devices;
 pub mod events;
 pub mod files;
 pub mod network;
+pub mod shares;
 pub mod storage;
 pub mod sync;
 pub mod system;

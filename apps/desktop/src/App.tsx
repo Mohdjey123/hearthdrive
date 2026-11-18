@@ -12,6 +12,7 @@ import { Devices } from './pages/Devices'
 import { Transfers } from './pages/Transfers'
 import { Sync } from './pages/Sync'
 import { Backup } from './pages/Backup'
+import { Shares } from './pages/Shares'
 import { ShareInbox } from './components/ShareInbox'
 import { Settings } from './pages/Settings'
 import { Setup } from './pages/Setup'
@@ -32,6 +33,7 @@ function Shell() {
         {page === 'devices' && <Devices />}
         {page === 'sync' && <Sync />}
         {page === 'backup' && <Backup />}
+        {page === 'shares' && <Shares />}
         {page === 'transfers' && <Transfers />}
         {page === 'settings' && <Settings />}
       </main>

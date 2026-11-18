@@ -193,10 +193,46 @@ export interface FileVersion {
   created_by: string | null
 }
 
+/** A link anyone can download a file or folder with, until it expires. */
+export interface ShareLink {
+  id: string
+  file_id: string
+  root_id: string
+  /** What recipients download (a folder becomes "Name.zip"). */
+  name: string
+  is_dir: boolean
+  size: number
+  /** `send` is end-to-end encrypted; `tempsh` is not. */
+  provider: 'send' | 'tempsh'
+  service: string
+  /** The full link, key included; set once the upload finished. */
+  url: string | null
+  expires_at: number
+  downloads: number | null
+  downloaded: number
+  has_password: boolean
+  status: 'uploading' | 'active' | 'expired' | 'failed'
+  error: string | null
+  job_id: string | null
+  created_by: string
+  created_at: number
+  bytes_done: number | null
+  bytes_total: number | null
+}
+
+export interface ShareServices {
+  send_url: string
+  send: { MAX_FILE_SIZE: number; MAX_DOWNLOADS: number; MAX_EXPIRE_SECONDS: number } | null
+  send_error: string | null
+  tempsh_max_size: number
+  tempsh_expire_secs: number
+  can_configure: boolean
+}
+
 /** A copy or sync running on this node. */
 export interface Job {
   id: string
-  kind: 'copy' | 'sync' | 'backup'
+  kind: 'copy' | 'sync' | 'backup' | 'share'
   title: string
   /** "This computer → Laptop" */
   route: string
@@ -371,8 +407,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     if (res.status === 401 && path !== '/auth/login') unauthorizedHandler?.()
     throw new ApiError(res.status, code, message)
   }
-  if (res.status === 204 || res.status === 202) return undefined as T
-  return res.json() as Promise<T>
+  if (res.status === 204) return undefined as T
+  // 202 Accepted may or may not carry a body (a started job does).
+  const text = await res.text()
+  return (text ? JSON.parse(text) : undefined) as T
 }
 
 /** Like `request`, for calls that answer 202 Accepted with a body. */
@@ -433,6 +471,13 @@ function createFileApi(prefix: string) {
       const { url } = await r<{ url: string }>('POST', `/files/${id}/versions/${version}/link`)
       return absoluteUrl(prefix ? url.replace(/^\/api\/v1/, `/api/v1${prefix}`) : url)
     },
+    shares: () => r<ShareLink[]>('GET', '/shares'),
+    refreshShares: () => r<ShareLink[]>('POST', '/shares/refresh'),
+    createShare: (b: { file_id: string; provider: 'send' | 'tempsh'; expires_secs?: number; downloads?: number; password?: string }) =>
+      r<ShareLink>('POST', '/shares', b),
+    deleteShare: (id: string) => r<void>('DELETE', `/shares/${id}`),
+    shareServices: () => r<ShareServices>('GET', '/shares/services'),
+    setShareServices: (send_url: string) => r<ShareServices>('PUT', '/shares/services', { send_url }),
   }
 }
 

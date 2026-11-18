@@ -11,6 +11,7 @@ mod files;
 mod roots;
 mod sessions;
 mod settings;
+mod shares;
 mod sync;
 mod trash;
 mod users;
@@ -19,6 +20,7 @@ pub use backup::{Backup, NewBackup};
 pub use devices::NewPeer;
 pub use pairing::NewPairingRequest;
 pub use files::{RootStats, SortField, UnhashedFile};
+pub use shares::{NewShare, Share};
 pub use sync::{FileVersion, Fingerprints, NewSyncPair, StateChange, SyncPair, SyncState, UploadSession};
 
 use nexus_common::Result;

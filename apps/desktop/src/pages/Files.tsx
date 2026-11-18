@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown, ArrowUp, ChevronRight, CopyPlus, Download, Eye, FolderInput, FolderPlus, HardDrive, History, Info, LayoutGrid,
-  List, Monitor, Pencil, RotateCcw, Search, Trash2, Upload, WifiOff, X,
+  Link2, List, Monitor, Pencil, RotateCcw, Search, Trash2, Upload, WifiOff, X,
 } from 'lucide-react'
+import { ShareDialog } from '../components/ShareDialog'
 import {
   api, ApiError, fileApi, isMobile, isTouch, peerPrefix, thisDevice, type Device, type FileApi, type FileEntry, type FoundItem,
   type StorageRoot, type TrashItem,
@@ -357,6 +358,7 @@ export function Files({ route }: { route: Route }) {
   const [searching, setSearching] = useState(false)
   const [everywhere, setEverywhere] = useState(false)
   const [copying, setCopying] = useState(false)
+  const [sharing, setSharing] = useState<FileEntry | null>(null)
   const [dialog, setDialog] = useState<null | 'folder' | 'rename' | 'move' | 'delete'>(null)
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -657,6 +659,9 @@ export function Files({ route }: { route: Route }) {
                   <IconButton label="Download" onClick={() => void downloadFile(single, prefixOf(single)).catch(toastError)}><Download className="size-4" /></IconButton>
                 </>
               )}
+              {single && single.availability === 'online' && (
+                <IconButton label="Share a link" onClick={() => setSharing(single)}><Link2 className="size-4" /></IconButton>
+              )}
               {peers.length > 0 && (
                 <IconButton label="Copy to another device" onClick={() => setCopying(true)}><CopyPlus className="size-4" /></IconButton>
               )}
@@ -840,6 +845,7 @@ export function Files({ route }: { route: Route }) {
         onClose={() => setPreview(null)}
         prefix={preview ? prefixOf(preview) : prefix}
       />
+      {sharing && <ShareDialog file={sharing} prefix={prefixOf(sharing)} onClose={() => setSharing(null)} />}
       {copying && selectedItems.length > 0 && (
         <CopyDialog
           items={selectedItems}

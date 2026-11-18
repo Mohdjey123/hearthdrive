@@ -65,7 +65,7 @@ pub struct JobInfo {
 
 pub struct Job {
     pub id: String,
-    /// `copy` | `sync` | `backup`
+    /// `copy` | `sync` | `backup` | `share`
     pub kind: &'static str,
     /// "This computer → Laptop"
     pub route: String,
@@ -113,8 +113,18 @@ impl Job {
         self.bytes_done.load(Ordering::Relaxed)
     }
 
-    fn set_bytes(&self, n: u64) {
+    pub(crate) fn set_bytes(&self, n: u64) {
         self.bytes_done.store(n, Ordering::Relaxed);
+    }
+
+    /// Bytes sent so far and in total.
+    pub(crate) fn progress(&self) -> (u64, u64) {
+        (self.bytes(), self.info.lock().unwrap().bytes_total)
+    }
+
+    /// Asks the job to stop; it notices at its next step.
+    pub(crate) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
     }
 
     fn finished(&self) -> bool {
@@ -172,7 +182,7 @@ impl Jobs {
         self.list.lock().unwrap().iter().filter(|j| !user.is_limited() || j.by == user.username).map(|j| j.view()).collect()
     }
 
-    fn get(&self, id: &str) -> Option<Arc<Job>> {
+    pub(crate) fn find(&self, id: &str) -> Option<Arc<Job>> {
         self.list.lock().unwrap().iter().find(|j| j.id == id).cloned()
     }
 
@@ -809,10 +819,10 @@ pub async fn cancel(State(s): State<SharedState>, user: AuthUser, Path(id): Path
     user.require(Action::Write)?;
     let job = s
         .jobs
-        .get(&id)
+        .find(&id)
         .filter(|j| !user.is_limited() || j.by == user.username)
         .ok_or_else(|| NexusError::NotFound("Transfer".into()))?;
-    job.cancelled.store(true, Ordering::Relaxed);
+    job.cancel();
     if job.info.lock().unwrap().status == "queued" {
         // It is waiting for a slot; it notices when it gets one.
         s.events.emit(Event::TransferUpdated { id: job.id.clone(), status: "cancelling".into() });

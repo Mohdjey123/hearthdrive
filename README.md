@@ -18,7 +18,7 @@ Free and open source. No subscription, no third-party storage, nothing exposed t
 
 Every computer you install NEXUS on becomes a storage node: it indexes the folders and drives you choose (in place, nothing is moved or uploaded anywhere) and serves them to your other devices. Devices pair with a link or a QR code and talk over end-to-end encrypted peer-to-peer connections, from any network, with nothing else to install.
 
-> **Status:** Phases 0–5 are done and Phase 6 is mostly done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, and the Android app with photo backup. Share links, auto-update and a store-signed Android build are next (see [Roadmap](#roadmap)).
+> **Status:** Phases 0–6 are done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, encrypted share links, and the Android app with photo backup. Auto-update and a store-signed Android build are next (see [Roadmap](#roadmap)).
 
 ## Contents
 
@@ -30,6 +30,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - [Working across devices](#working-across-devices)
 - [Sync and versions](#sync-and-versions)
 - [Phone backup and the share menu](#phone-backup-and-the-share-menu)
+- [Share links](#share-links)
 - [Windows installer](#windows-installer)
 - [Android app](#android-app)
 - [Roadmap](#roadmap)
@@ -41,6 +42,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - **Built-in, encrypted networking.** Devices connect directly whenever possible and through an encrypted relay otherwise. No VPN, port forwarding or account with anyone.
 - **Copy and sync between devices.** Background copies that resume after a dropped connection; one-way or two-way folder sync with conflict copies, a safety stop and version history.
 - **Phone app.** The Android app runs the same node: browse your computers, back up photos and videos, and send files to a computer from any app's **Share** menu.
+- **Share links.** Send anyone a link to a file or folder. With Send it is encrypted on your computer first, so the host never sees what it holds; links expire and can be limited to a number of downloads and protected with a password.
 - **You decide who sees what.** Accounts with roles, and per-device and per-person limits to chosen storage locations, enforced on every device.
 - **Built to be safe.** Loopback-only API, signed requests between devices, Argon2id passwords, path validation against traversal and link escapes, and an audit log.
 
@@ -57,6 +59,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Networking | Built-in peer-to-peer networking ([iroh](https://iroh.computer)): QUIC connections dialed by device key, direct when possible (local network, NAT hole punching, UPnP), otherwise through an encrypted relay; public relays by default or your own; the HTTP API itself stays on loopback |
 | Across devices | Browse, search, preview, stream, download, upload, rename, move and trash files on a paired device, relayed by your own node with signed requests; background copies of files and folders that resume after a dropped connection |
 | Sync | One-way and two-way folder sync between devices; conflict copies; removals go to the trash; a safety stop for mass removals; the last ten versions of every replaced file |
+| Share links | Links to a file or folder (sent as a zip) that anyone can open: end-to-end encrypted through [Send](https://github.com/timvisee/send) (AES-GCM, key only in the link) with expiry, a download limit and an optional password, or unencrypted through temp.sh for larger files; take a link down at any time; uploads appear under Transfers |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices |
 | Android | The same node inside the app; QR pairing; photo and video backup to a computer; NEXUS in the system share menu |
 | Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; a strict Content Security Policy on the web interface; user content and everything shown from a paired device served with `CSP: sandbox`; origin check on the live event stream; per-person limits enforced on downloads too; phones accept first-run setup only from the app itself and keep their data out of Android backups; audit log |
@@ -157,13 +160,23 @@ How it works: every connection is QUIC with TLS 1.3, authenticated with the two 
 * **Nothing is removed.** Deleting a photo on the phone keeps the copy on the computer. Deleting the copy on the computer does not make the phone send it again. Files already on the computer with the same name and size (after reinstalling the app, say) are not sent twice.
 * **Share to NEXUS.** In any app, choose **Share** → **NEXUS** for files, photos or text. NEXUS asks which computer and folder to send them to; the transfer appears under **Transfers**. **Later** keeps them in the app until you send or discard them.
 
+## Share links
+
+* **Make a link.** In **Files**, select a file or folder and choose **Share a link**. Pick how long it works (up to 3 days on the public Send service) and how many downloads it allows, and optionally a password. NEXUS uploads it in the background; the link appears in the dialog and under **Shares**, ready to copy. A folder is sent as one zip file.
+* **Encrypted with Send.** The file is encrypted on the computer that holds it, with a new random key for every link. The key is the part of the link after `#`, which browsers never send to a server, so the Send service stores only data it cannot read. The recipient's browser decrypts it. A password is never stored by NEXUS; it is turned into the key the service checks before a download.
+* **Which Send service.** By default the public instance at send.vis.ee (files up to 2.5 GB). An owner or administrator can point NEXUS at another Send instance, including one you host, under **Shares** → **Send service**.
+* **temp.sh.** For larger files (up to 4 GB, 3 days) NEXUS can use temp.sh instead. It is **not encrypted**: the service can read what you upload, and the link cannot be taken down early. Use it only for files that are not private.
+* **Take a link down.** On **Shares**, the bin deletes the file from Send at once. Links stop working by themselves when they expire or run out of downloads.
+* **On the phone.** Share files on your computers the same way; the computer holding the file does the encrypting and uploading, and the phone offers its share sheet to send the link.
+* **Who can share.** Owners, administrators and editors. Owners and administrators see every link made on a computer; everyone else sees their own. People limited to some storage can share only from it.
+
 ## Windows installer
 
 ```bash
 npm run desktop:build
 ```
 
-builds the service and the app in release mode and produces an NSIS installer under `target/release/bundle/nsis/`. The installer puts `nexus-service.exe` and the web interface next to the app. It is not code-signed, so Windows SmartScreen will warn on first run.
+builds the service and the app in release mode and produces an NSIS installer (`.exe`) under `target/release/bundle/nsis/` and an MSI under `target/release/bundle/msi/`. Ready-made builds are attached to the [GitHub releases](../../releases). The installer puts `nexus-service.exe` and the web interface next to the app. It is not code-signed, so Windows SmartScreen will warn on first run.
 
 ## Android app
 
@@ -193,7 +206,7 @@ Following the product spec's phases. Each phase ships a working application.
 - [x] **Phase 3 — Android:** native app with the node built in, QR pairing, remote browsing, previews, downloads, uploads
 - [x] **Phase 4 — Multi-node storage:** search across all devices, copying files and folders between devices, resumable uploads and copies
 - [x] **Phase 5 — Synchronization:** one-way and two-way folder sync, conflict copies, version history (no real-time change journal yet: devices are checked every five minutes)
-- [ ] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access are done; share links are not
+- [x] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access, end-to-end encrypted share links
 - [ ] **Phase 7 — Release:** Windows installer and start-with-Windows are done; auto-update and a store-signed Android release are not
 
 ## Documentation

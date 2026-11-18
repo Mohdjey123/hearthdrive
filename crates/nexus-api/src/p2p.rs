@@ -29,7 +29,7 @@ pub struct P2pPeer(pub String);
 /// API areas reachable over the peer-to-peer network. Everything else
 /// (sign-in, setup, device management, the event stream, relaying to other
 /// nodes) is for people on this computer only.
-const AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "peer", "pairing"];
+const AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "peer", "pairing"];
 
 /// The one unsigned call: a device that is not paired yet asking to pair.
 const PAIRING_REQUEST: &str = "/api/v1/pairing/request";
