@@ -37,6 +37,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - [Shared folders and comments](#shared-folders-and-comments)
 - [Share links](#share-links)
 - [Updates](#updates)
+- [Virtual drive](#virtual-drive)
 - [Windows installer](#windows-installer)
 - [Android app](#android-app)
 - [Roadmap](#roadmap)
@@ -48,6 +49,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - **Built-in, encrypted networking.** Devices connect directly whenever possible and through an encrypted relay otherwise. No VPN, port forwarding or account with anyone.
 - **Copy and sync between devices.** Background copies that resume after a dropped connection; one-way or two-way folder sync with conflict copies, a safety stop and version history.
 - **Extra copies and drive health.** Keep a checked copy of a folder on one or more other computers, with removed files held back for a while; watch every disk's health and free space, and find and repair files a drive has silently damaged.
+- **Your devices in File Explorer.** On Windows, every paired device's storage appears under **NEXUS** in Explorer; files download when opened, like OneDrive.
 - **Phone app.** The Android app runs the same node: browse your computers, back up photos and videos, and send files to a computer from any app's **Share** menu.
 - **Share links.** Send anyone a link to a file or folder. With Send it is encrypted on your computer first, so the host never sees what it holds; links expire and can be limited to a number of downloads and protected with a password.
 - **You decide who sees what.** Accounts with roles, per-device and per-person limits to chosen storage locations, and folders shared with chosen people and devices (to view, to edit, or only to add files), enforced on every device.
@@ -76,6 +78,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Updates | Signed packages (Ed25519 over the version, size and BLAKE3 hash) passed between paired devices; computers keep packages for every platform to pass on; Windows installs by itself when its window is closed and nothing is copying, Android opens the system installer |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices; locked accounts; two-step sign-in turned off for someone who lost their phone |
 | Sign-in | Two-step sign-in with an authenticator app (TOTP, RFC 6238; each code works once) and ten one-time recovery codes; passkeys (WebAuthn: Windows Hello, a phone or a security key; ES256, EdDSA and RS256 checked on the node); sessions listed with browser, sign-in method and last use, signed out one by one or all at once; the password and a code asked again before sensitive changes; wrong codes slowed down per account; a security log with refused sign-ins |
+| Virtual drive | Paired devices' storage in File Explorer through the Windows Cloud Files API (no driver): folders listed on first open, files downloaded on read, Always keep on this device / Free up space, offline devices marked; read-only for now |
 | Android | The same node inside the app; QR pairing; photo and video backup to a computer; NEXUS in the system share menu |
 | Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; a strict Content Security Policy on the web interface; user content and everything shown from a paired device served with `CSP: sandbox`; origin check on the live event stream; per-person limits enforced on downloads too; blocked devices refused and sent nothing; phones accept first-run setup only from the app itself and keep their data out of Android backups; audit log |
 
@@ -91,6 +94,7 @@ crates/
   nexus-security/      Argon2id, tokens, signed tickets, role checks
   nexus-network/       Peer-to-peer endpoint (iroh): device-key addressing, relays, connection cache
   nexus-devices/       Device identity keys (DPAPI), signed peer requests, replay guard, pairing links
+  nexus-vdrive/        The virtual drive: a Windows Cloud Files sync root backed by the node
   nexus-api/           Axum REST + WebSocket API under /api/v1
   nexus-core/          Node lifecycle and the `nexus-service` binary
 migrations/            SQL migrations (embedded at build time)
@@ -263,6 +267,17 @@ Updates do not come from a download server. They are published on one of your co
 * **The update key** is at `~/.nexus-signing/update-key` (or `NEXUS_UPDATE_KEY`). Anyone with that file can publish updates to all your devices, so keep it private. Keep a copy somewhere safe too: without it no further updates can be made, and devices would have to be updated by hand with a build that trusts a new key.
 
 Versions before 0.1.2 cannot update themselves: install 0.1.2 by hand once on each device.
+
+## Virtual drive
+
+On Windows, Settings → Virtual drive puts every paired device's storage in File Explorer, under **NEXUS** in the navigation pane (default folder `%USERPROFILE%\NEXUS`, laid out as `<device>\<storage location>\...`). It is a cloud sync root using the Windows Cloud Files API, the mechanism OneDrive uses; no driver is installed. The code is in `crates/nexus-vdrive`.
+
+- Folders are listed when first opened; files download from their device when an app reads them (16 MiB read-ahead), through the node's own peer proxy.
+- Right-click → **Always keep on this device** downloads and keeps files; **Free up space** makes them cloud-only again. Explorer's Status column shows cloud / available / always available / syncing.
+- Changes on a device appear within about a minute (checked on the device's presence heartbeat). A device that cannot be reached is marked "Device offline"; its cloud-only files fail to open with a "network unavailable" error, never as empty files.
+- **Read-only for now.** Deleting, renaming or moving items is refused. Files you edit or add inside the drive stay on this computer (shown "Sync pending"), are never sent back, and are never overwritten.
+- Turning the drive off (or moving it) unregisters it and deletes its placeholders and downloaded copies, keeping anything you changed or added there.
+- Not yet: this computer's own storage locations (already on disk), writing back, and pushed change notifications from devices (they are polled).
 
 ## Windows installer
 

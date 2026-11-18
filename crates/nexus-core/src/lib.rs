@@ -208,6 +208,7 @@ pub async fn run_with(
     nexus_api::spawn_health(state.clone());
     nexus_api::spawn_updates(state.clone());
     nexus_api::spawn_introductions(state.clone());
+    start_virtual_drive(&state, &app, &local_token);
 
     // Keep the database's write-ahead log from growing without bound.
     let checkpoint_db = db.clone();
@@ -245,6 +246,48 @@ pub async fn run_with(
     p2p.close().await;
     db.close().await;
     served.context("API server stopped unexpectedly")
+}
+
+/// Connects the virtual drive to this node (it reads devices and files
+/// through the node's own API, as its owner, like the app does) and turns it
+/// on if it was on.
+fn start_virtual_drive(state: &SharedState, app: &axum::Router, local_token: &str) {
+    use axum::extract::ConnectInfo;
+    use tower::ServiceExt;
+    let app = app.clone();
+    let send: nexus_vdrive::client::Responder = Arc::new(move |mut req| {
+        let app = app.clone();
+        req.extensions_mut().insert(ConnectInfo(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)));
+        Box::pin(async move {
+            match app.oneshot(req).await {
+                Ok(res) => res,
+                Err(never) => match never {},
+            }
+        })
+    });
+    state.vdrive.attach(nexus_vdrive::Context {
+        client: nexus_vdrive::client::NodeClient::new(send, local_token),
+        events: state.events.clone(),
+        data_dir: state.data_dir.clone(),
+        account: state.node.device_id.clone(),
+        runtime: tokio::runtime::Handle::current(),
+    });
+    if !nexus_vdrive::VirtualDrive::supported() {
+        return;
+    }
+    let state = state.clone();
+    tokio::spawn(async move {
+        let (enabled, path) = match nexus_api::saved_vdrive(&state).await {
+            Ok(saved) => saved,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read the virtual drive setting");
+                return;
+            }
+        };
+        if let Err(e) = state.vdrive.apply(enabled, path.clone()).await {
+            state.vdrive.remember(enabled, path, Some(e));
+        }
+    });
 }
 
 /// Writes `runtime.json`, which holds the owner-level local token. The data

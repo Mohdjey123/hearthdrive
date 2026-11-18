@@ -15,6 +15,7 @@ nexus-indexer = { workspace = true }
 nexus-network = { workspace = true }
 nexus-security = { workspace = true }
 nexus-storage = { workspace = true }
+nexus-vdrive = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 blake3 = { workspace = true }

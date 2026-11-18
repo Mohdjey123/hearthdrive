@@ -3364,6 +3364,7 @@ dependencies = [
  "nexus-network",
  "nexus-security",
  "nexus-storage",
+ "nexus-vdrive",
  "reqwest",
  "ring",
  "rustls",
@@ -3406,9 +3407,11 @@ dependencies = [
  "nexus-network",
  "nexus-security",
  "nexus-storage",
+ "nexus-vdrive",
  "serde_json",
  "sysinfo",
  "tokio",
+ "tower",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -3515,6 +3518,23 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "nexus-vdrive"
+version = "0.1.3"
+dependencies = [
+ "axum",
+ "futures-util",
+ "http-body-util",
+ "nexus-common",
+ "notify",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "windows 0.62.2",
+ "windows-collections 0.3.2",
 ]
 
 [[package]]

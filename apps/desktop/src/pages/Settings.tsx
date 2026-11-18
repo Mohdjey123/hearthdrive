@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
-import { HardDrive, Lock, LockOpen, LogOut, Monitor, Moon, Sun, Trash2, UserPlus } from 'lucide-react'
-import { api, connection, fileApi, isMobile, peerPrefix, thisDevice, type Device, type Person, type Role, type StorageRoot, type User } from '../services/api'
+import { FolderOpen, HardDrive, Lock, LockOpen, LogOut, Monitor, Moon, Sun, Trash2, UserPlus } from 'lucide-react'
+import { api, connection, fileApi, isMobile, isTauri, peerPrefix, thisDevice, type Device, type Person, type Role, type StorageRoot, type User } from '../services/api'
 import { SecurityPanel } from '../components/Security'
 import { toast, toastError } from '../components/Toasts'
 import { useResource } from '../hooks/useResource'
@@ -417,6 +417,112 @@ function AutostartRow() {
   )
 }
 
+async function pickFolder(): Promise<string | null> {
+  if (!isTauri()) return null
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const picked = await open({ directory: true, multiple: false, title: 'Choose an empty folder for the virtual drive' })
+  return typeof picked === 'string' ? picked : null
+}
+
+/** Paired devices' storage in File Explorer, as a cloud drive (Windows). */
+function VirtualDrivePanel() {
+  const state = useResource(() => api.virtualDrive(), [])
+  const [busy, setBusy] = useState(false)
+  const [folder, setFolder] = useState<string | null>(null)
+  const data = state.data
+  if (!data?.supported) return null
+  const chosen = (folder ?? data.path).trim()
+  const moved = data.enabled && chosen !== data.path
+
+  const apply = async (enabled: boolean, path: string) => {
+    setBusy(true)
+    try {
+      const s = await api.setVirtualDrive({ enabled, path: path === data.default_path ? '' : path })
+      setFolder(null)
+      toast(
+        !enabled
+          ? 'The virtual drive was removed from File Explorer'
+          : moved
+            ? `The virtual drive moved to ${s.path}`
+            : `Your devices are in File Explorer under NEXUS (${s.path})`,
+      )
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+      state.reload()
+    }
+  }
+
+  return (
+    <Panel title="Virtual drive" className="mb-4">
+      <div className="divide-y divide-line">
+        <Row label="File Explorer">
+          <label className="flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-[var(--nx-accent)]"
+              checked={data.enabled}
+              disabled={busy}
+              onChange={(e) => void apply(e.target.checked, chosen)}
+            />
+            <span>
+              Show my devices in File Explorer
+              <span className="mt-0.5 block text-[12px] text-subtle">
+                Every paired device's storage appears under NEXUS in File Explorer. Files download when you open them;
+                right-click a file or folder and choose Always keep on this device, or Free up space. Read-only for now:
+                changes made there are not sent back to the device.
+              </span>
+            </span>
+          </label>
+          {data.enabled && (
+            <div className="mt-2">
+              {busy ? (
+                <Spinner />
+              ) : data.running ? (
+                <Badge tone="accent">Running</Badge>
+              ) : (
+                <Badge tone="warn">Not running</Badge>
+              )}
+            </div>
+          )}
+          {data.error && <div className="mt-2"><ErrorNote>{data.error}</ErrorNote></div>}
+        </Row>
+        <Row label="Folder">
+          <div className="flex gap-2">
+            <Input
+              value={chosen}
+              disabled={busy}
+              spellCheck={false}
+              onChange={(e) => setFolder(e.target.value)}
+              className="font-mono text-[12px]"
+            />
+            {isTauri() && (
+              <Button
+                size="sm"
+                icon={<FolderOpen className="size-3.5" />}
+                disabled={busy}
+                onClick={() => void pickFolder().then((p) => p && setFolder(p))}
+              >
+                Browse
+              </Button>
+            )}
+            {moved && (
+              <Button size="sm" variant="primary" loading={busy} onClick={() => void apply(true, chosen)}>
+                Move
+              </Button>
+            )}
+          </div>
+          <div className="mt-1 text-[12px] text-subtle">
+            An empty or new folder on this computer. Turning the drive off or moving it deletes the downloaded copies
+            in it; files on your devices are never touched.
+          </div>
+        </Row>
+      </div>
+    </Panel>
+  )
+}
+
 export function Settings() {
   const { phase, signOut } = useSession()
   const [theme, setTheme] = useTheme()
@@ -497,6 +603,8 @@ export function Settings() {
           <Spinner />
         )}
       </Panel>
+
+      {!isMobile() && me && (me.role === 'owner' || me.role === 'administrator') && <VirtualDrivePanel />}
 
       <Panel title="Updates" className="mb-4">
         <UpdateSettings />

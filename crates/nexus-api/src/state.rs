@@ -66,6 +66,8 @@ pub struct AppState {
     pub update_keys: Vec<String>,
     /// Pairing changed: introduce the paired devices to each other again.
     pub introductions: tokio::sync::Notify,
+    /// Paired devices in File Explorer (Windows).
+    pub vdrive: nexus_vdrive::VirtualDrive,
 }
 
 impl AppState {
@@ -111,6 +113,7 @@ impl AppState {
             updates: Default::default(),
             update_keys: nexus_devices::release::TRUSTED_KEYS.iter().map(|k| k.to_string()).collect(),
             introductions: tokio::sync::Notify::new(),
+            vdrive: nexus_vdrive::VirtualDrive::new(),
         }
     }
 
