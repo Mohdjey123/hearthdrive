@@ -9,8 +9,8 @@
 //! copies and syncs this node runs itself.
 
 use super::audit;
-use super::files::{FileDetails, details};
-use crate::auth::AuthUser;
+use super::files::{FileDetails, details, upload_policy};
+use crate::auth::{AuthUser, Need};
 use crate::error::ApiResult;
 use crate::state::{AppState, SharedState};
 use axum::Json;
@@ -82,7 +82,7 @@ impl Drop for Writing<'_> {
 
 async fn owned(s: &AppState, user: &AuthUser, id: &str) -> Result<UploadSession, NexusError> {
     let session = s.db.get_upload(id).await?;
-    if session.owner != user.owner_key() || !user.sees_root(&session.root_id) {
+    if session.owner != user.owner_key() || !user.may(&session.root_id, &session.parent_path, Need::Add) {
         return Err(NexusError::NotFound("Upload".into()));
     }
     Ok(session)
@@ -96,8 +96,7 @@ async fn received(s: &AppState, session: &UploadSession) -> Result<u64, NexusErr
 
 pub(crate) async fn begin(s: &AppState, user: &AuthUser, req: &NewUpload) -> Result<UploadProgress, NexusError> {
     user.require(Action::Write).map_err(|e| e.0)?;
-    user.require_root(&req.root_id).map_err(|e| e.0)?;
-    let policy = ConflictPolicy::parse(req.on_conflict.as_deref());
+    let policy = upload_policy(user, &req.root_id, &req.path, ConflictPolicy::parse(req.on_conflict.as_deref())).map_err(|e| e.0)?;
     // Validates the name, the folder and the free space before any byte is sent.
     let target = s
         .storage

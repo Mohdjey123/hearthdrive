@@ -8,6 +8,7 @@ pub mod network;
 pub mod sealed;
 pub mod security;
 pub mod shares;
+pub mod sharing;
 pub mod snapshots;
 pub mod storage;
 pub mod sync;

@@ -62,7 +62,7 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
     frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{backup, devices, files, health, introductions, network, security, shares, snapshots, storage, sync, system, transfers, updates, uploads, users};
+    use routes::{backup, devices, files, health, introductions, network, security, shares, sharing, snapshots, storage, sync, system, transfers, updates, uploads, users};
 
     let api = Router::new()
         .route("/health", get(system::health))
@@ -144,6 +144,9 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/shares/services", get(shares::services).put(shares::set_services))
         .route("/shares/refresh", post(shares::refresh))
         .route("/shares/{id}", delete(shares::remove))
+        .route("/shared-folders", get(sharing::list).post(sharing::create))
+        .route("/shared-folders/mine", get(sharing::mine))
+        .route("/shared-folders/{id}", patch(sharing::update).delete(sharing::remove))
         .route("/users", get(users::list).post(users::create))
         .route("/users/{id}", patch(users::update).delete(users::remove))
         .route("/updates", get(updates::status))
@@ -186,6 +189,8 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/files/{id}/link", post(files::link))
         .route("/files/{id}/content", get(files::content))
         .route("/files/{id}/restore", post(files::restore))
+        .route("/files/{id}/comments", get(sharing::comments).post(sharing::add_comment))
+        .route("/files/{id}/comments/{comment}", delete(sharing::remove_comment))
         .route("/trash", get(files::trash))
         .route("/trash/{id}", delete(files::purge))
         .route("/search", get(files::search))

@@ -23,6 +23,49 @@ export interface FileEntry {
 }
 
 export interface RootSummary { id: string; name: string; online: boolean; read_only: boolean }
+
+/** What someone may do in a shared folder: open it, change it, or only add files. */
+export type FolderAccess = 'view' | 'edit' | 'add'
+export interface FolderMember {
+  /** `user:<id>` or `device:<id>`. */
+  member: string
+  access: FolderAccess
+  added_at: number
+  kind: 'person' | 'device'
+  name: string
+  /** Why they can do less (or more) than `access` says. */
+  note: string | null
+}
+export interface SharedFolder {
+  id: string
+  root: RootSummary
+  path: string
+  name: string
+  created_by: string
+  created_at: number
+  /** `null` when the folder was moved or deleted outside NEXUS. */
+  file_id: string | null
+  members: FolderMember[]
+}
+/** A folder someone shared with the person signed in. */
+export interface SharedWithMe {
+  id: string
+  name: string
+  root: RootSummary
+  path: string
+  access: FolderAccess
+  shared_by: string
+  /** They see all of its storage location anyway. */
+  sees_all: boolean
+}
+export interface FileComment {
+  id: string
+  file_id: string
+  author: string
+  body: string
+  created_at: number
+  can_delete: boolean
+}
 export interface FileDetails extends FileEntry { root: RootSummary }
 export interface FoundItem extends FileEntry { root_name: string }
 
@@ -696,6 +739,10 @@ function createFileApi(prefix: string) {
     createShare: (b: { file_id: string; provider: 'send' | 'tempsh'; expires_secs?: number; downloads?: number; password?: string }) =>
       r<ShareLink>('POST', '/shares', b),
     deleteShare: (id: string) => r<void>('DELETE', `/shares/${id}`),
+    sharedWithMe: () => r<SharedWithMe[]>('GET', '/shared-folders/mine'),
+    comments: (id: string) => r<FileComment[]>('GET', `/files/${id}/comments`),
+    addComment: (id: string, body: string) => r<FileComment>('POST', `/files/${id}/comments`, { body }),
+    deleteComment: (id: string, comment: string) => r<void>('DELETE', `/files/${id}/comments/${comment}`),
     shareServices: () => r<ShareServices>('GET', '/shares/services'),
     setShareServices: (send_url: string) => r<ShareServices>('PUT', '/shares/services', { send_url }),
   }
@@ -750,6 +797,12 @@ export const api = {
     request<void>('PATCH', `/devices/${id}`, b),
 
   users: () => request<Person[]>('GET', '/users'),
+  sharedFolders: () => request<SharedFolder[]>('GET', '/shared-folders'),
+  shareFolder: (b: { root_id: string; path: string; name?: string; members: { member: string; access: FolderAccess }[] }) =>
+    request<SharedFolder>('POST', '/shared-folders', b),
+  updateSharedFolder: (id: string, b: { name?: string; members?: { member: string; access: FolderAccess }[] }) =>
+    request<SharedFolder>('PATCH', `/shared-folders/${id}`, b),
+  unshareFolder: (id: string) => request<void>('DELETE', `/shared-folders/${id}`),
   createUser: (b: { username: string; password: string; role: Role }) => request<User>('POST', '/users', b),
   updateUser: (id: string, b: { role?: Role; password?: string; allowed_roots?: string[]; all_roots?: boolean; locked?: boolean; two_factor?: false }) =>
     request<User>('PATCH', `/users/${id}`, b),

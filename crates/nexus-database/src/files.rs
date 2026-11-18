@@ -74,7 +74,7 @@ pub struct UnhashedFile {
     pub modified_at: Option<i64>,
 }
 
-fn subtree_pattern(rel: &str) -> String {
+pub(crate) fn subtree_pattern(rel: &str) -> String {
     format!("{}/%", like_escape(rel))
 }
 

@@ -77,6 +77,18 @@ impl Event {
     }
 }
 
+impl Event {
+    /// The files an event is about, if any: people who see only some
+    /// folders of a storage location hear about those.
+    pub fn paths(&self) -> Vec<&str> {
+        match self {
+            Event::FileCreated { path, .. } | Event::FileModified { path, .. } | Event::FileDeleted { path, .. } => vec![path],
+            Event::FileMoved { from, to, .. } => vec![from, to],
+            _ => vec![],
+        }
+    }
+}
+
 /// In-process fan-out for [`Event`]s. Cheap to clone.
 #[derive(Clone)]
 pub struct EventBus {

@@ -1,5 +1,5 @@
 use super::{audit, clamp_limit};
-use crate::auth::{AuthUser, authenticate, bearer};
+use crate::auth::{AuthUser, Need, authenticate, bearer};
 use crate::error::{ApiError, ApiResult};
 use crate::state::{AppState, SharedState};
 use axum::Json;
@@ -72,9 +72,9 @@ pub async fn list(
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<ListResponse>> {
     user.require(Action::Read)?;
-    user.require_root(&q.root_id)?;
-    let root = s.db.get_root(&q.root_id).await?;
     let path = paths::normalize_relative(q.path.as_deref().unwrap_or(""))?;
+    user.require_access(&q.root_id, &path, Need::Read)?;
+    let root = s.db.get_root(&q.root_id).await?;
     if !path.is_empty() {
         match s.db.get_file_by_path(&root.id, &path).await? {
             Some(dir) if dir.is_dir => {}
@@ -121,7 +121,7 @@ pub(crate) async fn details(s: &AppState, file: FileEntry) -> ApiResult<FileDeta
 pub async fn get(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<FileDetails>> {
     user.require(Action::Read)?;
     let file = s.db.get_file(&id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, Need::Read)?;
     Ok(Json(details(&s, file).await?))
 }
 
@@ -145,7 +145,7 @@ pub async fn link(
 ) -> ApiResult<Json<LinkResponse>> {
     user.require(Action::Read)?;
     let file = s.db.get_file(&id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, Need::Read)?;
     if file.is_dir {
         return Err(NexusError::invalid("Folders cannot be downloaded yet").into());
     }
@@ -209,7 +209,7 @@ pub async fn content(
     let file = s.db.get_file(&id).await?;
     if let Some(user) = &caller {
         user.require(Action::Read)?;
-        user.require_root(&file.root_id)?;
+        user.require_access(&file.root_id, &file.relative_path, Need::Read)?;
     }
     if file.is_dir {
         return Err(NexusError::invalid("This is a folder").into());
@@ -298,7 +298,7 @@ pub(crate) async fn store_stream(
     policy: ConflictPolicy,
 ) -> ApiResult<FileEntry> {
     user.require(Action::Write)?;
-    user.require_root(root_id)?;
+    let policy = upload_policy(user, root_id, parent, policy)?;
     let target = s.storage.prepare_upload(root_id, parent, name, declared).await?;
 
     let placed = async {
@@ -324,6 +324,20 @@ pub(crate) async fn store_stream(
     s.db.set_hash(&entry.id, Some(&hash), entry.modified_at, now_ms()).await?;
     audit(s, user, "file.uploaded", Some(&format!("{}/{}", target.root.name, rel))).await;
     Ok(s.db.get_file(&entry.id).await?)
+}
+
+/// Checks that the caller may add files to `parent`. Someone who may only
+/// add files there (a drop folder) never replaces what is already there.
+pub(crate) fn upload_policy(user: &AuthUser, root_id: &str, parent: &str, policy: ConflictPolicy) -> ApiResult<ConflictPolicy> {
+    let parent = paths::normalize_relative(parent)?;
+    if user.may(root_id, &parent, Need::Write) {
+        return Ok(policy);
+    }
+    user.require_access(root_id, &parent, Need::Add)?;
+    Ok(match policy {
+        ConflictPolicy::Replace => ConflictPolicy::Rename,
+        other => other,
+    })
 }
 
 #[derive(Deserialize)]
@@ -380,7 +394,7 @@ pub(crate) async fn tree_of(s: &AppState, root_id: &str, base: &str) -> Result<V
 /// folders and comparing them during sync.
 pub async fn tree(State(s): State<SharedState>, user: AuthUser, Query(q): Query<TreeQuery>) -> ApiResult<Json<TreeResponse>> {
     user.require(Action::Read)?;
-    user.require_root(&q.root_id)?;
+    user.require_access(&q.root_id, &paths::normalize_relative(&q.path)?, Need::Read)?;
     let root = s.db.get_root(&q.root_id).await?;
     // An incomplete listing would look like deleted files to a sync.
     s.storage.ensure_online(&root)?;
@@ -399,7 +413,7 @@ pub async fn versions(
 ) -> ApiResult<Json<Vec<nexus_database::FileVersion>>> {
     user.require(Action::Read)?;
     let file = s.db.get_file(&id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, Need::Read)?;
     Ok(Json(s.db.list_versions(&file.id).await?))
 }
 
@@ -410,7 +424,7 @@ pub async fn restore_version(
 ) -> ApiResult<Json<FileDetails>> {
     user.require(Action::Write)?;
     let file = s.db.get_file(&id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, Need::Write)?;
     if file.is_dir {
         return Err(NexusError::invalid("Folders have no versions").into());
     }
@@ -428,7 +442,7 @@ pub async fn delete_version(
 ) -> ApiResult<StatusCode> {
     user.require(Action::Write)?;
     let file = s.db.get_file(&id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, Need::Write)?;
     s.storage.delete_version(&file, &version).await?;
     audit(&s, &user, "file.version.deleted", Some(&file.relative_path)).await;
     Ok(StatusCode::NO_CONTENT)
@@ -442,7 +456,7 @@ pub async fn version_link(
 ) -> ApiResult<Json<LinkResponse>> {
     user.require(Action::Read)?;
     let file = s.db.get_file(&id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, Need::Read)?;
     let v = s.db.get_version(&version).await?;
     if v.file_id != file.id {
         return Err(NexusError::NotFound("Version".into()).into());
@@ -497,7 +511,7 @@ pub async fn create_folder(
     Json(body): Json<FolderBody>,
 ) -> ApiResult<(StatusCode, Json<FileDetails>)> {
     user.require(Action::Write)?;
-    user.require_root(&body.root_id)?;
+    user.require_access(&body.root_id, &paths::normalize_relative(&body.path)?, Need::Add)?;
     let (root, rel) = s.storage.create_folder(&body.root_id, &body.path, &body.name).await?;
     s.indexer.reindex_path(&root, &rel).await?;
     let entry = s
@@ -527,12 +541,18 @@ pub async fn update(
         return Err(NexusError::invalid("Nothing to change").into());
     }
     let file = s.db.get_file(&id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, Need::Change)?;
+    if let Some(parent) = body.parent_path.as_deref() {
+        user.require_access(&file.root_id, &paths::normalize_relative(parent)?, Need::Add)?;
+    }
     let new_rel = s
         .storage
         .rename_or_move(&file, body.parent_path.as_deref(), body.name.as_deref())
         .await?;
     if new_rel != file.relative_path {
+        if file.is_dir {
+            s.db.move_shared_paths(&file.root_id, &file.relative_path, &new_rel).await?;
+        }
         s.events.emit(Event::FileMoved {
             root_id: file.root_id.clone(),
             from: file.relative_path.clone(),
@@ -552,7 +572,7 @@ pub async fn remove(
 ) -> ApiResult<Json<DeletedFile>> {
     user.require(Action::Write)?;
     let file = s.db.get_file(&id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, Need::Change)?;
     let record = s.storage.trash(&file, user.user_id.as_deref()).await?;
     s.events.emit(Event::FileDeleted { root_id: file.root_id.clone(), path: file.relative_path.clone() });
     audit(&s, &user, "file.trashed", Some(&file.relative_path)).await;
@@ -565,7 +585,8 @@ pub async fn restore(
     Path(id): Path<String>,
 ) -> ApiResult<Json<FileDetails>> {
     user.require(Action::Write)?;
-    user.require_root(&s.db.get_deleted(&id).await?.root_id)?;
+    let deleted = s.db.get_deleted(&id).await?;
+    user.require_access(&deleted.root_id, &deleted.original_path, Need::Change)?;
     let (root, rel) = s.storage.restore(&id).await?;
     s.indexer.reindex_path(&root, &rel).await?;
     // Give the restored entry back its original id.
@@ -596,7 +617,7 @@ pub async fn trash(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Js
         s.db.list_deleted()
             .await?
             .into_iter()
-            .filter(|item| user.sees_root(&item.root_id))
+            .filter(|item| user.may(&item.root_id, &item.original_path, Need::Change))
             .map(|item| TrashItem { root_name: names.get(&item.root_id).cloned().unwrap_or_default(), item })
             .collect(),
     ))
@@ -607,6 +628,7 @@ pub async fn purge(State(s): State<SharedState>, user: AuthUser, Path(id): Path<
     user.require(Action::ManageStorage)?;
     user.require_root(&s.db.get_deleted(&id).await?.root_id)?;
     let record = s.storage.purge(&id).await?;
+    s.db.delete_comments_of(&id).await?;
     audit(&s, &user, "file.purged", Some(&record.original_path)).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -667,7 +689,7 @@ pub async fn search(
         .await?;
     let has_more = found.len() as i64 > limit;
     found.truncate(limit as usize);
-    found.retain(|f| user.sees_root(&f.root_id));
+    found.retain(|f| user.may(&f.root_id, &f.relative_path, Need::Read));
     Ok(Json(SearchResponse { items: with_roots(&s, found).await?, has_more }))
 }
 
@@ -683,6 +705,6 @@ pub async fn recent(
 ) -> ApiResult<Json<Vec<FoundItem>>> {
     user.require(Action::Read)?;
     let mut files = s.db.recent_files(clamp_limit(q.limit, 20, 200)).await?;
-    files.retain(|f| user.sees_root(&f.root_id));
+    files.retain(|f| user.may(&f.root_id, &f.relative_path, Need::Read));
     Ok(Json(with_roots(&s, files).await?))
 }

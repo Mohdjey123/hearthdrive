@@ -6,6 +6,7 @@ use axum::http::{HeaderMap, Method, header, request::Parts};
 use nexus_common::time::now_ms;
 use nexus_common::types::{Role, User};
 use nexus_common::{NexusError, Result};
+use nexus_database::{FolderAccess, FolderGrant};
 use nexus_devices::SignedRequest;
 use nexus_devices::signing::{HDR_ACTING_ROLE, HDR_ACTING_ROOTS, HDR_ACTING_USER, HDR_DEVICE, HDR_NONCE, HDR_SIGNATURE, HDR_TIMESTAMP};
 use nexus_security::{Action, hash_token, role_allows, token_matches};
@@ -26,13 +27,58 @@ pub struct AuthUser {
     /// travels with their requests to paired devices, which apply it too.
     #[serde(skip)]
     pub allowed_roots: Option<Vec<String>>,
+    /// Folders shared with the caller. They add to the storage locations
+    /// above, never beyond what the role allows.
+    #[serde(skip)]
+    pub shared: Vec<FolderGrant>,
+}
+
+/// What a request does with a path, for checking it against shared folders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Need {
+    /// List, open or download.
+    Read,
+    /// Add, replace or change what is inside.
+    Write,
+    /// Rename, move or delete the item itself: never a shared folder itself.
+    Change,
+    /// Add something new (a folder or a file under a free name).
+    Add,
+}
+
+/// Whether `path` is `base` or inside it. Paths are case-insensitive.
+fn within(path: &str, base: &str) -> bool {
+    if base.is_empty() {
+        return true;
+    }
+    let (path, base) = (path.to_lowercase(), base.to_lowercase());
+    path == base || path.strip_prefix(&base).is_some_and(|rest| rest.starts_with('/'))
 }
 
 impl AuthUser {
     /// A person signed in on this node, with their current role and limits.
     pub fn person(user: User) -> Self {
         let allowed_roots = user.limited_roots();
-        Self { user_id: Some(user.id), username: user.username, role: user.role, local: false, device_id: None, allowed_roots }
+        Self {
+            user_id: Some(user.id),
+            username: user.username,
+            role: user.role,
+            local: false,
+            device_id: None,
+            allowed_roots,
+            shared: Vec::new(),
+        }
+    }
+
+    /// Adds the folders shared with this person or device.
+    pub async fn with_shared(mut self, state: &AppState) -> Result<Self> {
+        let member = match (&self.device_id, &self.user_id) {
+            (Some(device), _) => format!("device:{device}"),
+            (None, Some(user)) if !self.local => format!("user:{user}"),
+            _ => return Ok(self),
+        };
+        self.shared = state.db.grants_for(&[member]).await?;
+        Ok(self)
     }
 
     /// Who owns something the caller started (a resumable upload), in a form
@@ -83,6 +129,53 @@ impl AuthUser {
         }
     }
 
+    /// Whether the caller may see anything in this storage location: all of
+    /// it, or a folder shared with them.
+    pub fn sees_any(&self, root_id: &str) -> bool {
+        self.sees_root(root_id) || self.shared.iter().any(|g| g.root_id == root_id)
+    }
+
+    /// The innermost shared folder holding `path`.
+    pub fn grant_at(&self, root_id: &str, path: &str) -> Option<&FolderGrant> {
+        self.shared
+            .iter()
+            .filter(|g| g.root_id == root_id && within(path, &g.path))
+            .max_by_key(|g| g.path.len())
+    }
+
+    /// Whether the storage location or a folder shared with the caller lets
+    /// them do `need` at `path`. The role is checked separately.
+    pub fn may(&self, root_id: &str, path: &str, need: Need) -> bool {
+        if self.sees_root(root_id) {
+            return true;
+        }
+        let Some(grant) = self.grant_at(root_id, path) else { return false };
+        match need {
+            Need::Read => matches!(grant.access, FolderAccess::View | FolderAccess::Edit),
+            Need::Write => grant.access == FolderAccess::Edit,
+            Need::Add => matches!(grant.access, FolderAccess::Add | FolderAccess::Edit),
+            Need::Change => grant.access == FolderAccess::Edit && !path.eq_ignore_ascii_case(&grant.path),
+        }
+    }
+
+    /// Like [`may`](Self::may), with the reason when not. What the caller
+    /// cannot see at all looks missing.
+    pub fn require_access(&self, root_id: &str, path: &str, need: Need) -> Result<(), ApiError> {
+        if self.may(root_id, path, need) {
+            return Ok(());
+        }
+        let Some(grant) = self.grant_at(root_id, path) else {
+            return Err(NexusError::NotFound(if self.sees_any(root_id) { "Folder" } else { "Storage location" }.into()).into());
+        };
+        let why = match (grant.access, need) {
+            (FolderAccess::Add, Need::Read) => "This folder only takes new files: its contents are not shown",
+            (FolderAccess::Add, _) => "This folder only takes new files: nothing in it can be changed",
+            (FolderAccess::View, _) => "This folder is shared with you to view only",
+            (FolderAccess::Edit, _) => "A shared folder itself cannot be renamed, moved or deleted by the people it is shared with",
+        };
+        Err(NexusError::PermissionDenied(why.into()).into())
+    }
+
     /// Refuses everyone except paired devices.
     pub fn require_device(&self) -> Result<&str, ApiError> {
         self.device_id.as_deref().ok_or_else(|| NexusError::PermissionDenied("Only paired devices can call this".into()).into())
@@ -108,10 +201,11 @@ pub async fn authenticate(state: &AppState, token: &str) -> Result<AuthUser> {
             local: true,
             device_id: None,
             allowed_roots: None,
+            shared: Vec::new(),
         });
     }
     match state.db.session_user(&hash_token(token)).await? {
-        Some(user) => Ok(AuthUser::person(user)),
+        Some(user) => AuthUser::person(user).with_shared(state).await,
         None => Err(NexusError::Unauthorized),
     }
 }
@@ -174,14 +268,24 @@ pub async fn authenticate_device(state: &AppState, signed: &SignedHeaders, via: 
     }
     let acting = Role::parse(&signed.request.acting_role).unwrap_or(Role::Restricted);
     let person = signed.request.acting_user.trim();
-    Ok(AuthUser {
+    let acting_roots = signed.request.acting_root_list();
+    let mut user = AuthUser {
         user_id: None,
         username: if person.is_empty() { device.name.clone() } else { format!("{person} on {}", device.name) },
         role: device.role.least(acting),
         local: false,
-        allowed_roots: narrow(device.allowed_root_list(), signed.request.acting_root_list()),
+        allowed_roots: narrow(device.allowed_root_list(), acting_roots.clone()),
         device_id: Some(device.id),
-    })
+        shared: Vec::new(),
+    }
+    .with_shared(state)
+    .await?;
+    // A folder shared with the device is for the people using it who may
+    // see that storage location on their own node.
+    if let Some(theirs) = acting_roots {
+        user.shared.retain(|g| theirs.contains(&g.root_id));
+    }
+    Ok(user)
 }
 
 /// Both limits at once: only locations allowed by each.
@@ -215,5 +319,63 @@ impl FromRequestParts<SharedState> for AuthUser {
             return Ok(authenticate_device(state, &signed, &via).await?);
         }
         Err(NexusError::Unauthorized.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grant(path: &str, access: FolderAccess) -> FolderGrant {
+        FolderGrant {
+            folder_id: path.into(),
+            root_id: "r".into(),
+            path: path.into(),
+            name: path.into(),
+            access,
+            created_by: "owner".into(),
+            member: "user:u".into(),
+        }
+    }
+
+    fn limited(shared: Vec<FolderGrant>) -> AuthUser {
+        AuthUser {
+            user_id: Some("u".into()),
+            username: "anna".into(),
+            role: Role::Editor,
+            local: false,
+            device_id: None,
+            allowed_roots: Some(vec![]),
+            shared,
+        }
+    }
+
+    #[test]
+    fn shared_folders_add_access_by_path() {
+        let u = limited(vec![grant("Family", FolderAccess::View), grant("Family/Inbox", FolderAccess::Add), grant("Work", FolderAccess::Edit)]);
+        assert!(u.may("r", "Family", Need::Read));
+        assert!(u.may("r", "family/photos/a.jpg", Need::Read));
+        assert!(!u.may("r", "Family/a.jpg", Need::Write));
+        assert!(!u.may("r", "Familyx", Need::Read));
+        assert!(!u.may("r", "", Need::Read));
+        assert!(!u.may("other", "Family", Need::Read));
+        // The innermost shared folder decides.
+        assert!(!u.may("r", "Family/Inbox", Need::Read));
+        assert!(u.may("r", "Family/Inbox", Need::Add));
+        assert!(!u.may("r", "Family/Inbox/x.txt", Need::Write));
+        // Edit: everything inside, but not the shared folder itself.
+        assert!(u.may("r", "Work", Need::Write));
+        assert!(u.may("r", "Work/a.txt", Need::Change));
+        assert!(!u.may("r", "Work", Need::Change));
+        assert!(!u.may("r", "work", Need::Change));
+        assert!(u.sees_any("r") && !u.sees_any("other"));
+    }
+
+    #[test]
+    fn whole_locations_still_count() {
+        let mut u = limited(vec![grant("Family", FolderAccess::View)]);
+        u.allowed_roots = None;
+        assert!(u.may("r", "", Need::Change));
+        assert!(u.may("elsewhere", "x", Need::Write));
     }
 }

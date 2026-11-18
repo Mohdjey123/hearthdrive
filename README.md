@@ -34,6 +34,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - [Drive health](#drive-health)
 - [Signing in safely](#signing-in-safely)
 - [Phone backup and the share menu](#phone-backup-and-the-share-menu)
+- [Shared folders and comments](#shared-folders-and-comments)
 - [Share links](#share-links)
 - [Updates](#updates)
 - [Windows installer](#windows-installer)
@@ -49,7 +50,8 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - **Extra copies and drive health.** Keep a checked copy of a folder on one or more other computers, with removed files held back for a while; watch every disk's health and free space, and find and repair files a drive has silently damaged.
 - **Phone app.** The Android app runs the same node: browse your computers, back up photos and videos, and send files to a computer from any app's **Share** menu.
 - **Share links.** Send anyone a link to a file or folder. With Send it is encrypted on your computer first, so the host never sees what it holds; links expire and can be limited to a number of downloads and protected with a password.
-- **You decide who sees what.** Accounts with roles, and per-device and per-person limits to chosen storage locations, enforced on every device.
+- **You decide who sees what.** Accounts with roles, per-device and per-person limits to chosen storage locations, and folders shared with chosen people and devices (to view, to edit, or only to add files), enforced on every device.
+- **Comments.** Leave a note on any file for the others who can open it.
 - **Updates from your own devices.** Publish a signed update on one computer and every paired computer and phone picks it up. Computers install it by themselves once their window is closed; phones ask first.
 - **Built to be safe.** Loopback-only API, signed requests between devices, Argon2id passwords, two-step sign-in and passkeys, locking accounts and blocking lost devices, path validation against traversal and link escapes, and a security log.
 
@@ -69,6 +71,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Backups | Scheduled snapshots of a folder on a paired computer, each content stored once by BLAKE3; keep rules (latest, daily, weekly, monthly) with cleanup; stored contents read back and repaired; browse and restore any snapshot, beside or over the original; encrypted with a recovery key, and openable from another computer |
 | Copies | A one-way, checked copy of a folder on one or more paired computers ("2 copies", "3 copies"); files removed here kept on the copy for a chosen time and brought back on request; copies read back weekly and repaired; a check for room before starting |
 | Drive health | Windows' health verdict for every disk (temperature, wear and error counts where Windows allows); free-space warnings; storage that goes missing or comes back; a monthly read of every file against its BLAKE3 hash to find silent damage, repaired from an extra copy or a backup; the same view of your other devices; a text report |
+| Shared folders | A folder shared with people on a computer or with paired devices, on top of the storage they may see: view, edit, or add files only (a drop folder that shows nothing and never replaces a file); never beyond someone's role; follows the folder when NEXUS renames or moves it; "Shared with you" in Files and on Sharing; comments on files for everyone who can open them |
 | Share links | Links to a file or folder (sent as a zip) that anyone can open: end-to-end encrypted through [Send](https://github.com/timvisee/send) (AES-GCM, key only in the link) with expiry, a download limit and an optional password, or unencrypted through temp.sh for larger files; take a link down at any time; uploads appear under Transfers |
 | Updates | Signed packages (Ed25519 over the version, size and BLAKE3 hash) passed between paired devices; computers keep packages for every platform to pass on; Windows installs by itself when its window is closed and nothing is copying, Android opens the system installer |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices; locked accounts; two-step sign-in turned off for someone who lost their phone |
@@ -227,13 +230,24 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 * **Nothing is removed.** Deleting a photo on the phone keeps the copy on the computer. Deleting the copy on the computer does not make the phone send it again. Files already on the computer with the same name and size (after reinstalling the app, say) are not sent twice.
 * **Share to NEXUS.** In any app, choose **Share** → **NEXUS** for files, photos or text. NEXUS asks which computer and folder to send them to; the transfer appears under **Transfers**. **Later** keeps them in the app until you send or discard them.
 
+## Shared folders and comments
+
+* **Share a folder.** An owner or administrator selects a folder in **Files** and chooses **Share with people** (the people icon), then picks people on this computer or paired devices and what each may do: **Can view** (open and download), **Can edit** (add, change and delete inside it) or **Add files only**. **Sharing** lists every shared folder with its members; **Edit** changes them or stops sharing. The files themselves never move.
+* **What sharing adds.** A shared folder adds to the storage locations someone may see; it never takes anything away and never goes beyond their role: a viewer given **Can edit** still only views, and owners, administrators and anyone not limited to some storage see everything already (the dialog says so). To give someone only a few folders, limit them to no storage under **Settings** → **People**, then share the folders with them.
+* **Shared with you.** Folders shared with you appear next to the storage locations in **Files** (with a people icon) and under **Sharing**. Inside one, the path starts at the shared folder, and the badge says what you may do. Members can't rename, move or delete the shared folder itself; search, recent files, trash and live updates include what is inside it.
+* **Drop folders.** **Add files only** turns a folder into a drop box: members upload files and make folders but see nothing that is in it, and nothing is replaced; a file with a name already there is saved as "name (1)". Their role must allow adding files (editor or contributor).
+* **Devices.** A folder shared with a paired device is open to the people using it, as far as their own limits on their computer allow.
+* **When it follows the folder.** Renaming or moving a shared folder (or a folder above it) in NEXUS keeps it shared. If it is renamed or moved in Explorer, **Sharing** marks it **Folder not found**; share it again under its new name.
+* **People outside your devices.** NEXUS keeps its API off the internet, so it has no upload links for strangers. To send files to someone outside, use a share link (below); to collect files from people, give them an account limited to a drop folder.
+* **Comments.** The **Properties** panel of a file or folder has comments for everyone who can open it, including viewers (Ctrl+Enter posts). Authors delete their own comments; owners and administrators can delete any. Comments stay with the file through renames, moves and the trash, and go when it is deleted for good. They work on paired devices' files too.
+
 ## Share links
 
-* **Make a link.** In **Files**, select a file or folder and choose **Share a link**. Pick how long it works (up to 3 days on the public Send service) and how many downloads it allows, and optionally a password. NEXUS uploads it in the background; the link appears in the dialog and under **Shares**, ready to copy. A folder is sent as one zip file.
+* **Make a link.** In **Files**, select a file or folder and choose **Share a link**. Pick how long it works (up to 3 days on the public Send service) and how many downloads it allows, and optionally a password. NEXUS uploads it in the background; the link appears in the dialog and under **Sharing**, ready to copy. A folder is sent as one zip file.
 * **Encrypted with Send.** The file is encrypted on the computer that holds it, with a new random key for every link. The key is the part of the link after `#`, which browsers never send to a server, so the Send service stores only data it cannot read. The recipient's browser decrypts it. A password is never stored by NEXUS; it is turned into the key the service checks before a download.
-* **Which Send service.** By default the public instance at send.vis.ee (files up to 2.5 GB). An owner or administrator can point NEXUS at another Send instance, including one you host, under **Shares** → **Send service**.
+* **Which Send service.** By default the public instance at send.vis.ee (files up to 2.5 GB). An owner or administrator can point NEXUS at another Send instance, including one you host, under **Sharing** → **Send service**.
 * **temp.sh.** For larger files (up to 4 GB, 3 days) NEXUS can use temp.sh instead. It is **not encrypted**: the service can read what you upload, and the link cannot be taken down early. Use it only for files that are not private.
-* **Take a link down.** On **Shares**, the bin deletes the file from Send at once. Links stop working by themselves when they expire or run out of downloads.
+* **Take a link down.** On **Sharing**, the bin deletes the file from Send at once. Links stop working by themselves when they expire or run out of downloads.
 * **On the phone.** Share files on your computers the same way; the computer holding the file does the encrypting and uploading, and the phone offers its share sheet to send the link.
 * **Who can share.** Owners, administrators and editors. Owners and administrators see every link made on a computer; everyone else sees their own. People limited to some storage can share only from it.
 
@@ -286,7 +300,7 @@ Following the product spec's phases. Each phase ships a working application.
 - [x] **Phase 3 — Android:** native app with the node built in, QR pairing, remote browsing, previews, downloads, uploads
 - [x] **Phase 4 — Multi-node storage:** search across all devices, copying files and folders between devices, resumable uploads and copies
 - [x] **Phase 5 — Synchronization:** one-way and two-way folder sync, conflict copies, version history (no real-time change journal yet: devices are checked every five minutes)
-- [x] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access, end-to-end encrypted share links, two-step sign-in, passkeys, locked accounts and blocked devices
+- [x] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access, shared folders and drop folders, comments, end-to-end encrypted share links, two-step sign-in, passkeys, locked accounts and blocked devices
 - [ ] **Phase 7 — Release:** Windows installer, start-with-Windows and updates between your devices are done; a store-signed Android release is not
 
 ## Documentation

@@ -186,6 +186,7 @@ fn signing_in(user: &User) -> AuthUser {
         local: false,
         device_id: None,
         allowed_roots: None,
+        shared: Vec::new(),
     }
 }
 

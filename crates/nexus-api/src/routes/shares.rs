@@ -143,7 +143,7 @@ pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Jso
     user.require(Action::Read)?;
     user.require(Action::Write)?;
     let file = s.db.get_file(&req.file_id).await?;
-    user.require_root(&file.root_id)?;
+    user.require_access(&file.root_id, &file.relative_path, crate::auth::Need::Read)?;
     let root = s.db.get_root(&file.root_id).await?;
     s.storage.ensure_online(&root)?;
     if !file.is_dir && file.size <= 0 {

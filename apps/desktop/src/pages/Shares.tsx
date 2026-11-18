@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, Link2, Lock, Settings2, Share2, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react'
-import { api, fileApi, isMobile, peerPrefix, thisDevice, type ShareLink } from '../services/api'
+import { Copy, FolderOpen, Link2, Lock, Monitor, Pencil, Settings2, Share2, ShieldAlert, ShieldCheck, Trash2, User, Users } from 'lucide-react'
+import { api, fileApi, isMobile, peerPrefix, thisDevice, type SharedFolder, type ShareLink } from '../services/api'
+import { navigate } from '../hooks/useRoute'
+import { useSession } from '../stores/session'
+import { AccessBadge, ACCESS, ShareFolderDialog } from '../components/FolderSharing'
 import { useResource } from '../hooks/useResource'
 import { formatBytes, formatRelative } from '../lib/format'
 import { copyText } from '../components/Pairing'
@@ -154,6 +157,110 @@ function SourceLinks({ source, showName }: { source: Source; showName: boolean }
   )
 }
 
+const heading = 'px-1 pb-2 text-[12px] font-semibold tracking-wide text-muted uppercase'
+
+const where = (f: { root: { name: string }; path: string }) => (f.path ? `${f.root.name} / ${f.path}` : f.root.name)
+
+/** Folders others shared with the person signed in. */
+function SharedWithYou() {
+  const mine = useResource(() => api.sharedWithMe(), [])
+  const list = mine.data ?? []
+  if (list.length === 0) return null
+  return (
+    <section>
+      <h2 className={heading}>Shared with you</h2>
+      <ul className="divide-y divide-line rounded-lg border border-line bg-panel">
+        {list.map((s) => (
+          <li key={s.id} className="flex items-center gap-3 px-4 py-3 md:px-5">
+            <Users className="size-4 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate font-medium">{s.name}</span>
+                <AccessBadge access={s.access} />
+              </div>
+              <div className="mt-0.5 text-[12px] text-subtle">Shared by {s.shared_by} · {ACCESS[s.access].hint}</div>
+            </div>
+            <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => navigate('files', { root: s.root.id, path: s.path })}>
+              Open
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/** Every shared folder on this computer, for owners and administrators. */
+function SharedFolders() {
+  const folders = useResource(() => api.sharedFolders(), [])
+  const [editing, setEditing] = useState<SharedFolder | null>(null)
+  const list = folders.data ?? []
+  return (
+    <section>
+      <h2 className={heading}>Shared folders</h2>
+      {folders.error ? (
+        <ErrorNote>{folders.error.message}</ErrorNote>
+      ) : !folders.data ? (
+        <Spinner />
+      ) : list.length === 0 ? (
+        <p className="px-1 text-[12.5px] text-subtle">
+          No folders are shared. To share one with people on this computer or with paired devices, select it in Files and choose
+          Share with people.
+        </p>
+      ) : (
+        <ul className="divide-y divide-line rounded-lg border border-line bg-panel">
+          {list.map((f) => (
+            <li key={f.id} className="px-4 py-3 md:px-5">
+              <div className="flex items-center gap-3">
+                <Users className="size-4 shrink-0 text-accent" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium">{f.name}</span>
+                    {f.path && !f.file_id && <Badge tone="warn">Folder not found</Badge>}
+                  </div>
+                  <div className="mt-0.5 truncate text-[12px] text-subtle">
+                    {where(f)} · by {f.created_by} {formatRelative(f.created_at)}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <IconButton label="Open in Files" onClick={() => navigate('files', { root: f.root.id, path: f.path })}>
+                    <FolderOpen className="size-4" />
+                  </IconButton>
+                  <Button size="sm" icon={<Pencil className="size-3.5" />} onClick={() => setEditing(f)}>Edit</Button>
+                </div>
+              </div>
+              {f.members.length === 0 ? (
+                <p className="mt-2 pl-7 text-[12px] text-subtle">Not shared with anyone at the moment.</p>
+              ) : (
+                <ul className="mt-2 flex flex-wrap gap-1.5 pl-7">
+                  {f.members.map((m) => (
+                    <li
+                      key={m.member}
+                      title={m.note ?? ACCESS[m.access].hint}
+                      className="flex items-center gap-1.5 rounded-md border border-line bg-elevated px-2 py-0.5 text-[12px]"
+                    >
+                      {m.kind === 'device' ? <Monitor className="size-3 text-subtle" /> : <User className="size-3 text-subtle" />}
+                      {m.name}
+                      <span className={m.note ? 'text-warn' : 'text-subtle'}>· {ACCESS[m.access].label.toLowerCase()}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {editing && (
+        <ShareFolderDialog
+          target={{ root_id: editing.root.id, path: editing.path, name: editing.name }}
+          onClose={() => setEditing(null)}
+          onSaved={folders.reload}
+        />
+      )}
+    </section>
+  )
+}
+
 function ServiceSettings() {
   const services = useResource(() => api.shareServices(), [])
   const [open, setOpen] = useState(false)
@@ -204,6 +311,8 @@ function ServiceSettings() {
 }
 
 export function Shares() {
+  const { phase } = useSession()
+  const manager = phase.kind === 'ready' && (phase.me.role === 'owner' || phase.me.role === 'administrator')
   const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'))
   const peers = (devices.data ?? []).filter((d) => !d.is_local && d.online)
   const sources: Source[] = [
@@ -213,10 +322,17 @@ export function Shares() {
   return (
     <div>
       <PageHeader
-        title="Shares"
-        subtitle="Links anyone can download your files with, until they expire"
+        title="Sharing"
+        subtitle="Folders shared with people and devices, and links anyone can download with until they expire"
         actions={!isMobile() && <ServiceSettings />}
       />
+      {!isMobile() && (
+        <div className="mb-8 space-y-8">
+          <SharedWithYou />
+          {manager && <SharedFolders />}
+        </div>
+      )}
+      {!isMobile() && <h2 className={heading}>Links</h2>}
       {devices.loading && !devices.data ? (
         <Spinner />
       ) : sources.length === 0 ? (

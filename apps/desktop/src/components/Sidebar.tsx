@@ -19,7 +19,7 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
   { page: 'copies', label: 'Copies', icon: Copy },
   { page: 'backups', label: 'Backups', icon: History },
   { page: 'backup', label: 'Backup', icon: ImageUp },
-  { page: 'shares', label: 'Shares', icon: Link2 },
+  { page: 'shares', label: 'Sharing', icon: Link2 },
   { page: 'transfers', label: 'Transfers', icon: ArrowUpDown },
   { page: 'settings', label: 'Settings', icon: Settings },
 ]

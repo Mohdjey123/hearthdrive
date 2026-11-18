@@ -14,6 +14,7 @@ mod security;
 mod sessions;
 mod settings;
 mod shares;
+mod sharing;
 mod snapshots;
 mod sync;
 mod trash;
@@ -26,6 +27,7 @@ pub use files::{RootStats, SortField, UnhashedFile};
 pub use health::{DamagedFile, HashedFile, RootCheck};
 pub use security::{Passkey, SessionInfo, TotpState, UserSecurity};
 pub use shares::{NewShare, Share};
+pub use sharing::{Comment, FolderAccess, FolderGrant, FolderMember, SharedFolder};
 pub use snapshots::{NewSnapshotSet, Schedule, Snapshot, SnapshotFile, SnapshotSet};
 pub use sync::{FileVersion, Fingerprints, HeldFile, NewSyncPair, StateChange, SyncPair, SyncState, UploadSession};
 

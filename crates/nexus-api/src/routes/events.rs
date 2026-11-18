@@ -1,4 +1,4 @@
-use crate::auth::{AuthUser, authenticate};
+use crate::auth::{AuthUser, Need, authenticate};
 use crate::state::SharedState;
 use axum::extract::State;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
@@ -88,7 +88,8 @@ async fn handle(s: SharedState, mut socket: WebSocket) {
             event = rx.recv() => match event {
                 Ok(event) => {
                     if let (Some(u), Some(root)) = (&user, event.root_id())
-                        && !u.sees_root(root) {
+                        && !u.sees_root(root)
+                        && !event.paths().iter().any(|p| u.may(root, p, Need::Read)) {
                             continue;
                         }
                     let Ok(text) = serde_json::to_string(&event) else { continue };

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown, ArrowUp, ChevronRight, CopyPlus, Download, Eye, FolderInput, FolderPlus, HardDrive, History, Info, LayoutGrid,
-  Link2, List, Monitor, Pencil, RotateCcw, Search, Trash2, Upload, WifiOff, X,
+  Link2, List, Monitor, Pencil, RotateCcw, Search, Trash2, Upload, Users, WifiOff, X,
 } from 'lucide-react'
 import { ShareDialog } from '../components/ShareDialog'
+import { AccessBadge, Comments, ShareFolderDialog } from '../components/FolderSharing'
 import {
   api, ApiError, fileApi, isMobile, isTouch, peerPrefix, thisDevice, type Device, type FileApi, type FileEntry, type FoundItem,
-  type StorageRoot, type TrashItem,
+  type RootSummary, type SharedWithMe, type TrashItem,
 } from '../services/api'
+import { useSession } from '../stores/session'
 import { subscribe } from '../services/events'
 import { useResource } from '../hooks/useResource'
 import { cached, remember } from '../lib/cache'
@@ -236,6 +238,7 @@ function Details({ file, rootName, fapi, writable, onChanged, onClose }: {
           ))}
         </dl>
         {!file.is_dir && <Versions file={file} fapi={fapi} writable={writable} onRestored={onChanged} />}
+        <Comments file={file} fapi={fapi} />
       </div>
     </aside>
   )
@@ -326,6 +329,14 @@ function TrashView({ fapi, onBack }: { fapi: FileApi; onBack: () => void }) {
   )
 }
 
+/** The innermost folder shared with the caller that holds `path`. */
+function shareAt(list: SharedWithMe[], rootId: string, path: string) {
+  const p = path.toLowerCase()
+  return list
+    .filter((s) => s.root.id === rootId && (s.path === '' || p === s.path.toLowerCase() || p.startsWith(s.path.toLowerCase() + '/')))
+    .sort((a, b) => b.path.length - a.path.length)[0]
+}
+
 export function Files({ route }: { route: Route }) {
   const deviceId = route.params.get('device') ?? ''
   const prefix = deviceId ? peerPrefix(deviceId) : ''
@@ -343,17 +354,28 @@ export function Files({ route }: { route: Route }) {
   )
   const rootList = roots.data?.prefix === prefix ? roots.data.list : undefined
   const rootsError = roots.loading ? null : roots.error
-  const rootId = route.params.get('root') ?? rootList?.[0]?.id
-  const path = route.params.get('path') ?? ''
+  const { phase } = useSession()
+  const manager = phase.kind === 'ready' && (phase.me.role === 'owner' || phase.me.role === 'administrator')
+  // Folders shared with the person signed in (or, on a paired device, with
+  // this device), in storage they cannot see as a whole.
+  const mine = useResource(() => fapi.sharedWithMe().catch(() => []), [fapi], undefined, `shared-mine:${prefix}`)
+  const sharedList = (mine.data ?? []).filter((s) => !s.sees_all)
+  const firstShare = rootList && rootList.length === 0 ? sharedList[0] : undefined
+  const rootId = route.params.get('root') ?? rootList?.[0]?.id ?? firstShare?.root.id
+  const path = route.params.get('path') ?? firstShare?.path ?? ''
   const showTrash = route.params.get('view') === 'trash'
-  const root: StorageRoot | undefined = rootList?.find((r) => r.id === rootId)
+  const fullRoot = rootList?.find((r) => r.id === rootId)
+  const share = !fullRoot && rootId ? shareAt(sharedList, rootId, path) : undefined
+  const root: RootSummary | undefined = fullRoot ?? share?.root
+  // A drop folder takes files without showing what is in it.
+  const dropOnly = share?.access === 'add'
 
   const [sort, setSort] = useState<Sort>('name')
   const [order, setOrder] = useState<'asc' | 'desc'>('asc')
   const [view, setView] = useState<'list' | 'grid'>(() => {
     try { return (localStorage.getItem('nexus.view') ?? (isTouch() ? 'grid' : 'list')) === 'grid' ? 'grid' : 'list' } catch { return 'list' }
   })
-  const listing = useListing(fapi, showTrash ? undefined : rootId, path, sort, order)
+  const listing = useListing(fapi, showTrash || dropOnly ? undefined : rootId, path, sort, order)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
@@ -367,6 +389,7 @@ export function Files({ route }: { route: Route }) {
   const [everywhere, setEverywhere] = useState(false)
   const [copying, setCopying] = useState(false)
   const [sharing, setSharing] = useState<FileEntry | null>(null)
+  const [sharingFolder, setSharingFolder] = useState<FileEntry | null>(null)
   const [dialog, setDialog] = useState<null | 'folder' | 'rename' | 'move' | 'delete'>(null)
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -435,7 +458,9 @@ export function Files({ route }: { route: Route }) {
   const items: FileEntry[] = results ?? listing.items
   const selectedItems = useMemo(() => items.filter((i) => selected.has(i.id)), [items, selected])
   const single = selectedItems.length === 1 ? selectedItems[0] : null
-  const writable = !!root && root.online && !root.read_only
+  const writable = !!root && root.online && !root.read_only && (!share || share.access === 'edit')
+  // Adding files and folders: a drop folder allows that much.
+  const canAdd = !!root && root.online && !root.read_only && (!share || share.access !== 'view')
 
   const go = (p: { root?: string; path?: string }) =>
     navigate('files', { device: deviceId || undefined, root: p.root ?? rootId, path: p.path })
@@ -496,8 +521,8 @@ export function Files({ route }: { route: Route }) {
     if (!files || !root) return
     const list = Array.from(files)
     if (!list.length) return
-    if (!writable) {
-      toast(root.read_only ? `${root.name} is read-only` : `${root.name} is offline`, 'error')
+    if (!canAdd) {
+      toast(root.read_only ? `${root.name} is read-only` : !root.online ? `${root.name} is offline` : 'This folder is shared with you to view only', 'error')
       return
     }
     enqueueUploads(root.id, where + root.name, path, list, prefix)
@@ -539,7 +564,7 @@ export function Files({ route }: { route: Route }) {
     </label>
   )
 
-  if (prefix && (rootsError || (rootList && rootList.length === 0))) {
+  if (prefix && (rootsError || (rootList && rootList.length === 0 && mine.data && sharedList.length === 0))) {
     return (
       <div className="-m-4 flex h-[calc(100%+2rem)] flex-col md:-m-6 md:h-[calc(100%+3rem)]">
         <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-panel px-3 py-2 md:px-4 md:py-0">{deviceSwitcher}</div>
@@ -568,7 +593,7 @@ export function Files({ route }: { route: Route }) {
     )
   }
 
-  if (rootList && rootList.length === 0) {
+  if (rootList && rootList.length === 0 && mine.data && sharedList.length === 0) {
     return (
       <EmptyState
         icon={<HardDrive className="size-8" />}
@@ -580,7 +605,10 @@ export function Files({ route }: { route: Route }) {
     )
   }
 
-  const crumbs = path ? path.split('/') : []
+  // Inside a shared folder, the path starts at that folder.
+  const base = share?.path ?? ''
+  const rel = share ? path.slice(base.length).replace(/^\//, '') : path
+  const crumbs = rel ? rel.split('/') : []
   const onSort = (s: Sort) => {
     if (s === sort) setOrder((o) => (o === 'asc' ? 'desc' : 'asc'))
     else {
@@ -606,6 +634,20 @@ export function Files({ route }: { route: Route }) {
             >
               {r.online ? <HardDrive className="size-3.5" /> : <WifiOff className="size-3.5 text-warn" />}
               {r.name}
+            </button>
+          ))}
+          {sharedList.map((s) => (
+            <button
+              key={s.id}
+              title={`Shared by ${s.shared_by}`}
+              onClick={() => { setQuery(''); go({ root: s.root.id, path: s.path }) }}
+              className={cx(
+                'flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] transition-colors',
+                share?.id === s.id && !results ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-hover hover:text-fg',
+              )}
+            >
+              {s.root.online ? <Users className="size-3.5" /> : <WifiOff className="size-3.5 text-warn" />}
+              {s.name}
             </button>
           ))}
         </div>
@@ -641,13 +683,13 @@ export function Files({ route }: { route: Route }) {
           </span>
         ) : (
           <nav className="flex min-w-0 items-center gap-1 text-[13px]">
-            <button className="font-medium hover:underline" onClick={() => go({ path: '' })}>{root?.name}</button>
+            <button className="font-medium hover:underline" onClick={() => go({ path: base })}>{share ? share.name : root?.name}</button>
             {crumbs.map((c, i) => (
               <span key={i} className="flex min-w-0 items-center gap-1">
                 <ChevronRight className="size-3.5 shrink-0 text-subtle" />
                 <button
                   className={cx('truncate hover:underline', i === crumbs.length - 1 && 'font-medium')}
-                  onClick={() => go({ path: crumbs.slice(0, i + 1).join('/') })}
+                  onClick={() => go({ path: [base, ...crumbs.slice(0, i + 1)].filter(Boolean).join('/') })}
                 >
                   {c}
                 </button>
@@ -655,6 +697,7 @@ export function Files({ route }: { route: Route }) {
             ))}
             {root && !root.online && <Badge tone="warn">Offline — showing last known index</Badge>}
             {root?.read_only && <Badge>Read-only</Badge>}
+            {share && <AccessBadge access={share.access} />}
           </nav>
         )}
         <div className="ml-auto flex items-center gap-1">
@@ -669,6 +712,9 @@ export function Files({ route }: { route: Route }) {
               )}
               {single && single.availability === 'online' && (
                 <IconButton label="Share a link" onClick={() => setSharing(single)}><Link2 className="size-4" /></IconButton>
+              )}
+              {single?.is_dir && manager && !prefix && !results && (
+                <IconButton label="Share with people" onClick={() => setSharingFolder(single)}><Users className="size-4" /></IconButton>
               )}
               {peers.length > 0 && (
                 <IconButton label="Copy to another device" onClick={() => setCopying(true)}><CopyPlus className="size-4" /></IconButton>
@@ -692,10 +738,10 @@ export function Files({ route }: { route: Route }) {
           <IconButton label={view === 'list' ? 'Grid view' : 'List view'} onClick={() => setView(view === 'list' ? 'grid' : 'list')}>
             {view === 'list' ? <LayoutGrid className="size-4" /> : <List className="size-4" />}
           </IconButton>
-          <Button size="sm" icon={<FolderPlus className="size-3.5" />} disabled={!writable || !!results} onClick={() => setDialog('folder')}>
+          <Button size="sm" icon={<FolderPlus className="size-3.5" />} disabled={!canAdd || !!results} onClick={() => setDialog('folder')}>
             <span className="hidden sm:inline">New folder</span>
           </Button>
-          <Button size="sm" variant="primary" icon={<Upload className="size-3.5" />} disabled={!writable || !!results} onClick={() => fileInput.current?.click()}>
+          <Button size="sm" variant="primary" icon={<Upload className="size-3.5" />} disabled={!canAdd || !!results} onClick={() => fileInput.current?.click()}>
             <span className="hidden sm:inline">Upload</span>
           </Button>
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => { upload(e.target.files); e.target.value = '' }} />
@@ -706,7 +752,7 @@ export function Files({ route }: { route: Route }) {
         <div
           className={cx('relative min-w-0 flex-1 overflow-auto', dragging && 'bg-accent-soft')}
           onDragOver={(e) => {
-            if (!writable || results) return
+            if (!canAdd || results) return
             e.preventDefault()
             setDragging(true)
           }}
@@ -725,11 +771,20 @@ export function Files({ route }: { route: Route }) {
               Drop to upload to {where}{root?.name}{path ? ` / ${path}` : ''}
             </div>
           )}
-          {listing.error && !results ? (
+          {dropOnly && !results ? (
+            <EmptyState
+              icon={<Upload className="size-7" />}
+              title={`Add files to ${crumbs.length ? crumbs[crumbs.length - 1] : share.name}`}
+              action={<Button variant="primary" icon={<Upload className="size-3.5" />} disabled={!canAdd} onClick={() => fileInput.current?.click()}>Upload</Button>}
+            >
+              {share.shared_by} shared this folder for adding files: drag files here or use Upload. What is already in it is not shown,
+              and nothing is replaced: a file with the same name gets a new one.
+            </EmptyState>
+          ) : listing.error && !results ? (
             <div className="p-6">
               <ErrorNote>{listing.error.message}</ErrorNote>
               {listing.error.status === 404 && (
-                <Button className="mt-3" size="sm" onClick={() => go({ path: '' })}>Go to {root?.name}</Button>
+                <Button className="mt-3" size="sm" onClick={() => go({ path: base })}>Go to {share ? share.name : root?.name}</Button>
               )}
             </div>
           ) : items.length === 0 ? (
@@ -737,8 +792,8 @@ export function Files({ route }: { route: Route }) {
               <div className="p-6"><Spinner /></div>
             ) : (
               <EmptyState icon={<Upload className="size-7" />} title={results ? 'No matches' : 'This folder is empty'}>
-                {!results && writable && 'Drag files here or use Upload.'}
-                {!results && root?.scanning && ' Indexing is still in progress.'}
+                {!results && canAdd && 'Drag files here or use Upload.'}
+                {!results && fullRoot?.scanning && ' Indexing is still in progress.'}
               </EmptyState>
             )
           ) : view === 'list' ? (
@@ -842,7 +897,7 @@ export function Files({ route }: { route: Route }) {
           </span>
         )}
         <span>{results ? `${results.length} results` : `${listing.total.toLocaleString()} items`}</span>
-        {root?.scanning && <span className="text-warn">Indexing…</span>}
+        {fullRoot?.scanning && <span className="text-warn">Indexing…</span>}
         <span className="ml-auto">{touch ? 'Tap to open · press and hold to select' : 'Double-click to open · Del to delete · F2 to rename'}</span>
       </div>
 
@@ -854,6 +909,12 @@ export function Files({ route }: { route: Route }) {
         prefix={preview ? prefixOf(preview) : prefix}
       />
       {sharing && <ShareDialog file={sharing} prefix={prefixOf(sharing)} onClose={() => setSharing(null)} />}
+      {sharingFolder && (
+        <ShareFolderDialog
+          target={{ root_id: sharingFolder.root_id, path: sharingFolder.relative_path, name: sharingFolder.filename }}
+          onClose={() => setSharingFolder(null)}
+        />
+      )}
       {copying && selectedItems.length > 0 && (
         <CopyDialog
           items={selectedItems}
@@ -1005,7 +1066,7 @@ function CopyDialog({ items, fromDevice, fromOf, devices, onClose, onDone }: {
 function FileDialogs({ fapi, kind, root, path, items, onClose, onDone }: {
   fapi: FileApi
   kind: null | 'folder' | 'rename' | 'move' | 'delete'
-  root: StorageRoot
+  root: RootSummary
   path: string
   items: FileEntry[]
   onClose: () => void

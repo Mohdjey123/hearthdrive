@@ -17,7 +17,7 @@ use super::audit;
 use super::sealed;
 use super::files::{TreeItem, TreeResponse, percent_encode, tree_of};
 use super::uploads::{self, NewUpload, UploadProgress};
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, Need};
 use crate::error::ApiResult;
 use crate::peers::{Acting, CALL_TIMEOUT, TRANSFER_TIMEOUT, Target, peer_error, read_body};
 use crate::state::{AppState, SharedState};
@@ -705,7 +705,7 @@ impl Mover<'_> {
             Side::Local => {
                 self.user.require(Action::Read).map_err(|e| e.0)?;
                 let file = self.s.db.get_file(file_id).await?;
-                self.user.require_root(&file.root_id).map_err(|e| e.0)?;
+                self.user.require_access(&file.root_id, &file.relative_path, Need::Read).map_err(|e| e.0)?;
                 Ok(file.into())
             }
             Side::Peer(t) => self.json(t, Method::GET, &format!("/api/v1/files/{file_id}"), None::<&()>, CALL_TIMEOUT).await,
@@ -717,7 +717,7 @@ impl Mover<'_> {
         match side {
             Side::Local => {
                 self.user.require(Action::Read).map_err(|e| e.0)?;
-                self.user.require_root(root_id).map_err(|e| e.0)?;
+                self.user.require_access(root_id, &paths::normalize_relative(path)?, Need::Read).map_err(|e| e.0)?;
                 tree_of(self.s, root_id, path).await
             }
             Side::Peer(t) => {
@@ -734,7 +734,7 @@ impl Mover<'_> {
         let made = match side {
             Side::Local => {
                 self.user.require(Action::Write).map_err(|e| e.0)?;
-                self.user.require_root(root_id).map_err(|e| e.0)?;
+                self.user.require_access(root_id, &paths::normalize_relative(parent)?, Need::Add).map_err(|e| e.0)?;
                 match self.s.storage.create_folder(root_id, parent, name).await {
                     Ok((root, rel)) => {
                         self.s.indexer.reindex_path(&root, &rel).await?;
@@ -778,7 +778,7 @@ impl Mover<'_> {
             Side::Local => {
                 self.user.require(Action::Write).map_err(|e| e.0)?;
                 let file = self.s.db.get_file(file_id).await?;
-                self.user.require_root(&file.root_id).map_err(|e| e.0)?;
+                self.user.require_access(&file.root_id, &file.relative_path, Need::Change).map_err(|e| e.0)?;
                 self.s.storage.trash(&file, self.user.user_id.as_deref()).await?;
                 self.s.events.emit(Event::FileDeleted { root_id: file.root_id.clone(), path: file.relative_path.clone() });
                 audit(self.s, self.user, "file.trashed", Some(&file.relative_path)).await;
@@ -797,7 +797,7 @@ impl Mover<'_> {
             Side::Local => {
                 self.user.require(Action::Read).map_err(|e| e.0)?;
                 let file = self.s.db.get_file(file_id).await?;
-                self.user.require_root(&file.root_id).map_err(|e| e.0)?;
+                self.user.require_access(&file.root_id, &file.relative_path, Need::Read).map_err(|e| e.0)?;
                 if file.is_dir {
                     return Err(NexusError::invalid("This is a folder"));
                 }

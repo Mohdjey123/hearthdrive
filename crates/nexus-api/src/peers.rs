@@ -365,7 +365,7 @@ async fn hello(state: &SharedState, device: &Device) -> Result<(i64, Option<Stri
 // Proxy
 
 /// API areas another node's files can be browsed through.
-const PROXY_AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares"];
+const PROXY_AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "shared-folders"];
 
 const REQUEST_HEADERS: &[HeaderName] = &[
     header::CONTENT_TYPE,
@@ -428,6 +428,7 @@ pub async fn proxy(
             local: false,
             device_id: None,
             allowed_roots: None,
+            shared: Vec::new(),
         },
         None => return Err(NexusError::Unauthorized.into()),
     };
