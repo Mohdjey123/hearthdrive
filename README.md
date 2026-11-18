@@ -18,7 +18,7 @@ Free and open source. No subscription, no third-party storage, nothing exposed t
 
 Every computer you install NEXUS on becomes a storage node: it indexes the folders and drives you choose (in place, nothing is moved or uploaded anywhere) and serves them to your other devices. Devices pair with a link or a QR code and talk over end-to-end encrypted peer-to-peer connections, from any network, with nothing else to install.
 
-> **Status:** Phases 0–6 are done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, encrypted share links, and the Android app with photo backup. Auto-update and a store-signed Android build are next (see [Roadmap](#roadmap)).
+> **Status:** Phases 0–6 are done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, encrypted share links, the Android app with photo backup, and updates that spread between your own devices. A store-signed Android build is next (see [Roadmap](#roadmap)).
 
 ## Contents
 
@@ -31,6 +31,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - [Sync and versions](#sync-and-versions)
 - [Phone backup and the share menu](#phone-backup-and-the-share-menu)
 - [Share links](#share-links)
+- [Updates](#updates)
 - [Windows installer](#windows-installer)
 - [Android app](#android-app)
 - [Roadmap](#roadmap)
@@ -44,6 +45,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - **Phone app.** The Android app runs the same node: browse your computers, back up photos and videos, and send files to a computer from any app's **Share** menu.
 - **Share links.** Send anyone a link to a file or folder. With Send it is encrypted on your computer first, so the host never sees what it holds; links expire and can be limited to a number of downloads and protected with a password.
 - **You decide who sees what.** Accounts with roles, and per-device and per-person limits to chosen storage locations, enforced on every device.
+- **Updates from your own devices.** Publish a signed update on one computer and every paired computer and phone picks it up. Computers install it by themselves once their window is closed; phones ask first.
 - **Built to be safe.** Loopback-only API, signed requests between devices, Argon2id passwords, path validation against traversal and link escapes, and an audit log.
 
 ## What works today
@@ -60,6 +62,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Across devices | Browse, search, preview, stream, download, upload, rename, move and trash files on a paired device, relayed by your own node with signed requests; background copies of files and folders that resume after a dropped connection |
 | Sync | One-way and two-way folder sync between devices; conflict copies; removals go to the trash; a safety stop for mass removals; the last ten versions of every replaced file |
 | Share links | Links to a file or folder (sent as a zip) that anyone can open: end-to-end encrypted through [Send](https://github.com/timvisee/send) (AES-GCM, key only in the link) with expiry, a download limit and an optional password, or unencrypted through temp.sh for larger files; take a link down at any time; uploads appear under Transfers |
+| Updates | Signed packages (Ed25519 over the version, size and BLAKE3 hash) passed between paired devices; computers keep packages for every platform to pass on; Windows installs by itself when its window is closed and nothing is copying, Android opens the system installer |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices |
 | Android | The same node inside the app; QR pairing; photo and video backup to a computer; NEXUS in the system share menu |
 | Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; a strict Content Security Policy on the web interface; user content and everything shown from a paired device served with `CSP: sandbox`; origin check on the live event stream; per-person limits enforced on downloads too; phones accept first-run setup only from the app itself and keep their data out of Android backups; audit log |
@@ -170,6 +173,19 @@ How it works: every connection is QUIC with TLS 1.3, authenticated with the two 
 * **On the phone.** Share files on your computers the same way; the computer holding the file does the encrypting and uploading, and the phone offers its share sheet to send the link.
 * **Who can share.** Owners, administrators and editors. Owners and administrators see every link made on a computer; everyone else sees their own. People limited to some storage can share only from it.
 
+## Updates
+
+Updates do not come from a download server. They are published on one of your computers and spread between your own devices over the same encrypted connections they already use.
+
+* **Publishing.** `scripts/release.sh 0.1.3 notes.md` sets the version, builds the Windows installer and the Android APK, signs both with the update key and adds them to this computer's NEXUS. `--github` also creates a GitHub release. The first time, make the key with `target/release/nexus-release keygen` and put its public key in `TRUSTED_KEYS` (`crates/nexus-devices/src/release.rs`).
+* **Spreading.** Every device asks its online paired devices what they hold every 30 minutes (or at once with **Settings** → **Updates** → **Check now**) and fetches anything newer. Computers keep the packages for every platform so they can pass them on; phones keep only their own.
+* **Checking.** A package is kept, offered or installed only if it is signed with a key built into the app and matches the signed size and BLAKE3 hash, checked again right before installing. A paired device can hold an update back, but it cannot change one or roll a device back to an older version.
+* **Installing on Windows.** A banner offers **Install now**. With **Install updates automatically** on (the default), the update installs by itself once the window is closed and no copy or sync is running. The installer stops the service, replaces the files and starts the service again. MSI installs and development builds are not updated this way.
+* **Installing on Android.** The app shows the same banner; **Install now** opens Android's installer, which asks you to confirm (the first time, Android asks you to allow NEXUS to install apps). Updates install over the existing app only when they are signed with the same Android key, so build releases on the same computer.
+* **The update key** is at `~/.nexus-signing/update-key` (or `NEXUS_UPDATE_KEY`). Anyone with that file can publish updates to all your devices, so keep it private. Keep a copy somewhere safe too: without it no further updates can be made, and devices would have to be updated by hand with a build that trusts a new key.
+
+Versions before 0.1.2 cannot update themselves: install 0.1.2 by hand once on each device.
+
 ## Windows installer
 
 ```bash
@@ -207,7 +223,7 @@ Following the product spec's phases. Each phase ships a working application.
 - [x] **Phase 4 — Multi-node storage:** search across all devices, copying files and folders between devices, resumable uploads and copies
 - [x] **Phase 5 — Synchronization:** one-way and two-way folder sync, conflict copies, version history (no real-time change journal yet: devices are checked every five minutes)
 - [x] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access, end-to-end encrypted share links
-- [ ] **Phase 7 — Release:** Windows installer and start-with-Windows are done; auto-update and a store-signed Android release are not
+- [ ] **Phase 7 — Release:** Windows installer, start-with-Windows and updates between your devices are done; a store-signed Android release is not
 
 ## Documentation
 

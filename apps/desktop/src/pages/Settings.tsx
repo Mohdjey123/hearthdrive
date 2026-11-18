@@ -6,6 +6,7 @@ import { useResource } from '../hooks/useResource'
 import { useSession } from '../stores/session'
 import { useTheme, type ThemePref } from '../stores/theme'
 import { formatDuration } from '../lib/format'
+import { UpdateSettings } from '../components/Updates'
 import { Badge, Button, ErrorNote, Field, Input, Modal, PageHeader, Panel, Spinner, cx } from '../components/ui'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -431,6 +432,10 @@ export function Settings() {
         ) : (
           <Spinner />
         )}
+      </Panel>
+
+      <Panel title="Updates" className="mb-4">
+        <UpdateSettings />
       </Panel>
 
       <Panel title="About">

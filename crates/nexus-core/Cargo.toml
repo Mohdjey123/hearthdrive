@@ -9,6 +9,10 @@ license.workspace = true
 name = "nexus-service"
 path = "src/main.rs"
 
+[[bin]]
+name = "nexus-release"
+path = "src/bin/nexus-release.rs"
+
 [dependencies]
 nexus-api = { workspace = true }
 nexus-common = { workspace = true }

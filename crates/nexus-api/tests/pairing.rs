@@ -27,6 +27,12 @@ struct Node {
     inbox: std::path::PathBuf,
 }
 
+/// The update key test nodes trust: `(secret, public)`.
+fn update_key() -> &'static (String, String) {
+    static KEY: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    KEY.get_or_init(nexus_devices::release::generate_key)
+}
+
 async fn node(name: &str) -> Node {
     node_with(name, false).await
 }
@@ -58,7 +64,8 @@ async fn node_with(name: &str, phone: bool) -> Node {
         identity,
         NetRuntime::new(p2p, true),
     )
-    .with_phone_dirs(phone.then(|| media.clone()), phone.then(|| inbox.clone())));
+    .with_phone_dirs(phone.then(|| media.clone()), phone.then(|| inbox.clone()))
+    .with_update_keys(vec![update_key().1.clone()]));
     let app = nexus_api::router(state.clone(), None);
     nexus_api::p2p::spawn_server(state.clone(), app.clone());
     nexus_api::spawn_sync(state.clone());
@@ -867,4 +874,82 @@ async fn phone_backup_and_share() {
     assert!(!phone.inbox.join("note.txt").exists());
     let (_, waiting) = phone.call(Method::GET, "/shared", None).await;
     assert_eq!(waiting, json!([]));
+}
+
+/// Signs `package` as a release and adds it to `node`'s update store.
+fn publish(node: &Node, platform: &str, version: &str, package: &[u8]) {
+    use nexus_devices::release::{Release, SignedRelease};
+    let release = Release {
+        platform: platform.into(),
+        version: version.into(),
+        file: format!("NEXUS-Cloud_{version}"),
+        size: package.len() as u64,
+        blake3: blake3::hash(package).to_hex().to_string(),
+        notes: "Better things".into(),
+        published_at: 1,
+    };
+    let signed = SignedRelease::sign(&release, &update_key().0).unwrap();
+    let file = node.storage.path().join(format!("{platform}-{version}"));
+    std::fs::write(&file, package).unwrap();
+    nexus_api::update_store::import(&node.state.data_dir, &signed, &file, &node.state.update_keys).unwrap();
+}
+
+#[tokio::test]
+async fn updates_spread_between_paired_devices() {
+    let pc = node("pc").await;
+    let laptop = node("laptop").await;
+    laptop.pair_with(&pc).await;
+
+    let phone_package = b"pretend android package ".repeat(4000);
+    publish(&pc, "android-aarch64", "9.9.9", &phone_package);
+    let windows_package = b"pretend windows installer ".repeat(3000);
+    publish(&pc, "windows-x86_64", "9.9.8", &windows_package);
+
+    // Only paired devices may fetch packages.
+    let (s, _) = pc.call(Method::GET, "/peer/updates", None).await;
+    assert_eq!(s, 403);
+    let (s, _) = pc.call(Method::GET, "/peer/updates/android-aarch64", None).await;
+    assert_eq!(s, 403);
+
+    // The laptop asks the computer and keeps both packages, to install
+    // its own and pass the other on.
+    nexus_api::check_updates(&laptop.state).await;
+    let (_, status) = laptop.call(Method::GET, "/updates", None).await;
+    assert_eq!(status["error"], Value::Null, "{status}");
+    let carried: Vec<String> = status["carried"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| format!("{} {}", r["platform"].as_str().unwrap(), r["version"].as_str().unwrap()))
+        .collect();
+    assert_eq!(carried, ["windows-x86_64 9.9.8", "android-aarch64 9.9.9"]);
+    let kept = |platform: &str| std::fs::read(nexus_api::update_store::package_path(&laptop.state.data_dir, platform)).unwrap();
+    assert_eq!(kept("android-aarch64"), phone_package);
+    assert_eq!(kept("windows-x86_64"), windows_package);
+
+    if nexus_devices::release::this_platform() == Some("windows-x86_64") {
+        assert_eq!(status["available"]["version"], "9.9.8");
+        assert_eq!(status["available"]["notes"], "Better things");
+        // A development build never installs anything.
+        assert_eq!(status["install"], "none");
+        let (s, _) = laptop.call(Method::POST, "/updates/install", None).await;
+        assert_eq!(s, 400);
+    }
+
+    // Automatic installs can be turned off by the owner.
+    let (s, v) = laptop.call(Method::PUT, "/updates/settings", Some(json!({"auto_install": false}))).await;
+    assert_eq!((s, &v["auto_install"]), (200, &json!(false)));
+
+    // Nothing newer: checking again changes nothing. A newer release on
+    // the laptop flows back to the computer.
+    nexus_api::check_updates(&laptop.state).await;
+    publish(&laptop, "android-aarch64", "10.0.0", b"newer");
+    nexus_api::check_updates(&pc.state).await;
+    let (_, status) = pc.call(Method::GET, "/updates", None).await;
+    assert!(status["carried"].as_array().unwrap().iter().any(|r| r["version"] == "10.0.0"), "{status}");
+
+    // A package changed after it arrived is not passed on.
+    std::fs::write(nexus_api::update_store::package_path(&pc.state.data_dir, "android-aarch64"), b"tampered and longer").unwrap();
+    let (_, status) = pc.call(Method::GET, "/updates", None).await;
+    assert!(!status["carried"].as_array().unwrap().iter().any(|r| r["platform"] == "android-aarch64"), "{status}");
 }

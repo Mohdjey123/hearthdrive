@@ -278,11 +278,41 @@ export interface BackupStatus {
 
 export interface SharedFile { name: string; size: number }
 
+export interface UpdateRelease {
+  platform: string
+  version: string
+  file: string
+  size: number
+  notes: string
+  published_at: number
+}
+
+export interface UpdateStatus {
+  version: string
+  platform: string | null
+  /** A newer version for this device, ready to install. */
+  available: UpdateRelease | null
+  /** `service`: this computer installs it; `app`: Android's installer; `none`. */
+  install: 'service' | 'app' | 'none'
+  install_note: string | null
+  package_path: string | null
+  auto_install: boolean
+  can_configure: boolean
+  checking: boolean
+  downloading: string | null
+  last_checked: number | null
+  error: string | null
+  /** Packages this device keeps and passes on to your other devices. */
+  carried: UpdateRelease[]
+}
+
 /** The Android app's bridge (phones only). */
 interface AndroidBridge {
   hasMediaAccess(): boolean
   requestMediaAccess(): void
   openAppSettings(): void
+  /** Opens Android's installer for the node's verified update package. */
+  installUpdate?(path: string): 'started' | 'permission' | 'missing'
 }
 
 export function androidBridge(): AndroidBridge | null {
@@ -548,6 +578,10 @@ export const api = {
   removeSync: (id: string) => request<void>('DELETE', `/sync/${id}`),
   runSync: (id: string) => request<void>('POST', `/sync/${id}/run`),
 
+  updates: () => request<UpdateStatus>('GET', '/updates'),
+  checkUpdates: () => request<UpdateStatus>('POST', '/updates/check'),
+  setAutoUpdate: (auto_install: boolean) => request<UpdateStatus>('PUT', '/updates/settings', { auto_install }),
+  installUpdate: () => request<UpdateRelease>('POST', '/updates/install'),
   autostart: () => request<{ supported: boolean; enabled: boolean }>('GET', '/system/autostart'),
   setAutostart: (enabled: boolean) => request<{ supported: boolean; enabled: boolean }>('PUT', '/system/autostart', { enabled }),
   removeDevice: (id: string) => request<void>('DELETE', `/devices/${id}`),

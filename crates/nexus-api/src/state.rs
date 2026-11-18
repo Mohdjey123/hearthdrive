@@ -54,6 +54,10 @@ pub struct AppState {
     /// First-run setup needs the local token (phones, where any app can
     /// reach the loopback API).
     pub setup_needs_token: bool,
+    /// Update packages passed between devices, and installing them.
+    pub updates: crate::routes::updates::UpdateControl,
+    /// Keys whose signed releases this node accepts.
+    pub update_keys: Vec<String>,
 }
 
 impl AppState {
@@ -93,12 +97,21 @@ impl AppState {
             share_inbox: None,
             backup: Default::default(),
             setup_needs_token: false,
+            updates: Default::default(),
+            update_keys: nexus_devices::release::TRUSTED_KEYS.iter().map(|k| k.to_string()).collect(),
         }
     }
 
     /// Only the app holding the local token may complete first-run setup.
     pub fn with_setup_token_required(mut self, required: bool) -> Self {
         self.setup_needs_token = required;
+        self
+    }
+
+    /// Accepts releases signed by these keys instead of the built-in ones
+    /// (tests).
+    pub fn with_update_keys(mut self, keys: Vec<String>) -> Self {
+        self.update_keys = keys;
         self
     }
 

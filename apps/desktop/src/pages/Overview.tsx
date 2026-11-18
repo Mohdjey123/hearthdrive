@@ -40,6 +40,10 @@ const ACTIONS: Record<string, string> = {
   'share.created': 'Shared a link',
   'share.deleted': 'Took down a link',
   'share.service.changed': 'Changed Send service',
+  'update.received': 'Received an update',
+  'update.installing': 'Installing an update',
+  'updates.auto.enabled': 'Automatic updates on',
+  'updates.auto.disabled': 'Automatic updates off',
 }
 
 export function rootTone(r: StorageRoot): 'online' | 'offline' | 'busy' | 'error' {

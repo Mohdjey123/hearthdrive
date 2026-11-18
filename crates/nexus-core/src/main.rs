@@ -2,6 +2,10 @@
 //!
 //! Runs independently of the desktop window: closing the UI never stops the
 //! storage server.
+//!
+//! Release builds on Windows have no console window: the service is started
+//! by the app, at sign-in and by the installer, and logs to files.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use nexus_core::{Config, init_logging, run};
 

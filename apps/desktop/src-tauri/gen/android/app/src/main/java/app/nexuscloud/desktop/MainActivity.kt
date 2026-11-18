@@ -15,6 +15,7 @@ import android.webkit.WebView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import java.io.File
 
 /**
@@ -24,7 +25,8 @@ import java.io.File
  *   small `window.NexusAndroid` bridge the page can call;
  * - receives files shared to NEXUS from other apps (the share menu) and
  *   copies them into `<cache>/shared`, where the node sends them from once
- *   the person picks a computer and folder.
+ *   the person picks a computer and folder;
+ * - hands an update the node received and verified to Android's installer.
  */
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
@@ -81,6 +83,16 @@ class MainActivity : TauriActivity() {
       }
     }
 
+    /**
+     * Opens Android's installer for the update package at [path], which the
+     * node verified (signature, size and hash) before keeping it. Only the
+     * node's own update package is accepted. Returns `started`,
+     * `permission` (NEXUS must first be allowed to install apps; the
+     * setting is opened) or `missing`.
+     */
+    @JavascriptInterface
+    fun installUpdate(path: String): String = this@MainActivity.installUpdate(path)
+
     /** Opens this app's page in Android settings (when the prompt was turned off). */
     @JavascriptInterface
     fun openAppSettings() {
@@ -88,6 +100,34 @@ class MainActivity : TauriActivity() {
         startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
       }
     }
+  }
+
+  // -- Updates -------------------------------------------------------------
+
+  private fun installUpdate(path: String): String {
+    val file = try { File(path).canonicalFile } catch (e: Exception) { return "missing" }
+    val root = File(applicationInfo.dataDir).canonicalFile
+    val expected = "updates" + File.separator + "android-aarch64" + File.separator + "package.apk"
+    if (!file.path.startsWith(root.path + File.separator) || !file.path.endsWith(File.separator + expected) || !file.isFile) {
+      return "missing"
+    }
+    if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+      runOnUiThread {
+        startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+      }
+      return "permission"
+    }
+    // The installer reads it through the app's file provider, which shares
+    // only the cache folder.
+    val dir = File(cacheDir, "update").apply { mkdirs() }
+    val copy = File(dir, "NEXUS-Cloud.apk")
+    file.copyTo(copy, overwrite = true)
+    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", copy)
+    val intent = Intent(Intent.ACTION_VIEW)
+      .setDataAndType(uri, "application/vnd.android.package-archive")
+      .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    runOnUiThread { startActivity(intent) }
+    return "started"
   }
 
   // -- Share menu ----------------------------------------------------------

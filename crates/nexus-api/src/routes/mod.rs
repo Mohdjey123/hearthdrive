@@ -8,6 +8,7 @@ pub mod storage;
 pub mod sync;
 pub mod system;
 pub mod transfers;
+pub mod updates;
 pub mod uploads;
 pub mod users;
 

@@ -203,6 +203,7 @@ pub async fn run_with(
     nexus_api::spawn_sync(state.clone());
     nexus_api::spawn_backup(state.clone());
     nexus_api::spawn_shares(state.clone());
+    nexus_api::spawn_updates(state.clone());
 
     // Keep the database's write-ahead log from growing without bound.
     let checkpoint_db = db.clone();
@@ -258,6 +259,10 @@ fn write_runtime(path: &Path, info: &RuntimeInfo) -> anyhow::Result<()> {
 }
 
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+    // Without a console (the Windows service) there may be no Ctrl+C to
+    // wait for: then run until stopped.
+    if tokio::signal::ctrl_c().await.is_err() {
+        std::future::pending::<()>().await;
+    }
     tracing::info!("shutting down");
 }

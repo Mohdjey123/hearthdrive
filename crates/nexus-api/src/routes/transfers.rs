@@ -182,6 +182,11 @@ impl Jobs {
         self.list.lock().unwrap().iter().filter(|j| !user.is_limited() || j.by == user.username).map(|j| j.view()).collect()
     }
 
+    /// Whether any job is queued or running.
+    pub(crate) fn busy(&self) -> bool {
+        self.list.lock().unwrap().iter().any(|j| !j.finished())
+    }
+
     pub(crate) fn find(&self, id: &str) -> Option<Arc<Job>> {
         self.list.lock().unwrap().iter().find(|j| j.id == id).cloned()
     }

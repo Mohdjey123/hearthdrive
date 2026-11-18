@@ -14,6 +14,7 @@ import { Sync } from './pages/Sync'
 import { Backup } from './pages/Backup'
 import { Shares } from './pages/Shares'
 import { ShareInbox } from './components/ShareInbox'
+import { UpdateBanner } from './components/Updates'
 import { Settings } from './pages/Settings'
 import { Setup } from './pages/Setup'
 import { Login } from './pages/Login'
@@ -27,6 +28,7 @@ function Shell() {
     <div className="safe-area flex h-full flex-col md:flex-row">
       <Sidebar current={page} />
       <main className="min-h-0 min-w-0 flex-1 overflow-auto p-4 md:p-6">
+        <UpdateBanner />
         {page === 'overview' && <Overview />}
         {page === 'files' && <Files route={route} />}
         {page === 'storage' && <Storage route={route} />}

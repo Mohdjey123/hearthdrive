@@ -6,10 +6,12 @@
 //!   plus a replay guard.
 //! * [`invite`]: the pairing link and QR payload. It carries a public key and a
 //!   one-time code, never a private key.
+//! * [`release`]: signed update packages and version numbers.
 
 mod dpapi;
 pub mod identity;
 pub mod invite;
+pub mod release;
 pub mod signing;
 
 pub use identity::{NodeIdentity, fingerprint, verify_message};

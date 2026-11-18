@@ -71,6 +71,8 @@ async fn handle(s: SharedState, mut socket: WebSocket) {
 
     let token = token.unwrap_or_default();
     let mut rx = s.events.subscribe();
+    // An open app window: updates wait until it is closed.
+    let _viewer = s.updates.viewer();
     // Signing out, a removed account or changed limits take effect here too.
     let mut recheck = tokio::time::interval(Duration::from_secs(30));
     recheck.tick().await;

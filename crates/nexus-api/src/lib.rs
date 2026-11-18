@@ -15,6 +15,12 @@ pub mod share;
 pub use routes::backup::spawn as spawn_backup;
 pub use routes::shares::spawn as spawn_shares;
 pub use routes::sync::spawn as spawn_sync;
+pub use routes::updates::{check as check_updates, spawn as spawn_updates};
+
+/// The signed update packages a node keeps and passes on.
+pub mod update_store {
+    pub use crate::routes::updates::{AUTO_INSTALL_SETTING, import, package_path, stored};
+}
 mod state;
 
 pub use state::{AppState, NodeInfo, SharedState};
@@ -52,7 +58,7 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
     frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{backup, devices, files, network, shares, storage, sync, system, transfers, uploads, users};
+    use routes::{backup, devices, files, network, shares, storage, sync, system, transfers, updates, uploads, users};
 
     let api = Router::new()
         .route("/health", get(system::health))
@@ -78,6 +84,8 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         // Called by paired devices (signed requests)
         .route("/peer/hello", get(devices::hello))
         .route("/peer/unpair", post(devices::unpair))
+        .route("/peer/updates", get(updates::peer_list))
+        .route("/peer/updates/{platform}", get(updates::peer_package))
         // Browse a paired device through this node
         .route(
             "/peers/{device_id}/proxy/{*rest}",
@@ -101,6 +109,10 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/shares/{id}", delete(shares::remove))
         .route("/users", get(users::list).post(users::create))
         .route("/users/{id}", patch(users::update).delete(users::remove))
+        .route("/updates", get(updates::status))
+        .route("/updates/check", post(updates::check_now))
+        .route("/updates/settings", axum::routing::put(updates::set_settings))
+        .route("/updates/install", post(updates::install))
         .route("/system/autostart", get(system::autostart).put(system::set_autostart))
         .route("/network", get(network::get).put(network::update))
         .route("/network/refresh", post(network::refresh))
