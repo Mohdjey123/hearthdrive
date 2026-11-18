@@ -16,6 +16,7 @@ pub use routes::backup::spawn as spawn_backup;
 pub use routes::introductions::{introduce_now as introduce_devices, spawn as spawn_introductions};
 pub use routes::shares::spawn as spawn_shares;
 pub use routes::sync::spawn as spawn_sync;
+pub use routes::transfers::spawn as spawn_transfers;
 pub use routes::updates::{check as check_updates, spawn as spawn_updates};
 
 /// The signed update packages a node keeps and passes on.
@@ -98,6 +99,11 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/transfers/copy", post(transfers::copy))
         .route("/transfers/clear", post(transfers::clear))
         .route("/transfers/{id}/cancel", post(transfers::cancel))
+        .route("/transfers/{id}/pause", post(transfers::pause))
+        .route("/transfers/{id}/resume", post(transfers::resume))
+        .route("/transfers/{id}/first", post(transfers::first))
+        .route("/transfers/{id}/retry", post(transfers::retry))
+        .route("/transfers/settings", get(transfers::settings).put(transfers::set_settings))
         .route("/sync", get(sync::list).post(sync::create))
         .route("/sync/{id}", patch(sync::update).delete(sync::remove))
         .route("/sync/{id}/run", post(sync::run))

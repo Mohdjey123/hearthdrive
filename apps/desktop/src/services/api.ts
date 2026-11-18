@@ -240,7 +240,11 @@ export interface Job {
   route: string
   by: string
   created_at: number
-  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+  status: 'queued' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled'
+  /** Why it waits (transfer hours). */
+  note: string | null
+  can_retry: boolean
+  verified: number
   files_total: number
   files_done: number
   bytes_total: number
@@ -250,6 +254,16 @@ export interface Job {
   retries: number
   started_at: number | null
   finished_at: number | null
+}
+
+export interface TransferSettings {
+  /** Transfers running at the same time (1–4). */
+  parallel: number
+  /** KB/s for all copies, syncs and backups together; 0 for no limit. */
+  limit_kbps: number
+  /** "HH:MM", local time; both null for any time. */
+  hours_start: string | null
+  hours_end: string | null
 }
 
 export interface Backup {
@@ -560,6 +574,12 @@ export const api = {
   jobs: () => request<Job[]>('GET', '/transfers'),
   cancelJob: (id: string) => request<void>('POST', `/transfers/${id}/cancel`),
   clearJobs: () => request<void>('POST', '/transfers/clear'),
+  pauseJob: (id: string) => request<void>('POST', `/transfers/${id}/pause`),
+  resumeJob: (id: string) => request<void>('POST', `/transfers/${id}/resume`),
+  runJobNext: (id: string) => request<void>('POST', `/transfers/${id}/first`),
+  retryJob: (id: string) => request<Job>('POST', `/transfers/${id}/retry`),
+  transferSettings: () => request<TransferSettings & { can_configure: boolean }>('GET', '/transfers/settings'),
+  setTransferSettings: (s: TransferSettings) => request<TransferSettings & { can_configure: boolean }>('PUT', '/transfers/settings', s),
 
   backup: () => request<BackupStatus>('GET', '/backup'),
   setBackup: (b: { device_id: string; root_id: string; path: string; sources: string[]; enabled?: boolean }) =>

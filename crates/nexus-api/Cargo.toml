@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Local time, for transfer hours.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 nexus-common = { workspace = true }
 nexus-database = { workspace = true }
 nexus-devices = { workspace = true }

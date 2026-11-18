@@ -5,6 +5,12 @@
 //! in memory or kept here. Every file goes through a resumable upload, so a
 //! dropped connection costs only a retry from where it stopped.
 //!
+//! Jobs take turns ([`TransferSettings::parallel`] at a time, first in line
+//! first), share one speed limit, can be paused, and wait outside transfer
+//! hours. Pausing lets go of the connection and the job's turn; resuming
+//! continues each file from where it stopped. A copied file whose original
+//! has a known BLAKE3 hash is checked against it.
+//!
 //! [`Mover`] holds the operations on either side; sync uses them too.
 
 use super::audit;
@@ -28,7 +34,7 @@ use nexus_storage::paths;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -48,8 +54,10 @@ const KEEP_FINISHED: usize = 100;
 pub struct JobInfo {
     /// "Copy Photos", "Sync Documents"
     pub title: String,
-    /// `queued` | `running` | `done` | `failed` | `cancelled`
+    /// `queued` | `running` | `paused` | `done` | `failed` | `cancelled`
     pub status: String,
+    /// Why a job is waiting ("Waits for transfer hours, 01:00–07:00").
+    pub note: Option<String>,
     pub files_total: u64,
     pub files_done: u64,
     pub bytes_total: u64,
@@ -59,6 +67,8 @@ pub struct JobInfo {
     pub errors: Vec<String>,
     /// Times a connection dropped and the transfer continued.
     pub retries: u32,
+    /// Files checked against the original's BLAKE3 hash after copying.
+    pub verified: u64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
 }
@@ -73,6 +83,15 @@ pub struct Job {
     pub created_at: i64,
     bytes_done: AtomicU64,
     cancelled: AtomicBool,
+    paused: AtomicBool,
+    /// Lower goes first.
+    order: AtomicI64,
+    /// Waiting for a slot / holding one.
+    wants_slot: AtomicBool,
+    holds_slot: AtomicBool,
+    /// What "Retry" sends again (copies only).
+    retry: Mutex<Option<RetryPlan>>,
+    shared: Arc<Shared>,
     info: Mutex<JobInfo>,
 }
 
@@ -84,12 +103,15 @@ pub struct JobView {
     by: String,
     created_at: i64,
     bytes_done: u64,
+    /// Failed files that "Retry" would send again.
+    can_retry: bool,
     #[serde(flatten)]
     info: JobInfo,
 }
 
 impl Job {
     fn view(&self) -> JobView {
+        let can_retry = self.finished() && self.retry.lock().unwrap().as_ref().is_some_and(|r| !r.files.is_empty());
         JobView {
             id: self.id.clone(),
             kind: self.kind,
@@ -97,6 +119,7 @@ impl Job {
             by: self.by.clone(),
             created_at: self.created_at,
             bytes_done: self.bytes_done.load(Ordering::Relaxed),
+            can_retry,
             info: self.info.lock().unwrap().clone(),
         }
     }
@@ -107,6 +130,16 @@ impl Job {
 
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Relaxed)
+    }
+
+    fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Whether the job should let go of its connection now: it was paused,
+    /// or transfer hours are over.
+    fn must_stop(&self) -> bool {
+        self.is_paused() || !self.shared.in_hours.load(Ordering::Relaxed)
     }
 
     fn bytes(&self) -> u64 {
@@ -141,16 +174,153 @@ impl Job {
     }
 }
 
+/// How transfers run: how many at once, how fast, and when.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TransferSettings {
+    /// Jobs running at the same time (1–4).
+    pub parallel: usize,
+    /// Upper speed for all copies, syncs and backups together, in KB/s; 0
+    /// for no limit.
+    pub limit_kbps: u64,
+    /// Transfers run only between these times ("HH:MM", local time); both
+    /// empty for any time. The end may be before the start (overnight).
+    #[serde(default)]
+    pub hours_start: Option<String>,
+    #[serde(default)]
+    pub hours_end: Option<String>,
+}
+
+impl Default for TransferSettings {
+    fn default() -> Self {
+        Self { parallel: 2, limit_kbps: 0, hours_start: None, hours_end: None }
+    }
+}
+
+pub const SETTINGS_KEY: &str = "transfers.settings";
+
+fn minutes(hhmm: &str) -> Option<u32> {
+    let (h, m) = hhmm.trim().split_once(':')?;
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+impl TransferSettings {
+    /// The allowed window in minutes after midnight, if there is one.
+    fn window(&self) -> Option<(u32, u32)> {
+        let start = minutes(self.hours_start.as_deref()?)?;
+        let end = minutes(self.hours_end.as_deref()?)?;
+        (start != end).then_some((start, end))
+    }
+
+    /// Whether transfers may run at `now` (minutes after midnight).
+    pub fn allows(&self, now: u32) -> bool {
+        match self.window() {
+            None => true,
+            Some((start, end)) if start < end => now >= start && now < end,
+            // Overnight, like 22:00–06:00.
+            Some((start, end)) => now >= start || now < end,
+        }
+    }
+
+    fn validate(mut self) -> Result<Self> {
+        if !(1..=4).contains(&self.parallel) {
+            return Err(NexusError::invalid("Run between 1 and 4 transfers at once"));
+        }
+        self.hours_start = self.hours_start.filter(|h| !h.trim().is_empty());
+        self.hours_end = self.hours_end.filter(|h| !h.trim().is_empty());
+        match (&self.hours_start, &self.hours_end) {
+            (None, None) => {}
+            (Some(a), Some(b)) if minutes(a).is_some() && minutes(b).is_some() && minutes(a) != minutes(b) => {}
+            _ => return Err(NexusError::invalid("Give transfer hours as two different times, like 22:00 and 07:00")),
+        }
+        Ok(self)
+    }
+
+    fn hours_note(&self) -> Option<String> {
+        Some(format!("Waits for transfer hours, {}–{}", self.hours_start.as_deref()?, self.hours_end.as_deref()?))
+    }
+}
+
+fn local_minutes() -> u32 {
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    now.hour() * 60 + now.minute()
+}
+
+/// One speed limit shared by every job: each chunk waits for its turn.
+#[derive(Default)]
+pub struct RateLimit {
+    bytes_per_sec: AtomicU64,
+    next_free: Mutex<Option<tokio::time::Instant>>,
+}
+
+impl RateLimit {
+    fn set(&self, bytes_per_sec: u64) {
+        self.bytes_per_sec.store(bytes_per_sec, Ordering::Relaxed);
+        *self.next_free.lock().unwrap() = None;
+    }
+
+    async fn take(&self, n: usize) {
+        let rate = self.bytes_per_sec.load(Ordering::Relaxed);
+        if rate == 0 || n == 0 {
+            return;
+        }
+        let at = {
+            let mut next = self.next_free.lock().unwrap();
+            let now = tokio::time::Instant::now();
+            let at = next.filter(|t| *t > now).unwrap_or(now);
+            *next = Some(at + Duration::from_secs_f64(n as f64 / rate as f64));
+            at
+        };
+        tokio::time::sleep_until(at).await;
+    }
+}
+
+/// What every job reads while it runs.
+pub struct Shared {
+    settings: Mutex<TransferSettings>,
+    limit: RateLimit,
+    /// Whether it is within transfer hours (looked at every few seconds).
+    in_hours: AtomicBool,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self { settings: Mutex::new(TransferSettings::default()), limit: RateLimit::default(), in_hours: AtomicBool::new(true) }
+    }
+}
+
 /// Copy and sync jobs on this node, newest first.
 pub struct Jobs {
     list: Mutex<Vec<Arc<Job>>>,
-    /// Jobs running at the same time; the rest wait their turn.
-    slots: tokio::sync::Semaphore,
+    /// Slots in use; jobs beyond `parallel` wait their turn.
+    running: Mutex<usize>,
+    wake: tokio::sync::Notify,
+    shared: Arc<Shared>,
+    next_order: AtomicI64,
 }
 
 impl Default for Jobs {
     fn default() -> Self {
-        Self { list: Mutex::new(Vec::new()), slots: tokio::sync::Semaphore::new(2) }
+        Self {
+            list: Mutex::new(Vec::new()),
+            running: Mutex::new(0),
+            wake: tokio::sync::Notify::new(),
+            shared: Arc::new(Shared::default()),
+            next_order: AtomicI64::new(0),
+        }
+    }
+}
+
+/// A job's turn to run; ends when dropped.
+pub struct Slot<'a> {
+    jobs: &'a Jobs,
+    job: &'a Job,
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.jobs.release(self.job);
     }
 }
 
@@ -164,6 +334,12 @@ impl Jobs {
             created_at: now_ms(),
             bytes_done: AtomicU64::new(0),
             cancelled: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
+            order: AtomicI64::new(self.next_order.fetch_add(1, Ordering::Relaxed)),
+            wants_slot: AtomicBool::new(false),
+            holds_slot: AtomicBool::new(false),
+            retry: Mutex::new(None),
+            shared: self.shared.clone(),
             info: Mutex::new(JobInfo { status: "queued".into(), title, ..Default::default() }),
         });
         let mut list = self.list.lock().unwrap();
@@ -197,26 +373,162 @@ impl Jobs {
         self.list.lock().unwrap().retain(|j| !j.finished() || (user.is_limited() && j.by != user.username));
     }
 
-    /// Waits for a free slot. Returns `None` if the job was cancelled meanwhile.
-    pub async fn start(&self, s: &AppState, job: &Job) -> Option<tokio::sync::SemaphorePermit<'_>> {
-        let permit = self.slots.acquire().await.ok()?;
-        if job.is_cancelled() {
+    pub fn settings(&self) -> TransferSettings {
+        self.shared.settings.lock().unwrap().clone()
+    }
+
+    /// Applies new settings and lets waiting jobs look again.
+    pub fn apply(&self, settings: TransferSettings) {
+        self.shared.limit.set(settings.limit_kbps.saturating_mul(1024));
+        self.shared.in_hours.store(settings.allows(local_minutes()), Ordering::Relaxed);
+        *self.shared.settings.lock().unwrap() = settings;
+        self.wake.notify_waiters();
+    }
+
+    /// Looks at the clock for transfer hours.
+    fn tick(&self) {
+        let allowed = self.shared.settings.lock().unwrap().allows(local_minutes());
+        if self.shared.in_hours.swap(allowed, Ordering::Relaxed) != allowed {
+            self.wake.notify_waiters();
+        }
+    }
+
+    /// Whether `job` is first in line among the jobs waiting to run.
+    fn next_in_line(&self, job: &Job) -> bool {
+        self.list
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|j| j.wants_slot.load(Ordering::Relaxed) && !j.is_paused() && !j.is_cancelled())
+            .min_by_key(|j| j.order.load(Ordering::Relaxed))
+            .is_some_and(|j| j.id == job.id)
+    }
+
+    /// Waits until `job` may run: not paused, within transfer hours, first
+    /// in line and a slot free. `false` if it was cancelled meanwhile.
+    async fn acquire(&self, s: &AppState, job: &Job) -> bool {
+        job.wants_slot.store(true, Ordering::Relaxed);
+        let mut shown = String::new();
+        loop {
+            let notified = self.wake.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if job.is_cancelled() {
+                job.wants_slot.store(false, Ordering::Relaxed);
+                return false;
+            }
+            let settings = self.settings();
+            let in_hours = self.shared.in_hours.load(Ordering::Relaxed);
+            {
+                let mut running = self.running.lock().unwrap();
+                if !job.is_paused() && in_hours && *running < settings.parallel && self.next_in_line(job) {
+                    *running += 1;
+                    job.holds_slot.store(true, Ordering::Relaxed);
+                    job.wants_slot.store(false, Ordering::Relaxed);
+                    return true;
+                }
+            }
+            // Say why it waits, once per change.
+            let (status, note) = if job.is_paused() {
+                ("paused", None)
+            } else if !in_hours {
+                ("queued", settings.hours_note())
+            } else {
+                ("queued", None)
+            };
+            let now = format!("{status}{note:?}");
+            if now != shown {
+                job.update(|i| i.note = note);
+                set_status(s, job, status);
+                shown = now;
+            }
+            notified.await;
+        }
+    }
+
+    fn release(&self, job: &Job) {
+        if job.holds_slot.swap(false, Ordering::Relaxed) {
+            let mut running = self.running.lock().unwrap();
+            *running = running.saturating_sub(1);
+            drop(running);
+            self.wake.notify_waiters();
+        }
+    }
+
+    /// Waits for a turn to run. Returns `None` if the job was cancelled
+    /// meanwhile.
+    pub async fn start<'a>(&'a self, s: &AppState, job: &'a Job) -> Option<Slot<'a>> {
+        if !self.acquire(s, job).await {
             set_status(s, job, "cancelled");
             return None;
         }
+        job.update(|i| i.note = None);
         set_status(s, job, "running");
-        Some(permit)
+        Some(Slot { jobs: self, job })
     }
+
+    /// Between files and after an interrupted file: if the job was paused
+    /// or transfer hours ended, gives its slot to others and waits for its
+    /// turn again. `false` if it was cancelled meanwhile.
+    pub async fn checkpoint(&self, s: &AppState, job: &Job) -> bool {
+        if job.is_cancelled() {
+            return false;
+        }
+        if !job.must_stop() {
+            return true;
+        }
+        let current = job.info.lock().unwrap().current.clone();
+        self.release(job);
+        if !self.acquire(s, job).await {
+            return false;
+        }
+        job.update(|i| {
+            i.note = None;
+            i.current = current;
+        });
+        set_status(s, job, "running");
+        true
+    }
+
+    fn pause(&self, job: &Job, on: bool) {
+        job.paused.store(on, Ordering::Relaxed);
+        self.wake.notify_waiters();
+    }
+
+    /// Puts a waiting job first in line.
+    fn move_first(&self, job: &Job) {
+        let first = self.list.lock().unwrap().iter().map(|j| j.order.load(Ordering::Relaxed)).min().unwrap_or(0);
+        job.order.store(first - 1, Ordering::Relaxed);
+        self.wake.notify_waiters();
+    }
+}
+
+/// Loads the transfer settings and keeps transfer hours current.
+pub fn spawn(s: SharedState) {
+    tokio::spawn(async move {
+        if let Ok(Some(json)) = s.db.get_setting(SETTINGS_KEY).await
+            && let Ok(settings) = serde_json::from_str::<TransferSettings>(&json)
+        {
+            s.jobs.apply(settings);
+        }
+        loop {
+            s.jobs.tick();
+            tokio::time::sleep(Duration::from_secs(15)).await;
+        }
+    });
 }
 
 pub fn set_status(s: &AppState, job: &Job, status: &str) {
     job.update(|i| {
         i.status = status.to_string();
         match status {
-            "running" => i.started_at = Some(now_ms()),
+            "running" => {
+                i.started_at.get_or_insert(now_ms());
+            }
             "done" | "failed" | "cancelled" => {
                 i.finished_at = Some(now_ms());
                 i.current = None;
+                i.note = None;
             }
             _ => {}
         }
@@ -338,15 +650,23 @@ fn file_body(file: tokio::fs::File) -> Body {
     }))
 }
 
-/// Counts bytes into the job as they pass, and stops when it is cancelled.
+/// Counts bytes into the job as they pass, keeps to the speed limit, and
+/// stops when the job is cancelled or paused.
 fn counted(body: Body, job: Arc<Job>) -> Body {
-    Body::from_stream(body.into_data_stream().map(move |chunk| {
-        if job.is_cancelled() {
-            return Err(std::io::Error::other("cancelled"));
+    Body::from_stream(body.into_data_stream().then(move |chunk| {
+        let job = job.clone();
+        async move {
+            if job.is_cancelled() {
+                return Err(std::io::Error::other("cancelled"));
+            }
+            if job.must_stop() {
+                return Err(std::io::Error::other("paused"));
+            }
+            let chunk = chunk.map_err(std::io::Error::other)?;
+            job.shared.limit.take(chunk.len()).await;
+            job.bytes_done.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+            Ok(chunk)
         }
-        let chunk = chunk.map_err(std::io::Error::other)?;
-        job.bytes_done.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-        Ok(chunk)
     }))
 }
 
@@ -566,14 +886,43 @@ impl Mover<'_> {
     /// Sends one file, continuing from where it stopped when the connection
     /// drops. Returns the file as it now exists at the destination.
     pub async fn send_file(&self, job: &Arc<Job>, from: &Side, src: &Meta, to: &Side, req: NewUpload) -> Result<Meta> {
-        self.send_from(job, &src.filename, Source::Item(from, &src.id), to, req).await
+        let source = Source::Item(from, &src.id);
+        let placed = self.send_from(job, &src.filename, &source, to, req).await?;
+        let Some(want) = src.content_hash.as_deref() else { return Ok(placed) };
+        if placed.content_hash.as_deref() == Some(want) {
+            job.update(|i| i.verified += 1);
+            return Ok(placed);
+        }
+        // Different content arrived: send it once more over the copy.
+        tracing::warn!(file = %src.filename, "copy differs from the original; sending again");
+        let (parent, name) = paths::split_parent(&placed.relative_path);
+        let again = NewUpload {
+            root_id: placed.root_id.clone(),
+            path: parent,
+            name,
+            size: src.size as u64,
+            on_conflict: Some("replace".into()),
+            modified_at: src.modified_at,
+            make_parents: true,
+        };
+        let size = src.size as u64;
+        job.set_bytes(job.bytes().saturating_sub(size));
+        let placed = self.send_from(job, &src.filename, &source, to, again).await?;
+        if placed.content_hash.as_deref() == Some(want) {
+            job.update(|i| i.verified += 1);
+            Ok(placed)
+        } else {
+            Err(NexusError::Conflict(
+                "The copy differs from the original (BLAKE3). The original may have changed while it was copied".into(),
+            ))
+        }
     }
 
     /// Sends a file that is not in any storage location (a phone's photos),
     /// read straight from disk.
     pub async fn send_disk_file(&self, job: &Arc<Job>, path: &std::path::Path, to: &Side, req: NewUpload) -> Result<Meta> {
         let name = req.name.clone();
-        self.send_from(job, &name, Source::Disk(path), to, req).await
+        self.send_from(job, &name, &Source::Disk(path), to, req).await
     }
 
     async fn open_source(&self, src: &Source<'_>, offset: u64) -> Result<Body> {
@@ -590,21 +939,22 @@ impl Mover<'_> {
     }
 
     /// The resumable sending loop.
-    async fn send_from(&self, job: &Arc<Job>, label: &str, src: Source<'_>, to: &Side, req: NewUpload) -> Result<Meta> {
+    async fn send_from(&self, job: &Arc<Job>, label: &str, src: &Source<'_>, to: &Side, req: NewUpload) -> Result<Meta> {
         let base = job.bytes();
         let size = req.size;
-        let up = self.begin(to, &req).await?;
+        let mut up = self.begin(to, &req).await?;
         let mut tries = 0;
+        let mut resumed = false;
         loop {
             if job.is_cancelled() {
                 self.abort(to, &up.id).await;
                 return Err(cancelled());
             }
             let attempt = async {
-                let offset = if tries == 0 { 0 } else { self.offset(to, &up.id).await? };
+                let offset = if resumed { self.offset(to, &up.id).await? } else { 0 };
                 job.set_bytes(base + offset);
                 if offset < size {
-                    let body = self.open_source(&src, offset).await?;
+                    let body = self.open_source(src, offset).await?;
                     self.append(to, &up.id, offset, size - offset, counted(body, job.clone())).await?;
                 }
                 self.finish(to, &up.id).await
@@ -619,8 +969,24 @@ impl Mover<'_> {
                     self.abort(to, &up.id).await;
                     return Err(cancelled());
                 }
+                Err(_) if job.must_stop() => {
+                    // Paused, or outside transfer hours: wait for the turn
+                    // to come back, then continue where it stopped.
+                    if !self.s.jobs.checkpoint(self.s, job).await {
+                        self.abort(to, &up.id).await;
+                        return Err(cancelled());
+                    }
+                    resumed = true;
+                    // After a long pause the half-sent file may have been
+                    // cleared away at the destination: start it again.
+                    if matches!(self.offset(to, &up.id).await, Err(NexusError::NotFound(_))) {
+                        up = self.begin(to, &req).await?;
+                        resumed = false;
+                    }
+                }
                 Err(e) if retryable(&e) && tries < RETRIES => {
                     tries += 1;
+                    resumed = true;
                     job.update(|i| i.retries += 1);
                     tracing::info!(file = %label, error = %e, attempt = tries, "transfer interrupted; continuing");
                     tokio::time::sleep(Duration::from_secs((1u64 << tries.min(5)).min(30))).await;
@@ -656,6 +1022,15 @@ pub struct CopyRequest {
 enum Piece {
     File(Meta),
     Folder(Meta, Vec<TreeItem>),
+}
+
+/// The files a copy could not send, to send again on "Retry".
+pub struct RetryPlan {
+    from: Side,
+    to: Side,
+    root_id: String,
+    /// Each file and the folder it goes to.
+    files: Vec<(Meta, String)>,
 }
 
 /// `POST /api/v1/transfers/copy`: starts copying files and folders to a
@@ -744,30 +1119,15 @@ async fn run_copy(s: &AppState, user: &AuthUser, job: &Arc<Job>, from: Side, to:
         }
     });
 
+    let failed = Mutex::new(Vec::new());
     let copy_one = |src: Meta, parent: String| {
         let mover = &mover;
         let from = &from;
         let to = &to;
         let root_id = &root_id;
+        let failed = &failed;
         async move {
-            job.update(|i| i.current = Some(src.filename.clone()));
-            let req = NewUpload {
-                root_id: root_id.clone(),
-                path: parent,
-                name: src.filename.clone(),
-                size: src.size as u64,
-                on_conflict: None,
-                modified_at: src.modified_at,
-                make_parents: true,
-            };
-            match mover.send_file(job, from, &src, to, req).await {
-                Ok(_) => job.update(|i| i.files_done += 1),
-                Err(e) if job.is_cancelled() => drop(e),
-                Err(e) => {
-                    job.set_bytes(job.bytes() + src.size as u64);
-                    job.fail_file(&src.filename, &e);
-                }
-            }
+            copy_file(mover, job, from, to, root_id, src, parent, failed).await;
         }
     };
 
@@ -803,12 +1163,71 @@ async fn run_copy(s: &AppState, user: &AuthUser, job: &Arc<Job>, from: Side, to:
         }
     }
 
+    *job.retry.lock().unwrap() = Some(RetryPlan { from, to, root_id, files: failed.into_inner().unwrap() });
     finish_job(s, job);
     let what = match (&first, ids.len()) {
         (Some(name), 1) => name.clone(),
         _ => format!("{} items", ids.len()),
     };
     audit(s, user, "file.copied", Some(&format!("{what}: {}", job.route))).await;
+}
+
+/// Sends one file of a copy; a failure is recorded, with the file kept for
+/// "Retry".
+#[allow(clippy::too_many_arguments)]
+async fn copy_file(
+    mover: &Mover<'_>,
+    job: &Arc<Job>,
+    from: &Side,
+    to: &Side,
+    root_id: &str,
+    src: Meta,
+    parent: String,
+    failed: &Mutex<Vec<(Meta, String)>>,
+) {
+    if !mover.s.jobs.checkpoint(mover.s, job).await {
+        return;
+    }
+    job.update(|i| i.current = Some(src.filename.clone()));
+    let req = NewUpload {
+        root_id: root_id.to_string(),
+        path: parent.clone(),
+        name: src.filename.clone(),
+        size: src.size as u64,
+        on_conflict: None,
+        modified_at: src.modified_at,
+        make_parents: true,
+    };
+    match mover.send_file(job, from, &src, to, req).await {
+        Ok(_) => job.update(|i| i.files_done += 1),
+        Err(e) if job.is_cancelled() => drop(e),
+        Err(e) => {
+            job.set_bytes(job.bytes() + src.size as u64);
+            job.fail_file(&src.filename, &e);
+            failed.lock().unwrap().push((src, parent));
+        }
+    }
+}
+
+/// Sends the files an earlier copy could not, as a new job.
+async fn run_retry(s: &AppState, user: &AuthUser, job: &Arc<Job>, plan: RetryPlan) {
+    let Some(_slot) = s.jobs.start(s, job).await else { return };
+    let mover = Mover { s, user };
+    job.update(|i| {
+        i.files_total = plan.files.len() as u64;
+        i.bytes_total = plan.files.iter().map(|(m, _)| m.size as u64).sum();
+    });
+    let failed = Mutex::new(Vec::new());
+    for (src, parent) in plan.files {
+        if job.is_cancelled() {
+            break;
+        }
+        copy_file(&mover, job, &plan.from, &plan.to, &plan.root_id, src, parent, &failed).await;
+    }
+    *job.retry.lock().unwrap() =
+        Some(RetryPlan { from: plan.from, to: plan.to, root_id: plan.root_id, files: failed.into_inner().unwrap() });
+    finish_job(s, job);
+    audit(s, user, "file.copied", Some(&format!("retry: {}", job.route))).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -828,15 +1247,145 @@ pub async fn cancel(State(s): State<SharedState>, user: AuthUser, Path(id): Path
         .filter(|j| !user.is_limited() || j.by == user.username)
         .ok_or_else(|| NexusError::NotFound("Transfer".into()))?;
     job.cancel();
-    if job.info.lock().unwrap().status == "queued" {
-        // It is waiting for a slot; it notices when it gets one.
-        s.events.emit(Event::TransferUpdated { id: job.id.clone(), status: "cancelling".into() });
+    // A waiting or paused job notices at once.
+    s.jobs.wake.notify_waiters();
+    s.events.emit(Event::TransferUpdated { id: job.id.clone(), status: "cancelling".into() });
+    Ok(StatusCode::ACCEPTED)
+}
+
+fn own_job(s: &AppState, user: &AuthUser, id: &str) -> ApiResult<Arc<Job>> {
+    user.require_person()?;
+    user.require(Action::Write)?;
+    Ok(s.jobs.find(id).filter(|j| !user.is_limited() || j.by == user.username).ok_or_else(|| NexusError::NotFound("Transfer".into()))?)
+}
+
+/// `POST /api/v1/transfers/{id}/pause`: lets go of the connection after the
+/// current chunk; the job keeps its place and its progress.
+pub async fn pause(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    let job = own_job(&s, &user, &id)?;
+    if !job.finished() {
+        s.jobs.pause(&job, true);
+        if job.info.lock().unwrap().status == "queued" {
+            set_status(&s, &job, "paused");
+        }
     }
     Ok(StatusCode::ACCEPTED)
+}
+
+/// `POST /api/v1/transfers/{id}/resume`
+pub async fn resume(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    let job = own_job(&s, &user, &id)?;
+    s.jobs.pause(&job, false);
+    if job.info.lock().unwrap().status == "paused" {
+        set_status(&s, &job, "queued");
+    }
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// `POST /api/v1/transfers/{id}/first`: runs this job next.
+pub async fn first(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    let job = own_job(&s, &user, &id)?;
+    s.jobs.move_first(&job);
+    s.events.emit(Event::TransferUpdated { id: job.id.clone(), status: job.info.lock().unwrap().status.clone() });
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// `POST /api/v1/transfers/{id}/retry`: sends the files a finished copy
+/// could not, as a new job.
+pub async fn retry(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<(StatusCode, Json<JobView>)> {
+    let old = own_job(&s, &user, &id)?;
+    if !old.finished() {
+        return Err(NexusError::Conflict("This transfer is still running".into()).into());
+    }
+    let plan = old
+        .retry
+        .lock()
+        .unwrap()
+        .take()
+        .filter(|p| !p.files.is_empty())
+        .ok_or_else(|| NexusError::invalid("Nothing to retry"))?;
+    let title = old.info.lock().unwrap().title.clone();
+    let job = s.jobs.add("copy", format!("Retry: {}", title.trim_start_matches("Retry: ")), old.route.clone(), user.username.clone());
+    let view = job.view();
+    let state = s.clone();
+    tokio::spawn(async move { run_retry(&state, &user, &job, plan).await });
+    Ok((StatusCode::ACCEPTED, Json(view)))
+}
+
+#[derive(Serialize)]
+pub struct SettingsView {
+    #[serde(flatten)]
+    settings: TransferSettings,
+    can_configure: bool,
+}
+
+/// `GET /api/v1/transfers/settings`
+pub async fn settings(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<SettingsView>> {
+    user.require_person()?;
+    Ok(Json(SettingsView { settings: s.jobs.settings(), can_configure: user.require(Action::ManageStorage).is_ok() }))
+}
+
+/// `PUT /api/v1/transfers/settings`
+pub async fn set_settings(
+    State(s): State<SharedState>,
+    user: AuthUser,
+    Json(body): Json<TransferSettings>,
+) -> ApiResult<Json<SettingsView>> {
+    user.require_person()?;
+    user.require(Action::ManageStorage)?;
+    let settings = body.validate()?;
+    s.db.set_setting(SETTINGS_KEY, &serde_json::to_string(&settings).map_err(NexusError::internal)?).await?;
+    s.jobs.apply(settings.clone());
+    audit(&s, &user, "transfers.settings", None).await;
+    Ok(Json(SettingsView { settings, can_configure: true }))
 }
 
 pub async fn clear(State(s): State<SharedState>, user: AuthUser) -> ApiResult<StatusCode> {
     user.require_person()?;
     s.jobs.clear_finished(&user);
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hours(a: &str, b: &str) -> TransferSettings {
+        TransferSettings { hours_start: Some(a.into()), hours_end: Some(b.into()), ..Default::default() }
+    }
+
+    #[test]
+    fn transfer_hours() {
+        assert!(TransferSettings::default().allows(0));
+        let day = hours("09:00", "17:30");
+        assert!(day.allows(9 * 60) && day.allows(17 * 60 + 29));
+        assert!(!day.allows(17 * 60 + 30) && !day.allows(8 * 60 + 59));
+        let night = hours("22:00", "06:00");
+        assert!(night.allows(23 * 60) && night.allows(0) && night.allows(5 * 60 + 59));
+        assert!(!night.allows(6 * 60) && !night.allows(12 * 60));
+    }
+
+    #[test]
+    fn settings_are_checked() {
+        assert!(hours("22:00", "06:00").validate().is_ok());
+        assert!(hours("22:00", "22:00").validate().is_err());
+        assert!(hours("25:00", "06:00").validate().is_err());
+        assert!(TransferSettings { hours_start: Some("01:00".into()), ..Default::default() }.validate().is_err());
+        assert!(TransferSettings { parallel: 0, ..Default::default() }.validate().is_err());
+        assert!(TransferSettings { parallel: 5, ..Default::default() }.validate().is_err());
+        let empty = TransferSettings { hours_start: Some(" ".into()), hours_end: Some(String::new()), ..Default::default() };
+        assert_eq!(empty.validate().unwrap().hours_start, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn speed_limit_spaces_chunks() {
+        let limit = RateLimit::default();
+        limit.set(100 * 1024);
+        let start = tokio::time::Instant::now();
+        for _ in 0..5 {
+            limit.take(50 * 1024).await;
+        }
+        // Five half-second chunks: the fifth starts after two seconds.
+        assert_eq!(start.elapsed().as_millis(), 2000);
+    }
 }

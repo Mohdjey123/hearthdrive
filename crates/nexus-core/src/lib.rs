@@ -203,6 +203,7 @@ pub async fn run_with(
     nexus_api::spawn_sync(state.clone());
     nexus_api::spawn_backup(state.clone());
     nexus_api::spawn_shares(state.clone());
+    nexus_api::spawn_transfers(state.clone());
     nexus_api::spawn_updates(state.clone());
     nexus_api::spawn_introductions(state.clone());
 
