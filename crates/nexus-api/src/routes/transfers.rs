@@ -785,7 +785,7 @@ impl Mover<'_> {
     }
 
     /// Opens a file's content from `offset`.
-    async fn open(&self, side: &Side, file_id: &str, offset: u64) -> Result<Body> {
+    pub(crate) async fn open(&self, side: &Side, file_id: &str, offset: u64) -> Result<Body> {
         match side {
             Side::Local => {
                 self.user.require(Action::Read).map_err(|e| e.0)?;

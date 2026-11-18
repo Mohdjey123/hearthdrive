@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpDown, Folder, FolderSync, HardDrive, ImageUp, LayoutGrid, Link2, MonitorSmartphone, Settings } from 'lucide-react'
+import { ArrowUpDown, Folder, FolderSync, HardDrive, History, ImageUp, LayoutGrid, Link2, MonitorSmartphone, Settings } from 'lucide-react'
 import type { Page } from '../hooks/useRoute'
 import { navigate } from '../hooks/useRoute'
 import { subscribeStatus } from '../services/events'
@@ -15,6 +15,7 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
   { page: 'storage', label: 'Storage', icon: HardDrive },
   { page: 'devices', label: 'Devices', icon: MonitorSmartphone },
   { page: 'sync', label: 'Sync', icon: FolderSync },
+  { page: 'backups', label: 'Backups', icon: History },
   { page: 'backup', label: 'Backup', icon: ImageUp },
   { page: 'shares', label: 'Shares', icon: Link2 },
   { page: 'transfers', label: 'Transfers', icon: ArrowUpDown },
@@ -22,7 +23,7 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
 ]
 
 /** Pages that need storage on this device. */
-export const PHONELESS: Page[] = ['overview', 'storage', 'sync']
+export const PHONELESS: Page[] = ['overview', 'storage', 'sync', 'backups']
 /** Pages only phones have. */
 export const PHONE_ONLY: Page[] = ['backup']
 

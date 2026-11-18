@@ -12,6 +12,7 @@ import { Devices } from './pages/Devices'
 import { Transfers } from './pages/Transfers'
 import { Sync } from './pages/Sync'
 import { Backup } from './pages/Backup'
+import { Backups } from './pages/Backups'
 import { Shares } from './pages/Shares'
 import { ShareInbox } from './components/ShareInbox'
 import { UpdateBanner } from './components/Updates'
@@ -34,6 +35,7 @@ function Shell() {
         {page === 'storage' && <Storage route={route} />}
         {page === 'devices' && <Devices />}
         {page === 'sync' && <Sync />}
+        {page === 'backups' && <Backups />}
         {page === 'backup' && <Backup />}
         {page === 'shares' && <Shares />}
         {page === 'transfers' && <Transfers />}

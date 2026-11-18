@@ -5,6 +5,7 @@ pub mod files;
 pub mod introductions;
 pub mod network;
 pub mod shares;
+pub mod snapshots;
 pub mod storage;
 pub mod sync;
 pub mod system;

@@ -46,6 +46,9 @@ pub enum Event {
     /// A sync pair started or finished a run, or was changed.
     #[serde(rename = "sync.updated")]
     SyncUpdated { id: String },
+    /// A backup (snapshot set) started or finished a run or check, or was changed.
+    #[serde(rename = "snapshots.updated")]
+    SnapshotsUpdated { id: String },
     /// An update arrived, or checking for one started or finished.
     #[serde(rename = "updates.changed")]
     UpdatesChanged,

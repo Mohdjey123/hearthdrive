@@ -61,6 +61,7 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Networking | Built-in peer-to-peer networking ([iroh](https://iroh.computer)): QUIC connections dialed by device key, direct when possible (local network, NAT hole punching, UPnP), otherwise through an encrypted relay; public relays by default or your own; the HTTP API itself stays on loopback |
 | Across devices | Browse, search, preview, stream, download, upload, rename, move and trash files on a paired device, relayed by your own node with signed requests; background copies of files and folders that resume after a dropped connection; pause, resume, run next and retry failed files; a shared speed limit, transfers at once and transfer hours; copies checked against the original's BLAKE3 hash |
 | Sync | One-way and two-way folder sync between devices; conflict copies; removals go to the trash; a safety stop for mass removals; the last ten versions of every replaced file |
+| Backups | Scheduled snapshots of a folder on a paired computer, each content stored once by BLAKE3; keep rules (latest, daily, weekly, monthly) with cleanup; stored contents read back and repaired; browse and restore any snapshot, beside or over the original |
 | Share links | Links to a file or folder (sent as a zip) that anyone can open: end-to-end encrypted through [Send](https://github.com/timvisee/send) (AES-GCM, key only in the link) with expiry, a download limit and an optional password, or unencrypted through temp.sh for larger files; take a link down at any time; uploads appear under Transfers |
 | Updates | Signed packages (Ed25519 over the version, size and BLAKE3 hash) passed between paired devices; computers keep packages for every platform to pass on; Windows installs by itself when its window is closed and nothing is copying, Android opens the system installer |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices |
@@ -159,6 +160,16 @@ How it works: every connection is QUIC with TLS 1.3, authenticated with the two 
 * **Safety stop.** If most of a folder disappears at once (an unplugged drive, a moved folder), sync does not remove the files on the other side. It says so on the Sync page; press **Sync now** if the removal was meant.
 * **Earlier versions.** When sync, a copy or an upload with "replace" overwrites a file, the old content is kept (the last ten per file). Open **Properties** on a file to download or restore one. Restoring keeps the current content as a version too.
 * **Resumable uploads.** Files over 8 MB are uploaded in pieces. If the connection drops, the upload continues where it stopped; choosing **Retry** (even after closing the app) picks up from there.
+
+## Backups
+
+Sync keeps folders the same; a backup keeps their **history**, so you can bring back what a folder held yesterday or last month, also after deleting or changing it on every device.
+
+* **Set one up.** Open **Backups** → **New backup**, choose a folder here, a paired computer and a place on it, how often (every hour to every week) and which snapshots to keep: the latest few, and the newest of each of the last days, weeks and months (by default 7 latest, 14 daily, 8 weekly, 12 monthly).
+* **What is stored.** On the other computer the backup gets a folder of its own (`<this computer> - <folder>`) holding each distinct file content once, named by its BLAKE3 hash (`objects/ab/ab12…`), and one small file per snapshot listing every file's path, size, date and hash (`snapshots/<date>_<id>.json`). A file that did not change, or exists twice, is not sent or stored again. Snapshots that fall out of the keep rules are forgotten, and contents no kept snapshot uses go to that computer's trash.
+* **Checked.** After every backup a sample of the stored contents is read back and compared with their hashes; **Check** (the shield) reads back everything. A damaged or missing content is sent again from this computer when it still has it, and the result shows on the backup.
+* **Restore.** **Snapshots** lists every kept snapshot. Browse one, tick files or folders (or none for everything) and restore them **beside** the original (a new folder named `… (restored <date>)`) or **over** it (files that differ are replaced, each keeping its current content as a version). Every restored file is checked against its hash.
+* **Not yet:** backups are not encrypted (anyone who can open that folder on the other computer can read them), and a backup can only be restored from the computer that made it.
 
 ## Phone backup and the share menu
 

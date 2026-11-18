@@ -16,6 +16,7 @@ pub use routes::backup::spawn as spawn_backup;
 pub use routes::introductions::{introduce_now as introduce_devices, spawn as spawn_introductions};
 pub use routes::shares::spawn as spawn_shares;
 pub use routes::sync::spawn as spawn_sync;
+pub use routes::snapshots::spawn as spawn_snapshots;
 pub use routes::transfers::spawn as spawn_transfers;
 pub use routes::updates::{check as check_updates, spawn as spawn_updates};
 
@@ -60,7 +61,7 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
     frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{backup, devices, files, introductions, network, shares, storage, sync, system, transfers, updates, uploads, users};
+    use routes::{backup, devices, files, introductions, network, shares, snapshots, storage, sync, system, transfers, updates, uploads, users};
 
     let api = Router::new()
         .route("/health", get(system::health))
@@ -95,6 +96,13 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
             "/peers/{device_id}/proxy/{*rest}",
             any(peers::proxy).layer(DefaultBodyLimit::disable()),
         )
+        .route("/snapshots", get(snapshots::list).post(snapshots::create))
+        .route("/snapshots/{id}", patch(snapshots::update).delete(snapshots::remove))
+        .route("/snapshots/{id}/run", post(snapshots::run))
+        .route("/snapshots/{id}/check", post(snapshots::check))
+        .route("/snapshots/{id}/history", get(snapshots::history))
+        .route("/snapshots/{id}/{snapshot}/files", get(snapshots::files))
+        .route("/snapshots/{id}/{snapshot}/restore", post(snapshots::start_restore))
         .route("/transfers", get(transfers::list))
         .route("/transfers/copy", post(transfers::copy))
         .route("/transfers/clear", post(transfers::clear))

@@ -70,6 +70,8 @@ async fn node_with(name: &str, phone: bool) -> Node {
     nexus_api::p2p::spawn_server(state.clone(), app.clone());
     nexus_api::spawn_sync(state.clone());
     nexus_api::spawn_backup(state.clone());
+    nexus_api::spawn_transfers(state.clone());
+    nexus_api::spawn_snapshots(state.clone());
     tokio::spawn(async move {
         axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
     });
@@ -1032,4 +1034,161 @@ async fn the_main_node_introduces_its_devices_to_each_other() {
     // And turning introductions off on the hub stops them.
     let (s, _) = hub.call(Method::PUT, "/devices/introductions", Some(json!({"enabled": false}))).await;
     assert_eq!(s, 200);
+}
+
+impl Node {
+    /// Waits for a backup's next run (or check) to end and returns the set.
+    async fn backup_set_after(&self, id: &str, field: &str, before: i64) -> Value {
+        for _ in 0..400 {
+            let (_, sets) = self.call(Method::GET, "/snapshots", None).await;
+            let set = sets.as_array().unwrap().iter().find(|x| x["id"] == id).unwrap().clone();
+            if set[field].as_i64().unwrap_or(0) > before && set["running"] == false {
+                return set;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("backup {id} did not finish");
+    }
+
+    async fn backup_run(&self, id: &str) -> Value {
+        let (_, sets) = self.call(Method::GET, "/snapshots", None).await;
+        let before = sets.as_array().unwrap().iter().find(|x| x["id"] == id).unwrap()["last_run_at"].as_i64().unwrap_or(0);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let (s, _) = self.call(Method::POST, &format!("/snapshots/{id}/run"), None).await;
+        assert_eq!(s, 202);
+        self.backup_set_after(id, "last_run_at", before).await
+    }
+}
+
+/// Files under `dir`, as paths relative to it.
+fn files_in(dir: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            if e.path().is_dir() {
+                stack.push(e.path());
+            } else {
+                out.push(e.path().strip_prefix(dir).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[tokio::test]
+async fn backups_keep_snapshots_check_and_restore() {
+    let pc = node("pc").await;
+    let nas = node("nas").await;
+    pc.pair_with(&nas).await;
+
+    let docs = pc.storage.path().join("docs");
+    std::fs::create_dir_all(docs.join("sub")).unwrap();
+    std::fs::write(docs.join("a.txt"), b"first version").unwrap();
+    std::fs::write(docs.join("sub").join("b.txt"), b"same content").unwrap();
+    std::fs::write(docs.join("sub").join("c.txt"), b"same content").unwrap();
+    let here = pc.add_root(pc.storage.path()).await;
+    let there = nas.add_root(nas.storage.path()).await;
+
+    let (s, set) = pc
+        .call(
+            Method::POST,
+            "/snapshots",
+            Some(json!({
+                "local_root_id": here, "local_path": "docs", "device_id": nas.device_id(), "remote_root_id": there, "remote_path": ""
+            })),
+        )
+        .await;
+    assert_eq!(s, 201, "{set}");
+    let id = set["id"].as_str().unwrap().to_string();
+    let set = pc.backup_set_after(&id, "last_run_at", 0).await;
+    assert!(set["last_error"].is_null(), "{set}");
+    // Three files, two different contents: each content is stored once.
+    assert_eq!(set["last_result"], "3 files, 2 new", "{set}");
+    let store = nas.storage.path().join("pc - docs");
+    let stored = files_in(&store);
+    assert_eq!(stored.iter().filter(|p| p.starts_with("objects/")).count(), 2, "{stored:?}");
+    assert_eq!(stored.iter().filter(|p| p.starts_with("snapshots/") && p.ends_with(".json")).count(), 1, "{stored:?}");
+    // The sample read back after the run found nothing wrong.
+    assert!(set["last_check_result"].as_str().unwrap().ends_with("intact"), "{set}");
+
+    // One file changes: only its new content is sent.
+    pc.send_bytes(Method::POST, &format!("/files/upload?root_id={here}&path=docs&name=a.txt&on_conflict=replace"), b"second version!").await;
+    let set = pc.backup_run(&id).await;
+    assert_eq!(set["last_result"], "3 files, 1 new", "{set}");
+    let (_, history) = pc.call(Method::GET, &format!("/snapshots/{id}/history"), None).await;
+    let history = history.as_array().unwrap().clone();
+    assert_eq!(history.len(), 2);
+    let first = history[1]["id"].as_str().unwrap().to_string();
+
+    // Browsing the first snapshot.
+    let (_, top) = pc.call(Method::GET, &format!("/snapshots/{id}/{first}/files?path="), None).await;
+    let names: Vec<_> =
+        top.as_array().unwrap().iter().map(|e| (e["name"].as_str().unwrap().to_string(), e["files"].as_u64().unwrap())).collect();
+    assert_eq!(names, [("sub".to_string(), 2), ("a.txt".to_string(), 0)]);
+
+    // Damage on the device is found and repaired from the files here.
+    let shared = blake3::hash(b"same content").to_hex().to_string();
+    let object = store.join("objects").join(&shared[..2]).join(&shared);
+    std::fs::write(&object, b"same contenX").unwrap();
+    let before = set["last_check_at"].as_i64().unwrap_or(0);
+    let (s, _) = pc.call(Method::POST, &format!("/snapshots/{id}/check"), None).await;
+    assert_eq!(s, 202);
+    let set = pc.backup_set_after(&id, "last_check_at", before).await;
+    let result = set["last_check_result"].as_str().unwrap();
+    assert!(result.starts_with("All 3 contents read back: 1 damaged and 0 missing, all sent again"), "{result}");
+    assert_eq!(std::fs::read(&object).unwrap(), b"same content");
+
+    // Restoring the first snapshot beside the folder brings back the old file.
+    let (s, started) = pc.call(Method::POST, &format!("/snapshots/{id}/{first}/restore"), Some(json!({"to": "beside"}))).await;
+    assert_eq!(s, 202, "{started}");
+    let job = pc.wait_job(started["job_id"].as_str().unwrap()).await;
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["verified"], 3, "{job}");
+    assert!(started["folder"].as_str().unwrap().starts_with("docs (restored "), "{started}");
+    let restored = pc.storage.path().join(started["folder"].as_str().unwrap());
+    assert_eq!(std::fs::read(restored.join("a.txt")).unwrap(), b"first version");
+    assert_eq!(std::fs::read(restored.join("sub").join("c.txt")).unwrap(), b"same content");
+
+    // Restoring one file over the original replaces it (keeping a version).
+    let (s, started) =
+        pc.call(Method::POST, &format!("/snapshots/{id}/{first}/restore"), Some(json!({"to": "original", "paths": ["a.txt"]}))).await;
+    assert_eq!(s, 202, "{started}");
+    let job = pc.wait_job(started["job_id"].as_str().unwrap()).await;
+    assert_eq!((job["status"].as_str(), job["files_done"].as_u64()), (Some("done"), Some(1)), "{job}");
+    assert_eq!(std::fs::read(docs.join("a.txt")).unwrap(), b"first version");
+    let a = pc.state.db.get_file_by_path(&here, "docs/a.txt").await.unwrap().unwrap();
+    // Kept as versions: "first version" (replaced by the upload) and
+    // "second version!" (replaced by the restore).
+    assert_eq!(pc.state.db.list_versions(&a.id).await.unwrap().len(), 2);
+
+    // Keeping only the latest snapshot clears the old ones, and contents
+    // only they used go to the trash on the device.
+    let (s, v) = pc
+        .call(
+            Method::PATCH,
+            &format!("/snapshots/{id}"),
+            Some(json!({"schedule": {"every_hours": 24, "keep_last": 1, "keep_daily": 0, "keep_weekly": 0, "keep_monthly": 0}})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    pc.send_bytes(Method::POST, &format!("/files/upload?root_id={here}&path=docs&name=a.txt&on_conflict=replace"), b"third").await;
+    let set = pc.backup_run(&id).await;
+    assert!(set["last_result"].as_str().unwrap().contains("2 old snapshots removed"), "{set}");
+    let (_, history) = pc.call(Method::GET, &format!("/snapshots/{id}/history"), None).await;
+    assert_eq!(history.as_array().unwrap().len(), 1);
+    let stored = files_in(&store);
+    assert_eq!(stored.iter().filter(|p| p.starts_with("objects/")).count(), 2, "{stored:?}");
+    assert_eq!(stored.iter().filter(|p| p.starts_with("snapshots/")).count(), 1, "{stored:?}");
+
+    // Bad keep rules are refused.
+    let (s, _) = pc
+        .call(
+            Method::PATCH,
+            &format!("/snapshots/{id}"),
+            Some(json!({"schedule": {"every_hours": 24, "keep_last": 0, "keep_daily": 0, "keep_weekly": 0, "keep_monthly": 0}})),
+        )
+        .await;
+    assert_eq!(s, 400);
 }

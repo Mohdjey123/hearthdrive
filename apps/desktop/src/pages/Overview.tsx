@@ -47,6 +47,11 @@ const ACTIONS: Record<string, string> = {
   'update.installing': 'Installing an update',
   'updates.auto.enabled': 'Automatic updates on',
   'updates.auto.disabled': 'Automatic updates off',
+  'transfers.settings': 'Changed transfer settings',
+  'backup.created': 'Set up a backup',
+  'backup.changed': 'Changed a backup',
+  'backup.removed': 'Stopped a backup',
+  'backup.restored': 'Restored from a backup',
 }
 
 export function rootTone(r: StorageRoot): 'online' | 'offline' | 'busy' | 'error' {

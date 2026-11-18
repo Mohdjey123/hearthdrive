@@ -256,6 +256,59 @@ export interface Job {
   finished_at: number | null
 }
 
+export interface BackupSchedule {
+  every_hours: number
+  keep_last: number
+  keep_daily: number
+  keep_weekly: number
+  keep_monthly: number
+}
+
+export interface Snapshot {
+  id: string
+  set_id: string
+  taken_at: number
+  files: number
+  bytes: number
+  new_files: number
+  new_bytes: number
+}
+
+/** A folder backed up to a paired device as snapshots. */
+export interface SnapshotSet extends BackupSchedule {
+  id: string
+  name: string
+  local_root_id: string
+  local_path: string
+  device_id: string
+  remote_root_id: string
+  remote_path: string
+  remote_label: string
+  enabled: boolean
+  created_by: string
+  created_at: number
+  last_run_at: number | null
+  last_ok_at: number | null
+  last_result: string | null
+  last_error: string | null
+  last_check_at: number | null
+  last_check_result: string | null
+  device_name: string
+  local_label: string
+  running: boolean
+  snapshots: number
+  latest: Snapshot | null
+}
+
+export interface SnapshotEntry {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number
+  modified_at: number | null
+  files: number
+}
+
 export interface TransferSettings {
   /** Transfers running at the same time (1–4). */
   parallel: number
@@ -593,6 +646,18 @@ export const api = {
     requestJson<{ id: string }>('POST', '/shared/send', b),
   discardShared: (names: string[] = []) => request<void>('POST', '/shared/discard', { names }),
 
+  snapshotSets: () => request<SnapshotSet[]>('GET', '/snapshots'),
+  createSnapshotSet: (b: { local_root_id: string; local_path: string; device_id: string; remote_root_id: string; remote_path: string; schedule: BackupSchedule }) =>
+    request<SnapshotSet>('POST', '/snapshots', b),
+  updateSnapshotSet: (id: string, b: { enabled?: boolean; schedule?: BackupSchedule }) => request<SnapshotSet>('PATCH', `/snapshots/${id}`, b),
+  removeSnapshotSet: (id: string) => request<void>('DELETE', `/snapshots/${id}`),
+  runSnapshotSet: (id: string) => request<void>('POST', `/snapshots/${id}/run`),
+  checkSnapshotSet: (id: string) => request<void>('POST', `/snapshots/${id}/check`),
+  snapshotHistory: (id: string) => request<Snapshot[]>('GET', `/snapshots/${id}/history`),
+  snapshotFiles: (id: string, snap: string, path: string) =>
+    request<SnapshotEntry[]>('GET', `/snapshots/${id}/${snap}/files?path=${encodeURIComponent(path)}`),
+  restoreSnapshot: (id: string, snap: string, b: { paths: string[]; to: 'beside' | 'original' }) =>
+    request<{ job_id: string; folder: string }>('POST', `/snapshots/${id}/${snap}/restore`, b),
   syncPairs: () => request<SyncPair[]>('GET', '/sync'),
   createSync: (b: { local_root_id: string; local_path: string; device_id: string; remote_root_id: string; remote_path: string; mode: SyncMode }) =>
     request<SyncPair>('POST', '/sync', b),

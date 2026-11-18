@@ -45,6 +45,8 @@ pub struct AppState {
     /// Copy and sync jobs.
     pub jobs: crate::routes::transfers::Jobs,
     pub sync: crate::routes::sync::SyncControl,
+    /// Backups as snapshots.
+    pub snapshots: crate::routes::snapshots::SnapshotControl,
     /// The phone's shared storage (`/storage/emulated/0`), where photos and
     /// videos are backed up from. `None` on computers.
     pub media_dir: Option<PathBuf>,
@@ -95,6 +97,7 @@ impl AppState {
             upload_locks: Mutex::new(HashSet::new()),
             jobs: Default::default(),
             sync: Default::default(),
+            snapshots: Default::default(),
             media_dir: None,
             share_inbox: None,
             backup: Default::default(),

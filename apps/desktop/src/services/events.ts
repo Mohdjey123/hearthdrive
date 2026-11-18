@@ -18,6 +18,7 @@ export type NexusEvent =
   | { type: 'network.changed' }
   | { type: 'transfer.updated'; id: string; status: string }
   | { type: 'sync.updated'; id: string }
+  | { type: 'snapshots.updated'; id: string }
   | { type: 'updates.changed' }
 
 type Handler = (event: NexusEvent) => void
