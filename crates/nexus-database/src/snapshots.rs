@@ -30,6 +30,8 @@ pub struct SnapshotSet {
     pub last_error: Option<String>,
     pub last_check_at: Option<i64>,
     pub last_check_result: Option<String>,
+    /// Contents and snapshot lists are encrypted on the device.
+    pub encrypted: bool,
 }
 
 pub struct NewSnapshotSet<'a> {
@@ -78,7 +80,7 @@ pub struct SnapshotFile {
 
 const SET_COLUMNS: &str = "id, name, local_root_id, local_path, device_id, remote_root_id, remote_path, remote_label, every_hours, \
     keep_last, keep_daily, keep_weekly, keep_monthly, enabled, created_by, created_at, last_run_at, last_ok_at, last_result, \
-    last_error, last_check_at, last_check_result";
+    last_error, last_check_at, last_check_result, key_sealed IS NOT NULL AS encrypted";
 const SNAPSHOT_COLUMNS: &str = "id, set_id, taken_at, files, bytes, new_files, new_bytes";
 
 impl Database {
@@ -135,6 +137,19 @@ impl Database {
             .await?;
         }
         self.get_snapshot_set(id).await
+    }
+
+    /// Stores a backup's key (already protected for this computer).
+    pub async fn set_snapshot_key(&self, id: &str, key_sealed: &[u8]) -> Result<()> {
+        sqlx::query("UPDATE snapshot_sets SET key_sealed = ? WHERE id = ?").bind(key_sealed).bind(id).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// A backup's protected key; `None` when it is not encrypted.
+    pub async fn snapshot_key(&self, id: &str) -> Result<Option<Vec<u8>>> {
+        let row: Option<(Option<Vec<u8>>,)> =
+            sqlx::query_as("SELECT key_sealed FROM snapshot_sets WHERE id = ?").bind(id).fetch_optional(&self.pool).await?;
+        Ok(row.ok_or_else(|| NexusError::NotFound("Backup".into()))?.0)
     }
 
     pub async fn delete_snapshot_set(&self, id: &str) -> Result<()> {

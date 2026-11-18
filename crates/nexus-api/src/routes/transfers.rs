@@ -14,6 +14,7 @@
 //! [`Mover`] holds the operations on either side; sync uses them too.
 
 use super::audit;
+use super::sealed;
 use super::files::{TreeItem, TreeResponse, percent_encode, tree_of};
 use super::uploads::{self, NewUpload, UploadProgress};
 use crate::auth::AuthUser;
@@ -671,11 +672,17 @@ fn counted(body: Body, job: Arc<Job>) -> Body {
 }
 
 /// What a file is sent from.
-enum Source<'a> {
+pub(crate) enum Source<'a> {
     /// A file in a storage location on either side, by id.
     Item(&'a Side, &'a str),
     /// A file on this device's disk outside any storage location.
     Disk(&'a std::path::Path),
+    /// A file on this device's disk of `plain` bytes, encrypted as it is
+    /// read (backups); what is sent is its sealed form.
+    Sealed { path: &'a std::path::Path, key: [u8; 32], plain: u64, hash: sealed::PlainHash },
+    /// An encrypted content of `plain` bytes on either side, decrypted as
+    /// it is read.
+    Unsealed { side: &'a Side, id: &'a str, key: [u8; 32], plain: u64 },
 }
 
 /// Runs file operations on either side for one person.
@@ -935,11 +942,19 @@ impl Mover<'_> {
                 }
                 Ok(file_body(handle))
             }
+            Source::Sealed { path, key, plain, hash } => {
+                Ok(Body::from_stream(sealed::seal_file(path.to_path_buf(), *key, *plain, offset, hash.clone()).await?))
+            }
+            Source::Unsealed { side, id, key, plain } => {
+                let (at, first, skip) = sealed::plain_start(offset);
+                let body = self.open(side, id, at).await?;
+                Ok(Body::from_stream(sealed::open_stream(body.into_data_stream(), *key, *plain, first, skip)))
+            }
         }
     }
 
     /// The resumable sending loop.
-    async fn send_from(&self, job: &Arc<Job>, label: &str, src: &Source<'_>, to: &Side, req: NewUpload) -> Result<Meta> {
+    pub(crate) async fn send_from(&self, job: &Arc<Job>, label: &str, src: &Source<'_>, to: &Side, req: NewUpload) -> Result<Meta> {
         let base = job.bytes();
         let size = req.size;
         let mut up = self.begin(to, &req).await?;

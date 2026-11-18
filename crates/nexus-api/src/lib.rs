@@ -97,9 +97,11 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
             any(peers::proxy).layer(DefaultBodyLimit::disable()),
         )
         .route("/snapshots", get(snapshots::list).post(snapshots::create))
+        .route("/snapshots/open", post(snapshots::open))
         .route("/snapshots/{id}", patch(snapshots::update).delete(snapshots::remove))
         .route("/snapshots/{id}/run", post(snapshots::run))
         .route("/snapshots/{id}/check", post(snapshots::check))
+        .route("/snapshots/{id}/recovery-key", post(snapshots::recovery_key))
         .route("/snapshots/{id}/history", get(snapshots::history))
         .route("/snapshots/{id}/{snapshot}/files", get(snapshots::files))
         .route("/snapshots/{id}/{snapshot}/restore", post(snapshots::start_restore))

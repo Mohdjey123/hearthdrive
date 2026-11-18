@@ -4,6 +4,7 @@ pub mod events;
 pub mod files;
 pub mod introductions;
 pub mod network;
+pub mod sealed;
 pub mod shares;
 pub mod snapshots;
 pub mod storage;

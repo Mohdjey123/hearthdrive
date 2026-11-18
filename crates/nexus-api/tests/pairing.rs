@@ -1096,7 +1096,8 @@ async fn backups_keep_snapshots_check_and_restore() {
             Method::POST,
             "/snapshots",
             Some(json!({
-                "local_root_id": here, "local_path": "docs", "device_id": nas.device_id(), "remote_root_id": there, "remote_path": ""
+                "local_root_id": here, "local_path": "docs", "device_id": nas.device_id(), "remote_root_id": there, "remote_path": "",
+                "encrypt": false
             })),
         )
         .await;
@@ -1191,4 +1192,129 @@ async fn backups_keep_snapshots_check_and_restore() {
         )
         .await;
     assert_eq!(s, 400);
+}
+
+#[tokio::test]
+async fn encrypted_backups_open_on_another_computer() {
+    let pc = node("pc").await;
+    let nas = node("nas").await;
+    let laptop = node("laptop").await;
+    pc.pair_with(&nas).await;
+    laptop.pair_with(&nas).await;
+
+    let docs = pc.storage.path().join("docs");
+    std::fs::create_dir_all(docs.join("sub")).unwrap();
+    std::fs::write(docs.join("a.txt"), b"secret plans").unwrap();
+    // Several chunks, so the format's chunking is used.
+    let big: Vec<u8> = (0..200_000u32).map(|i| (i * 31 % 251) as u8).collect();
+    std::fs::write(docs.join("sub").join("big.bin"), &big).unwrap();
+    std::fs::create_dir_all(pc.storage.path().join("other")).unwrap();
+    std::fs::write(pc.storage.path().join("other").join("x.txt"), b"other things").unwrap();
+    let here = pc.add_root(pc.storage.path()).await;
+    let there = nas.add_root(nas.storage.path()).await;
+
+    let create = |path: &'static str| {
+        json!({"local_root_id": here, "local_path": path, "device_id": nas.device_id(), "remote_root_id": there, "remote_path": ""})
+    };
+    let (s, set) = pc.call(Method::POST, "/snapshots", Some(create("docs"))).await;
+    assert_eq!(s, 201, "{set}");
+    assert_eq!(set["encrypted"], true, "{set}");
+    let key = set["recovery_key"].as_str().unwrap().to_string();
+    assert_eq!(key.split('-').count(), 14, "{key}");
+    let id = set["id"].as_str().unwrap().to_string();
+    let set = pc.backup_set_after(&id, "last_run_at", 0).await;
+    assert!(set["last_error"].is_null(), "{set}");
+    assert_eq!(set["last_result"], "2 files, 2 new", "{set}");
+    assert!(set["last_check_result"].as_str().unwrap().ends_with("intact"), "{set}");
+
+    // A second backup, to have a recovery key that does not fit the first.
+    let (s, other) = pc.call(Method::POST, "/snapshots", Some(create("other"))).await;
+    assert_eq!(s, 201, "{other}");
+    let other_key = other["recovery_key"].as_str().unwrap().to_string();
+    pc.backup_set_after(other["id"].as_str().unwrap(), "last_run_at", 0).await;
+
+    // On the device: nothing readable, and no plain hashes as names.
+    let store = nas.storage.path().join("pc - docs");
+    let stored = files_in(&store);
+    let objects: Vec<_> = stored.iter().filter(|p| p.starts_with("objects/")).collect();
+    assert_eq!(objects.len(), 2, "{stored:?}");
+    let plain_names = [blake3::hash(b"secret plans").to_hex().to_string(), blake3::hash(&big).to_hex().to_string()];
+    for p in &objects {
+        assert!(!plain_names.iter().any(|h| p.ends_with(h.as_str())), "{p}");
+        let bytes = std::fs::read(store.join(p)).unwrap();
+        assert!(bytes.starts_with(b"NXB1"));
+        assert!(!bytes.windows(12).any(|w| w == b"secret plans"));
+    }
+    let lists: Vec<_> = stored.iter().filter(|p| p.starts_with("snapshots/")).collect();
+    assert_eq!(lists.len(), 1, "{stored:?}");
+    assert!(lists[0].ends_with(".nxb"), "{lists:?}");
+    let list = std::fs::read(store.join(lists[0])).unwrap();
+    assert!(!list.windows(5).any(|w| w == b"a.txt"));
+
+    // Damage is noticed (it no longer opens) and repaired.
+    let damaged = store.join(objects[0]);
+    let mut bytes = std::fs::read(&damaged).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 1;
+    std::fs::write(&damaged, &bytes).unwrap();
+    let before = set["last_check_at"].as_i64().unwrap_or(0);
+    let (s, _) = pc.call(Method::POST, &format!("/snapshots/{id}/check"), None).await;
+    assert_eq!(s, 202);
+    let set = pc.backup_set_after(&id, "last_check_at", before).await;
+    let result = set["last_check_result"].as_str().unwrap();
+    assert!(result.starts_with("All 2 contents read back: 1 damaged and 0 missing, all sent again"), "{result}");
+    assert_ne!(std::fs::read(&damaged).unwrap(), bytes);
+
+    // The recovery key is shown again only with the password.
+    let (s, _) = pc.call(Method::POST, &format!("/snapshots/{id}/recovery-key"), Some(json!({"password": "wrong"}))).await;
+    assert_eq!(s, 403);
+    let (s, shown) = pc.call(Method::POST, &format!("/snapshots/{id}/recovery-key"), Some(json!({"password": "correct horse"}))).await;
+    assert_eq!(s, 200, "{shown}");
+    assert_eq!(shown["recovery_key"], key.as_str());
+
+    // Restoring here decrypts and checks every file.
+    let (_, history) = pc.call(Method::GET, &format!("/snapshots/{id}/history"), None).await;
+    let snap = history[0]["id"].as_str().unwrap().to_string();
+    let (s, started) = pc.call(Method::POST, &format!("/snapshots/{id}/{snap}/restore"), Some(json!({"to": "beside"}))).await;
+    assert_eq!(s, 202, "{started}");
+    let job = pc.wait_job(started["job_id"].as_str().unwrap()).await;
+    assert_eq!((job["status"].as_str(), job["verified"].as_u64()), (Some("done"), Some(2)), "{job}");
+    let restored = pc.storage.path().join(started["folder"].as_str().unwrap());
+    assert_eq!(std::fs::read(restored.join("sub").join("big.bin")).unwrap(), big);
+
+    // Another computer opens the backup with the recovery key.
+    let mine = laptop.add_root(laptop.storage.path()).await;
+    let open = |key: &str| {
+        json!({"device_id": nas.device_id(), "remote_root_id": there, "remote_path": "pc - docs", "recovery_key": key,
+               "local_root_id": mine, "local_path": "Recovered"})
+    };
+    let (s, v) = laptop.call(Method::POST, "/snapshots/open", Some(open(""))).await;
+    assert_eq!(s, 400, "{v}");
+    assert!(v.to_string().contains("encrypted"), "{v}");
+    let (s, v) = laptop.call(Method::POST, "/snapshots/open", Some(open(&key.replacen(&key[..1], if &key[..1] == "A" { "B" } else { "A" }, 1)))).await;
+    assert_eq!(s, 400, "{v}");
+    let (s, v) = laptop.call(Method::POST, "/snapshots/open", Some(open(&other_key))).await;
+    assert_eq!(s, 400, "{v}");
+    assert!(v.to_string().contains("does not open"), "{v}");
+    let (s, opened) = laptop.call(Method::POST, "/snapshots/open", Some(open(&key.to_lowercase()))).await;
+    assert_eq!(s, 201, "{opened}");
+    assert_eq!((opened["name"].as_str(), opened["enabled"].as_bool(), opened["snapshots"].as_u64()), (Some("docs"), Some(false), Some(1)), "{opened}");
+    let (s, _) = laptop.call(Method::POST, "/snapshots/open", Some(open(&key))).await;
+    assert_eq!(s, 409);
+
+    let opened_id = opened["id"].as_str().unwrap().to_string();
+    let (s, started) =
+        laptop.call(Method::POST, &format!("/snapshots/{opened_id}/{snap}/restore"), Some(json!({"to": "original"}))).await;
+    assert_eq!(s, 202, "{started}");
+    let job = laptop.wait_job(started["job_id"].as_str().unwrap()).await;
+    assert_eq!((job["status"].as_str(), job["verified"].as_u64()), (Some("done"), Some(2)), "{job}");
+    let recovered = laptop.storage.path().join("Recovered");
+    assert_eq!(std::fs::read(recovered.join("a.txt")).unwrap(), b"secret plans");
+    assert_eq!(std::fs::read(recovered.join("sub").join("big.bin")).unwrap(), big);
+
+    // Turned on, it continues the backup from the other computer.
+    let (s, _) = laptop.call(Method::PATCH, &format!("/snapshots/{opened_id}"), Some(json!({"enabled": true}))).await;
+    assert_eq!(s, 200);
+    let set = laptop.backup_run(&opened_id).await;
+    assert_eq!(set["last_result"], "2 files, 0 new", "{set}");
 }

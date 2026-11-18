@@ -293,6 +293,8 @@ export interface SnapshotSet extends BackupSchedule {
   last_error: string | null
   last_check_at: number | null
   last_check_result: string | null
+  /** Contents and snapshot lists are encrypted on the device. */
+  encrypted: boolean
   device_name: string
   local_label: string
   running: boolean
@@ -647,8 +649,11 @@ export const api = {
   discardShared: (names: string[] = []) => request<void>('POST', '/shared/discard', { names }),
 
   snapshotSets: () => request<SnapshotSet[]>('GET', '/snapshots'),
-  createSnapshotSet: (b: { local_root_id: string; local_path: string; device_id: string; remote_root_id: string; remote_path: string; schedule: BackupSchedule }) =>
-    request<SnapshotSet>('POST', '/snapshots', b),
+  createSnapshotSet: (b: { local_root_id: string; local_path: string; device_id: string; remote_root_id: string; remote_path: string; schedule: BackupSchedule; encrypt: boolean }) =>
+    request<SnapshotSet & { recovery_key: string | null }>('POST', '/snapshots', b),
+  openSnapshotSet: (b: { device_id: string; remote_root_id: string; remote_path: string; recovery_key: string; local_root_id: string; local_path: string }) =>
+    request<SnapshotSet>('POST', '/snapshots/open', b),
+  snapshotRecoveryKey: (id: string, password: string) => request<{ recovery_key: string }>('POST', `/snapshots/${id}/recovery-key`, { password }),
   updateSnapshotSet: (id: string, b: { enabled?: boolean; schedule?: BackupSchedule }) => request<SnapshotSet>('PATCH', `/snapshots/${id}`, b),
   removeSnapshotSet: (id: string) => request<void>('DELETE', `/snapshots/${id}`),
   runSnapshotSet: (id: string) => request<void>('POST', `/snapshots/${id}/run`),

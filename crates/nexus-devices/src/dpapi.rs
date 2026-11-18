@@ -1,4 +1,4 @@
-//! Protects the node's private key at rest.
+//! Protects secrets at rest: the node's private key and backup keys.
 //!
 //! On Windows the key is encrypted with DPAPI for the current user, so copying
 //! the data folder to another account or computer does not copy the identity.

@@ -8,7 +8,7 @@
 //!   one-time code, never a private key.
 //! * [`release`]: signed update packages and version numbers.
 
-mod dpapi;
+pub mod dpapi;
 pub mod identity;
 pub mod invite;
 pub mod release;

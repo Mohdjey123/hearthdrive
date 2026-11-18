@@ -19,15 +19,21 @@
 //! files and folders from it, beside the original folder or over it (a
 //! replaced file keeps its old content as a version).
 //!
-//! Everything in a store is ordinary files on the device, so another
-//! computer could read it too; nothing is encrypted yet.
+//! An encrypted backup (see [`super::sealed`]) stores every content and
+//! snapshot list encrypted with the backup's key, under names that do not
+//! reveal the contents' hashes. The key is kept here protected for this
+//! computer's account, and shown once as a recovery key: with it, another
+//! computer can open the backup (`POST /snapshots/open`) and restore from it
+//! after this one is lost.
 
 use super::audit;
 use super::files::{TreeItem, tree_of};
-use super::transfers::{Meta, Mover, Side, finish_job, peer_target};
+use super::sealed::{self, BackupKey};
+use super::transfers::{Meta, Mover, Side, Source, finish_job, peer_target};
 use super::uploads::NewUpload;
 use crate::auth::AuthUser;
 use crate::error::ApiResult;
+use crate::peers::Target;
 use crate::state::{AppState, SharedState};
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -36,6 +42,7 @@ use chrono::{Datelike, NaiveDate, TimeZone};
 use futures_util::StreamExt;
 use nexus_common::events::Event;
 use nexus_common::time::now_ms;
+use nexus_common::types::StorageRoot;
 use nexus_common::{NexusError, Result, new_id};
 use nexus_database::{NewSnapshotSet, Schedule, Snapshot, SnapshotFile, SnapshotSet};
 use nexus_security::Action;
@@ -156,6 +163,32 @@ struct Store<'a> {
     side: Side,
     root_id: String,
     path: String,
+    /// Set for an encrypted backup.
+    key: Option<BackupKey>,
+}
+
+/// The backup's key, when it is encrypted.
+async fn key_of(s: &AppState, set: &SnapshotSet) -> Result<Option<BackupKey>> {
+    let Some(protected) = s.db.snapshot_key(&set.id).await? else { return Ok(None) };
+    let raw = tokio::task::spawn_blocking(move || nexus_devices::dpapi::unprotect(&protected))
+        .await
+        .map_err(NexusError::internal)?
+        .map_err(|_| NexusError::Unavailable("This computer can no longer read the backup's key. Open the backup again with its recovery key".into()))?;
+    BackupKey::from_bytes(&raw).map(Some).ok_or_else(|| NexusError::internal("a backup key of the wrong length"))
+}
+
+async fn store_of<'a>(s: &'a AppState, user: &'a AuthUser, set: &SnapshotSet, device: Target) -> Result<Store<'a>> {
+    Ok(Store {
+        mover: Mover { s, user },
+        side: Side::Peer(device),
+        root_id: set.remote_root_id.clone(),
+        path: set.remote_path.clone(),
+        key: key_of(s, set).await?,
+    })
+}
+
+fn damaged(e: &std::io::Error) -> bool {
+    matches!(e.kind(), std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof)
 }
 
 impl Store<'_> {
@@ -167,6 +200,20 @@ impl Store<'_> {
         paths::join(&self.path, "snapshots")
     }
 
+    /// The name a content with this BLAKE3 has in the store: the hash
+    /// itself, or for an encrypted backup a keyed hash of it.
+    fn name_of(&self, hash: &str) -> String {
+        match &self.key {
+            Some(k) => k.object_name(hash),
+            None => hash.to_string(),
+        }
+    }
+
+    /// How many bytes a content of `size` bytes takes in the store.
+    fn stored_size(&self, size: i64) -> u64 {
+        if self.key.is_some() { sealed::sealed_len(size as u64) } else { size as u64 }
+    }
+
     /// Lists a folder of the store; a folder not made yet is empty.
     async fn list(&self, dir: &str) -> Result<Vec<TreeItem>> {
         match self.mover.tree(&self.side, &self.root_id, dir).await {
@@ -176,7 +223,7 @@ impl Store<'_> {
         }
     }
 
-    /// Contents in the store, by BLAKE3.
+    /// Contents in the store, by name.
     async fn objects(&self) -> Result<HashMap<String, Object>> {
         Ok(self
             .list(&self.objects_dir())
@@ -196,42 +243,116 @@ impl Store<'_> {
     }
 
     /// Sends one content from this computer into the store.
-    async fn put(&self, job: &Arc<super::transfers::Job>, local_root: &str, base: &str, file: &TreeItem, hash: &str) -> Result<()> {
-        let (_, name) = paths::split_parent(&file.path);
-        let src = Meta {
-            id: file.id.clone(),
-            root_id: local_root.to_string(),
-            relative_path: paths::join(base, &file.path),
-            filename: name,
-            is_dir: false,
-            size: file.size,
-            modified_at: file.modified_at,
-            content_hash: Some(hash.to_string()),
-        };
+    async fn put(&self, job: &Arc<super::transfers::Job>, root: &StorageRoot, base: &str, file: &TreeItem, hash: &str) -> Result<()> {
+        let name = self.name_of(hash);
         let req = NewUpload {
             root_id: self.root_id.clone(),
-            path: paths::join(&self.objects_dir(), &hash[..2]),
-            name: hash.to_string(),
-            size: file.size as u64,
+            path: paths::join(&self.objects_dir(), &name[..2]),
+            name,
+            size: self.stored_size(file.size),
             on_conflict: Some("replace".into()),
             modified_at: None,
             make_parents: true,
         };
-        self.mover.send_file(job, &Side::Local, &src, &self.side, req).await.map(|_| ())
+        let Some(key) = &self.key else {
+            let (_, filename) = paths::split_parent(&file.path);
+            let src = Meta {
+                id: file.id.clone(),
+                root_id: root.id.clone(),
+                relative_path: paths::join(base, &file.path),
+                filename,
+                is_dir: false,
+                size: file.size,
+                modified_at: file.modified_at,
+                content_hash: Some(hash.to_string()),
+            };
+            return self.mover.send_file(job, &Side::Local, &src, &self.side, req).await.map(|_| ());
+        };
+        // Encrypted as it is read; what was read is hashed on the way, so a
+        // file that changed since it was hashed is not stored under the old
+        // hash.
+        let path = self.mover.s.storage.resolve(root, &paths::join(base, &file.path))?;
+        let read = sealed::PlainHash::default();
+        let source = Source::Sealed { path: &path, key: key.content_key(hash), plain: file.size as u64, hash: read.clone() };
+        let placed = self.mover.send_from(job, &file.path, &source, &self.side, req).await?;
+        if read.finish(file.size as u64).as_deref() != Some(hash) {
+            let _ = self.mover.trash(&self.side, &placed.id).await;
+            return Err(NexusError::Conflict("The file changed while it was backed up; it is backed up again next time".into()));
+        }
+        job.update(|i| i.verified += 1);
+        Ok(())
     }
 
-    /// Reads a content back and returns its BLAKE3.
-    async fn hash_of(&self, id: &str) -> Result<String> {
-        let body = self.mover.open(&self.side, id, 0).await?;
-        let mut stream = body.into_data_stream();
+    /// Reads a content back: whether it still holds the content with this
+    /// BLAKE3 (for an encrypted backup, also that it opens with the key).
+    async fn intact(&self, object: &Object, hash: &str) -> Result<bool> {
         let mut hasher = blake3::Hasher::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| NexusError::PeerUnreachable(e.to_string()))?;
-            hasher.update(&chunk);
+        match &self.key {
+            None => {
+                let mut stream = self.mover.open(&self.side, &object.id, 0).await?.into_data_stream();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|e| NexusError::PeerUnreachable(e.to_string()))?;
+                    hasher.update(&chunk);
+                }
+            }
+            Some(key) => {
+                let Some(plain) = sealed::plain_len(object.size as u64) else { return Ok(false) };
+                // The header carries nothing the content needs; the chunks
+                // are checked by their tags.
+                let body = self.mover.open(&self.side, &object.id, sealed::chunk_offset(0)).await?;
+                let stream = sealed::open_stream(body.into_data_stream(), key.content_key(hash), plain, 0, 0);
+                futures_util::pin_mut!(stream);
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        Ok(c) => hasher.update(&c),
+                        Err(e) if damaged(&e) => return Ok(false),
+                        Err(e) => return Err(NexusError::PeerUnreachable(e.to_string())),
+                    };
+                }
+            }
         }
-        Ok(hasher.finalize().to_hex().to_string())
+        Ok(hasher.finalize().to_hex().as_str() == hash)
+    }
+
+    /// Copies a content out of the store to this computer.
+    async fn get(&self, job: &Arc<super::transfers::Job>, object: &Object, f: &SnapshotFile, req: NewUpload) -> Result<()> {
+        let Some(key) = &self.key else {
+            let src = Meta {
+                id: object.id.clone(),
+                root_id: self.root_id.clone(),
+                relative_path: String::new(),
+                filename: req.name.clone(),
+                is_dir: false,
+                size: f.s,
+                modified_at: f.m,
+                content_hash: Some(f.h.clone()),
+            };
+            return self.mover.send_file(job, &self.side, &src, &Side::Local, req).await.map(|_| ());
+        };
+        let source = Source::Unsealed { side: &self.side, id: &object.id, key: key.content_key(&f.h), plain: f.s as u64 };
+        let placed = self.mover.send_from(job, &f.p, &source, &Side::Local, req).await?;
+        if placed.content_hash.as_deref() != Some(f.h.as_str()) {
+            return Err(NexusError::Conflict("The restored file differs from the backup (BLAKE3)".into()));
+        }
+        job.update(|i| i.verified += 1);
+        Ok(())
+    }
+
+    /// Reads a snapshot list from the store.
+    async fn read_manifest(&self, file_id: &str, snapshot_id: &str) -> Result<StoredManifest> {
+        let body = self.mover.open(&self.side, file_id, 0).await?;
+        let bytes = axum::body::to_bytes(body, MAX_MANIFEST).await.map_err(|e| NexusError::PeerUnreachable(e.to_string()))?;
+        let plain = match &self.key {
+            Some(k) => sealed::open_bytes(&k.snapshot_key(snapshot_id), &bytes)
+                .map_err(|_| NexusError::invalid("The recovery key does not open this backup"))?,
+            None => bytes.to_vec(),
+        };
+        serde_json::from_slice(&plain).map_err(|e| NexusError::invalid(format!("A snapshot list in the backup could not be read: {e}")))
     }
 }
+
+/// Largest snapshot list read back (about two million files).
+const MAX_MANIFEST: usize = 512 * 1024 * 1024;
 
 fn is_hash(name: &str) -> bool {
     name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit())
@@ -273,6 +394,14 @@ struct ManifestFile<'a> {
     files: &'a [SnapshotFile],
 }
 
+/// A snapshot list as read back from a store.
+#[derive(Deserialize)]
+struct StoredManifest {
+    set: String,
+    taken_at: i64,
+    files: Vec<SnapshotFile>,
+}
+
 async fn run_set(s: &SharedState, set: &SnapshotSet) -> Result<String> {
     let user = acting_user(s, set).await?;
     user.require(Action::Write).map_err(|e| e.0)?;
@@ -283,7 +412,7 @@ async fn run_set(s: &SharedState, set: &SnapshotSet) -> Result<String> {
     if s.indexer.is_scanning(&root.id) {
         return Err(NexusError::Unavailable(format!("Waiting for {} to finish indexing", root.name)));
     }
-    let store = Store { mover: Mover { s, user: &user }, side: Side::Peer(device.clone()), root_id: set.remote_root_id.clone(), path: set.remote_path.clone() };
+    let store = store_of(s, &user, set, device.clone()).await?;
 
     let files: Vec<TreeItem> = tree_of(s, &root.id, &set.local_path).await?.into_iter().filter(|i| !i.is_dir).collect();
     let present = store.objects().await?;
@@ -312,11 +441,11 @@ async fn run_set(s: &SharedState, set: &SnapshotSet) -> Result<String> {
     // Send each content the store does not have, once.
     let mut sending: BTreeMap<&str, &TreeItem> = BTreeMap::new();
     for (file, h) in &hashed {
-        if !present.contains_key(h) {
+        if !present.contains_key(&store.name_of(h)) {
             sending.entry(h.as_str()).or_insert(file);
         }
     }
-    let new_bytes: u64 = sending.values().map(|f| f.size as u64).sum();
+    let new_bytes: u64 = sending.values().map(|f| store.stored_size(f.size)).sum();
     job.update(|i| {
         i.files_total = sending.len() as u64;
         i.bytes_total = new_bytes;
@@ -331,7 +460,7 @@ async fn run_set(s: &SharedState, set: &SnapshotSet) -> Result<String> {
             break;
         }
         job.update(|i| i.current = Some(file.path.clone()));
-        match store.put(&job, &root.id, &set.local_path, file, h).await {
+        match store.put(&job, &root, &set.local_path, file, h).await {
             Ok(()) => job.update(|i| i.files_done += 1),
             Err(_) if job.is_cancelled() => break,
             Err(e) => {
@@ -403,8 +532,12 @@ async fn write_manifest(
         files: list,
     })
     .map_err(NexusError::internal)?;
-    let name = format!("{}_{}.json", stamp(snap.taken_at, "%Y-%m-%d_%H%M%S"), snap.id);
-    let tmp = s.data_dir.join(format!("snapshot-{}.json", snap.id));
+    let (body, ext) = match &store.key {
+        Some(k) => (sealed::seal_bytes(&k.snapshot_key(&snap.id), &body), "nxb"),
+        None => (body, "json"),
+    };
+    let name = format!("{}_{}.{ext}", stamp(snap.taken_at, "%Y-%m-%d_%H%M%S"), snap.id);
+    let tmp = s.data_dir.join(format!("snapshot-{}.{ext}", snap.id));
     tokio::fs::write(&tmp, &body).await?;
     let req = NewUpload {
         root_id: store.root_id.clone(),
@@ -445,10 +578,10 @@ async fn prune(s: &AppState, store: &Store<'_>, set: &SnapshotSet) -> Result<Str
     if foreign {
         return Ok(if forgot > 0 { format!(", {forgot} old snapshots removed") } else { String::new() });
     }
-    let used = s.db.snapshot_hashes(&set.id).await?;
+    let used: HashSet<String> = s.db.snapshot_hashes(&set.id).await?.iter().map(|h| store.name_of(h)).collect();
     let mut freed = 0i64;
-    for (hash, object) in store.objects().await? {
-        if !used.contains(&hash) && store.mover.trash(&store.side, &object.id).await.is_ok() {
+    for (name, object) in store.objects().await? {
+        if !used.contains(&name) && store.mover.trash(&store.side, &object.id).await.is_ok() {
             freed += object.size;
         }
     }
@@ -485,13 +618,18 @@ async fn check_store(s: &SharedState, set: &SnapshotSet, user: &AuthUser, budget
 
 async fn check_inner(s: &SharedState, set: &SnapshotSet, user: &AuthUser, budget: Option<u64>) -> Result<String> {
     let device = peer_target(s, &set.device_id).await?;
-    let store = Store { mover: Mover { s, user }, side: Side::Peer(device.clone()), root_id: set.remote_root_id.clone(), path: set.remote_path.clone() };
+    let store = store_of(s, user, set, device.clone()).await?;
     let used = s.db.snapshot_hashes(&set.id).await?;
     let present = store.objects().await?;
-    let missing: Vec<&String> = used.iter().filter(|h| !present.contains_key(*h)).collect();
-
+    let mut missing: Vec<&String> = Vec::new();
     // Which to read: all, or a rotating sample.
-    let mut order: Vec<(&String, &Object)> = present.iter().filter(|(h, _)| used.contains(*h)).collect();
+    let mut order: Vec<(&String, &Object)> = Vec::new();
+    for h in &used {
+        match present.get(&store.name_of(h)) {
+            Some(object) => order.push((h, object)),
+            None => missing.push(h),
+        }
+    }
     order.sort_by_key(|(h, _)| *h);
     if budget.is_some() {
         let start = (now_ms() / 1000) as usize % order.len().max(1);
@@ -524,10 +662,8 @@ async fn check_inner(s: &SharedState, set: &SnapshotSet, user: &AuthUser, budget
         if job.as_ref().is_some_and(|j| j.is_cancelled()) {
             break;
         }
-        match store.hash_of(&object.id).await {
-            Ok(actual) if &actual == *hash => {}
-            Ok(_) => damaged.push((*hash).clone()),
-            Err(e) => return Err(e),
+        if !store.intact(object, hash).await? {
+            damaged.push((*hash).clone());
         }
         read += object.size as u64;
         checked += 1;
@@ -553,7 +689,7 @@ async fn check_inner(s: &SharedState, set: &SnapshotSet, user: &AuthUser, budget
         if let Some(_slot) = s.jobs.start(s, &fix).await {
             for hash in &bad {
                 match here.get(hash) {
-                    Some(file) if store.put(&fix, &root.id, &set.local_path, file, hash).await.is_ok() => repaired += 1,
+                    Some(file) if store.put(&fix, &root, &set.local_path, file, hash).await.is_ok() => repaired += 1,
                     _ => lost += 1,
                 }
             }
@@ -584,7 +720,7 @@ async fn restore(s: &SharedState, user: &AuthUser, job: &Arc<super::transfers::J
     let Some(_slot) = s.jobs.start(s, job).await else { return };
     let outcome: Result<()> = async {
         let device = peer_target(s, &set.device_id).await?;
-        let store = Store { mover: Mover { s, user }, side: Side::Peer(device), root_id: set.remote_root_id.clone(), path: set.remote_path.clone() };
+        let store = store_of(s, user, set, device).await?;
         let present = store.objects().await?;
         // Over the original: files that already hold the content stay.
         let current: HashMap<String, String> = if over {
@@ -608,19 +744,9 @@ async fn restore(s: &SharedState, user: &AuthUser, job: &Arc<super::transfers::J
             }
             let (parent, name) = paths::split_parent(&f.p);
             job.update(|i| i.current = Some(f.p.clone()));
-            let Some(object) = present.get(&f.h) else {
+            let Some(object) = present.get(&store.name_of(&f.h)) else {
                 job.fail_file(&f.p, &NexusError::NotFound("Its content in the backup".into()));
                 continue;
-            };
-            let src = Meta {
-                id: object.id.clone(),
-                root_id: store.root_id.clone(),
-                relative_path: String::new(),
-                filename: name.clone(),
-                is_dir: false,
-                size: f.s,
-                modified_at: f.m,
-                content_hash: Some(f.h.clone()),
             };
             let req = NewUpload {
                 root_id: set.local_root_id.clone(),
@@ -631,8 +757,8 @@ async fn restore(s: &SharedState, user: &AuthUser, job: &Arc<super::transfers::J
                 modified_at: f.m,
                 make_parents: true,
             };
-            match store.mover.send_file(job, &store.side, &src, &Side::Local, req).await {
-                Ok(_) => job.update(|i| i.files_done += 1),
+            match store.get(job, object, f, req).await {
+                Ok(()) => job.update(|i| i.files_done += 1),
                 Err(_) if job.is_cancelled() => break,
                 Err(e) => job.fail_file(&f.p, &e),
             }
@@ -775,6 +901,28 @@ pub struct CreateSet {
     #[serde(default)]
     remote_path: String,
     schedule: Option<Schedule>,
+    /// Encrypt what is stored on the device (the default).
+    #[serde(default = "yes")]
+    encrypt: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Serialize)]
+pub struct CreatedSet {
+    #[serde(flatten)]
+    view: SetView,
+    /// For an encrypted backup: its recovery key, shown this once.
+    recovery_key: Option<String>,
+}
+
+/// Keeps a backup's key here, protected for this computer's account.
+async fn keep_key(s: &AppState, set_id: &str, key: &BackupKey) -> Result<()> {
+    let raw = key.bytes().to_vec();
+    let protected = tokio::task::spawn_blocking(move || nexus_devices::dpapi::protect(&raw)).await.map_err(NexusError::internal)??;
+    s.db.set_snapshot_key(set_id, &protected).await
 }
 
 fn file_name_safe(name: &str) -> String {
@@ -784,7 +932,7 @@ fn file_name_safe(name: &str) -> String {
 }
 
 /// `POST /snapshots`
-pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Json<CreateSet>) -> ApiResult<(StatusCode, Json<SetView>)> {
+pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Json<CreateSet>) -> ApiResult<(StatusCode, Json<CreatedSet>)> {
     user.require_person()?;
     user.require(Action::Write)?;
     if user.user_id.is_none() {
@@ -821,9 +969,189 @@ pub async fn create(State(s): State<SharedState>, user: AuthUser, Json(req): Jso
             created_by: &user.username,
         })
         .await?;
+    let key = if req.encrypt { Some(BackupKey::generate()?) } else { None };
+    if let Some(key) = &key
+        && let Err(e) = keep_key(&s, &set.id, key).await
+    {
+        let _ = s.db.delete_snapshot_set(&set.id).await;
+        return Err(e.into());
+    }
     let set = s.db.update_snapshot_set(&set.id, None, Some(schedule)).await?;
     audit(&s, &user, "backup.created", Some(&format!("{name} → {remote_label}"))).await;
     s.snapshots.run_now(&set.id);
+    let recovery_key = key.map(|k| k.recovery_key());
+    Ok((StatusCode::CREATED, Json(CreatedSet { view: view(&s, set).await?, recovery_key })))
+}
+
+#[derive(Deserialize)]
+pub struct ShowKey {
+    password: String,
+}
+
+#[derive(Serialize)]
+pub struct RecoveryKey {
+    recovery_key: String,
+}
+
+/// `POST /snapshots/{id}/recovery-key`: shows an encrypted backup's
+/// recovery key again, after the person enters their password.
+pub async fn recovery_key(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>, Json(req): Json<ShowKey>) -> ApiResult<Json<RecoveryKey>> {
+    let set = find_set(&s, &user, &id, true).await?;
+    let found = s.db.find_credentials(&user.username).await?;
+    let password = req.password;
+    let valid = tokio::task::spawn_blocking(move || found.is_some_and(|(_, hash)| nexus_security::verify_password(&password, &hash)))
+        .await
+        .map_err(NexusError::internal)?;
+    if !valid {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        return Err(NexusError::PermissionDenied("That password is not right".into()).into());
+    }
+    let key = key_of(&s, &set).await?.ok_or_else(|| NexusError::invalid("This backup is not encrypted"))?;
+    audit(&s, &user, "backup.key_shown", Some(&set.name)).await;
+    Ok(Json(RecoveryKey { recovery_key: key.recovery_key() }))
+}
+
+#[derive(Deserialize)]
+pub struct OpenSet {
+    /// Where the backup is: a device, a storage location on it and the
+    /// backup's folder.
+    device_id: String,
+    remote_root_id: String,
+    remote_path: String,
+    /// Needed when the backup is encrypted.
+    #[serde(default)]
+    recovery_key: String,
+    /// Where restores go here: "over the original" means this folder.
+    local_root_id: String,
+    #[serde(default)]
+    local_path: String,
+}
+
+/// The snapshot id in a snapshot list's file name (`<time>_<id>.json`).
+fn snapshot_id_of(file_name: &str) -> Option<(&str, bool)> {
+    let (stem, ext) = file_name.rsplit_once('.')?;
+    let encrypted = match ext {
+        "nxb" => true,
+        "json" => false,
+        _ => return None,
+    };
+    let id = stem.rsplit_once('_')?.1;
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')).then_some((id, encrypted))
+}
+
+/// `POST /snapshots/open`: opens a backup another computer made (or one
+/// this computer made before it was set up again), to browse and restore
+/// it here. It is added paused; turning it on continues it from here.
+pub async fn open(State(s): State<SharedState>, user: AuthUser, Json(req): Json<OpenSet>) -> ApiResult<(StatusCode, Json<SetView>)> {
+    user.require_person()?;
+    user.require(Action::Write)?;
+    if user.user_id.is_none() {
+        return Err(NexusError::PermissionDenied("Sign in with an account to open backups".into()).into());
+    }
+    user.require_root(&req.local_root_id)?;
+    let root = s.db.get_root(&req.local_root_id).await?;
+    let local_path = paths::normalize_relative(&req.local_path)?;
+    let remote_path = paths::normalize_relative(&req.remote_path)?;
+    if remote_path.is_empty() {
+        return Err(NexusError::invalid("Choose the backup's folder on the device").into());
+    }
+    let opened = s.db.list_snapshot_sets().await?.into_iter().find(|x| {
+        x.device_id == req.device_id && x.remote_root_id == req.remote_root_id && x.remote_path.eq_ignore_ascii_case(&remote_path)
+    });
+    if let Some(x) = opened {
+        return Err(NexusError::Conflict(format!("This backup is already on the Backups page, as {}", x.name)).into());
+    }
+
+    let device = peer_target(&s, &req.device_id).await?;
+    let mut store = Store {
+        mover: Mover { s: &s, user: &user },
+        side: Side::Peer(device.clone()),
+        root_id: req.remote_root_id.clone(),
+        path: remote_path.clone(),
+        key: None,
+    };
+    let lists: Vec<(String, String, bool)> = store
+        .snapshot_files()
+        .await?
+        .into_iter()
+        .filter_map(|(file_id, path)| {
+            let name = paths::split_parent(&path).1;
+            let (id, encrypted) = snapshot_id_of(&name)?;
+            Some((file_id, id.to_string(), encrypted))
+        })
+        .collect();
+    if lists.is_empty() {
+        return Err(NexusError::NotFound("A backup in this folder (it has no snapshots)".into()).into());
+    }
+    let encrypted = lists.iter().any(|(_, _, e)| *e);
+    if encrypted {
+        if req.recovery_key.trim().is_empty() {
+            return Err(NexusError::invalid("This backup is encrypted. Enter its recovery key").into());
+        }
+        store.key = Some(
+            BackupKey::from_recovery_key(&req.recovery_key)
+                .ok_or_else(|| NexusError::invalid("That is not a valid recovery key. Check it for typing mistakes"))?,
+        );
+    }
+
+    // Read every snapshot list; the newest names the backup.
+    let mut snaps: Vec<(Snapshot, Vec<SnapshotFile>)> = Vec::new();
+    let mut name = None;
+    for (file_id, id, _) in lists.iter().filter(|(_, _, e)| *e == encrypted) {
+        let m = store.read_manifest(file_id, id).await?;
+        if name.as_ref().is_none_or(|(at, _)| m.taken_at > *at) {
+            name = Some((m.taken_at, m.set.clone()));
+        }
+        let snap = Snapshot {
+            id: id.clone(),
+            set_id: String::new(),
+            taken_at: m.taken_at,
+            files: m.files.len() as i64,
+            bytes: m.files.iter().map(|f| f.s).sum(),
+            new_files: 0,
+            new_bytes: 0,
+        };
+        snaps.push((snap, m.files));
+    }
+    let name = name.map(|(_, n)| n).unwrap_or_else(|| paths::split_parent(&remote_path).1);
+
+    // Where restores go here; made if it is not there.
+    if !local_path.is_empty() && tree_of(&s, &root.id, &local_path).await.is_err() {
+        let (parent, folder) = paths::split_parent(&local_path);
+        Mover { s: &s, user: &user }.mkdir(&Side::Local, &root.id, &parent, &folder).await?;
+    }
+    let set = s
+        .db
+        .create_snapshot_set(&NewSnapshotSet {
+            name: &name,
+            local_root_id: &root.id,
+            local_path: &local_path,
+            device_id: &req.device_id,
+            remote_root_id: &req.remote_root_id,
+            remote_path: &remote_path,
+            remote_label: &format!("{} / {remote_path}", device.name),
+            created_by: &user.username,
+        })
+        .await?;
+    let outcome: Result<()> = async {
+        s.db.update_snapshot_set(&set.id, Some(false), None).await?;
+        if let Some(key) = &store.key {
+            keep_key(&s, &set.id, key).await?;
+        }
+        for (mut snap, files) in snaps {
+            snap.set_id = set.id.clone();
+            s.db.insert_snapshot(&snap, &files).await?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(e) = outcome {
+        let _ = s.db.delete_snapshot_set(&set.id).await;
+        return Err(e.into());
+    }
+    let set = s.db.get_snapshot_set(&set.id).await?;
+    audit(&s, &user, "backup.opened", Some(&format!("{name} on {}", device.name))).await;
+    s.events.emit(Event::SnapshotsUpdated { id: set.id.clone() });
     Ok((StatusCode::CREATED, Json(view(&s, set).await?)))
 }
 
@@ -1057,6 +1385,15 @@ mod tests {
         assert!(check_schedule(&schedule(0, 14, 8, 12)).is_err());
         assert!(check_schedule(&Schedule { every_hours: 0, ..schedule(1, 0, 0, 0) }).is_err());
         assert!(check_schedule(&schedule(1, -1, 0, 0)).is_err());
+    }
+
+    #[test]
+    fn snapshot_list_names() {
+        let id = new_id();
+        assert_eq!(snapshot_id_of(&format!("2026-11-18_101500_{id}.nxb")), Some((id.as_str(), true)));
+        assert_eq!(snapshot_id_of(&format!("2026-11-18_101500_{id}.json")), Some((id.as_str(), false)));
+        assert_eq!(snapshot_id_of("notes.txt"), None);
+        assert_eq!(snapshot_id_of("2026_x y.json"), None);
     }
 
     #[test]
