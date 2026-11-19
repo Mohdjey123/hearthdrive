@@ -99,9 +99,11 @@ jobs:
         run: npm run desktop:build
 
       - name: Collect
+        # Named after the product in the tag's code ("Name Two" -> Name-Two_...).
         run: |
+          PRODUCT="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').productName")"
           mkdir -p out
-          cp "target/release/bundle/nsis/NEXUS Cloud_${VERSION}_x64-setup.exe" "out/NEXUS-Cloud_${VERSION}_x64-setup.exe"
+          cp "target/release/bundle/nsis/${PRODUCT}_${VERSION}_x64-setup.exe" "out/${PRODUCT// /-}_${VERSION}_x64-setup.exe"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -133,11 +135,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3
-
       - name: Android NDK
+        # The runner already has the Android SDK (ANDROID_HOME); only the NDK
+        # version is chosen here.
         run: |
-          sdkmanager --install "ndk;$NDK_VERSION" > /dev/null
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
           echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
@@ -173,9 +175,10 @@ jobs:
 
       - name: Collect
         run: |
+          PRODUCT="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').productName")"
           APK="$(ls apps/desktop/src-tauri/gen/android/app/build/outputs/apk/arm64/release/*.apk | grep -v unsigned | head -1)"
           mkdir -p out
-          cp "$APK" "out/NEXUS-Cloud_${VERSION}_arm64.apk"
+          cp "$APK" "out/${PRODUCT// /-}_${VERSION}_arm64.apk"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -226,18 +229,19 @@ jobs:
             target/release/nexus-release sign --key "$RUNNER_TEMP/update-key" --channel "$CHANNEL" \
               --platform "$1" --version "$VERSION" --package "out/$2" --out "out/nexus-update-$1.json" "${NOTES[@]}"
           }
-          sign windows-x86_64 "NEXUS-Cloud_${VERSION}_x64-setup.exe"
-          sign android-aarch64 "NEXUS-Cloud_${VERSION}_arm64.apk"
+          sign windows-x86_64 "$(cd out && ls *_x64-setup.exe)"
+          sign android-aarch64 "$(cd out && ls *_arm64.apk)"
           rm -f "$RUNNER_TEMP/update-key"
           (cd out && for f in *.exe *.apk; do sha256sum "$f" > "$f.sha256"; done)
           ls -l out
 
       - name: Publish the release
         run: |
-          NOTES=(--notes "NEXUS Cloud $VERSION")
+          PRODUCT="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').productName")"
+          NOTES=(--notes "$PRODUCT $VERSION")
           [ -f "docs/releases/$VERSION.md" ] && NOTES=(--notes-file "docs/releases/$VERSION.md")
           if [ "$CHANNEL" = beta ]; then
-            gh release create "$TAG" --verify-tag --prerelease --title "NEXUS Cloud $VERSION beta" "${NOTES[@]}" out/*
+            gh release create "$TAG" --verify-tag --prerelease --title "$PRODUCT $VERSION beta" "${NOTES[@]}" out/*
             # The fixed place beta devices look: always the newest beta's
             # signed descriptions.
             if ! gh release view beta > /dev/null 2>&1; then
@@ -246,5 +250,5 @@ jobs:
             fi
             gh release upload beta out/nexus-update-*.json --clobber
           else
-            gh release create "$TAG" --verify-tag --latest --title "NEXUS Cloud $VERSION" "${NOTES[@]}" out/*
+            gh release create "$TAG" --verify-tag --latest --title "$PRODUCT $VERSION" "${NOTES[@]}" out/*
           fi

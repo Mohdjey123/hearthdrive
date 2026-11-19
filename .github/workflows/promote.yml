@@ -70,12 +70,13 @@ jobs:
             target/release/nexus-release sign --key "$RUNNER_TEMP/update-key" \
               --platform "$1" --version "$VERSION" --package "out/$2" --out "out/nexus-update-$1.json" "${NOTES[@]}"
           }
-          sign windows-x86_64 "NEXUS-Cloud_${VERSION}_x64-setup.exe"
-          sign android-aarch64 "NEXUS-Cloud_${VERSION}_arm64.apk"
+          sign windows-x86_64 "$(cd out && ls *_x64-setup.exe)"
+          sign android-aarch64 "$(cd out && ls *_arm64.apk)"
           rm -f "$RUNNER_TEMP/update-key"
 
       - name: Publish v${{ env.VERSION }}
         run: |
-          NOTES=(--notes "NEXUS Cloud $VERSION")
+          PRODUCT="$(jq -r .productName apps/desktop/src-tauri/tauri.conf.json)"
+          NOTES=(--notes "$PRODUCT $VERSION")
           [ -f "docs/releases/$VERSION.md" ] && NOTES=(--notes-file "docs/releases/$VERSION.md")
-          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" --latest --title "NEXUS Cloud $VERSION" "${NOTES[@]}" out/*
+          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" --latest --title "$PRODUCT $VERSION" "${NOTES[@]}" out/*
