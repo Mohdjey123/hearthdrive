@@ -8,6 +8,7 @@
 
 ; Where NEXUS Cloud (the app's earlier name) is installed, if it is.
 Var EarlierInstall
+Var NewNameFolder
 
 !macro NEXUS_STOP_SERVICE
   ; Only this Windows account's processes can be stopped without
@@ -29,8 +30,14 @@ Var EarlierInstall
     StrCpy $EarlierInstall "$LOCALAPPDATA\NEXUS Cloud"
   ${EndIf}
   ${If} ${FileExists} "$EarlierInstall\nexus-desktop.exe"
+    StrCpy $NewNameFolder $INSTDIR
     StrCpy $INSTDIR $EarlierInstall
     SetOutPath $INSTDIR
+    ; The installer has already made (and worked in) the new name's default
+    ; folder. It is still empty; RMDir leaves a folder that is not.
+    ${If} $NewNameFolder != $INSTDIR
+      RMDir "$NewNameFolder"
+    ${EndIf}
     !insertmacro HEARTHDRIVE_RENAME_SHORTCUT "$SMPROGRAMS"
     !insertmacro HEARTHDRIVE_RENAME_SHORTCUT "$DESKTOP"
     DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NEXUS Cloud"
