@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HearthDrive: your files, at home</title>
+<meta name="description" content="HearthDrive turns the Windows computers you already own into a private cloud you can reach from your phone and your other computers. Free, source-available, no account.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#FBF7F0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14100E" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="HearthDrive">
+<meta property="og:description" content="Your files, at home. A private cloud made of your own computers and phone.">
+<meta property="og:image" content="https://mohdjey123.github.io/hearthdrive/img/social.jpg">
+<meta property="og:type" content="website">
+<link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="img/icon-512.png">
+<link rel="preload" href="fonts/source-sans-3-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top wrap">
+  <a class="brand" href="./" aria-label="HearthDrive home">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path fill-rule="evenodd" d="M3.2 29V20.4A12.8 12.8 0 0 1 28.8 20.4V29ZM9.2 29V20.2A6.8 6.8 0 0 1 22.8 20.2V29Z"/></svg>
+    <span>HearthDrive</span>
+  </a>
+  <nav aria-label="Site">
+    <a href="#how">Setting up</a>
+    <a href="#download">Download</a>
+    <a href="https://github.com/Mohdjey123/hearthdrive">Source code</a>
+  </nav>
+</header>
+
+<main id="main">
+  <section class="hero wrap">
+    <h1>Your files, at home.</h1>
+    <div class="hero-text">
+      <p class="lead">HearthDrive turns the Windows computers you already own into one private cloud. From your phone or any of your other computers you can open, search and copy the files on all of them, at home or away.</p>
+      <p class="lead-2">The files stay on your own drives. There is no HearthDrive account, and no company in between holding a copy.</p>
+      <div class="get">
+        <a class="button" id="hero-button" href="https://github.com/Mohdjey123/hearthdrive/releases/latest">Download for Windows</a>
+        <a class="quiet" id="hero-other" href="#download">Android app and other downloads</a>
+      </div>
+      <p class="meta" id="hero-meta">Free. Windows 10 and 11, and Android.</p>
+    </div>
+  </section>
+
+  <figure class="shots wrap" aria-label="The HearthDrive app">
+    <img class="shot-wide" src="img/files.webp" width="2544" height="1640" alt="HearthDrive on a computer called Living room PC, showing the photos in Family, Photos, 2025, Summer at the lake." fetchpriority="high">
+    <img class="shot-phone" src="img/phone.webp" width="780" height="1688" alt="The Android app on a phone, showing photos kept on the Laptop in Backups, Family photos, 2026, Backyard." loading="lazy">
+  </figure>
+
+  <section class="what wrap" aria-labelledby="what-h">
+    <div class="what-head">
+      <h2 id="what-h">What it does</h2>
+      <p>Install it on each computer that holds files you care about. Every one of them becomes part of the same cloud, and your phone can reach all of them.</p>
+    </div>
+    <dl class="rows">
+      <div><dt>Files stay where they are</dt>
+        <dd>Add a folder or a whole drive. HearthDrive lists what is in it without moving anything, and keeps that list up to date as you work.</dd></div>
+      <div><dt>Every device in one place</dt>
+        <dd>Browse and search the files on all your computers from any of them. Photos and videos open in the app, music and films stream, and anything else downloads.</dd></div>
+      <div><dt>Pair with a code, not an account</dt>
+        <dd>A new device joins by scanning a QR code or opening a link. Both screens show a short fingerprint; when they match, you approve it.</dd></div>
+      <div><dt>Encrypted from end to end</dt>
+        <dd>Devices connect directly when they can: on your home network, or through your router. When they can&rsquo;t, traffic goes through a relay that passes it along without being able to read it.</dd></div>
+      <div><dt>Copies and sync</dt>
+        <dd>Keep a copy of a folder on a second computer, or keep two folders the same in both directions. Older versions of changed files are kept, and copies pick up where they stopped after a dropped connection.</dd></div>
+      <div><dt>Phone backup</dt>
+        <dd>The Android app backs up the photos and videos you take to a computer you choose. Files you share from any app&rsquo;s Share menu can go to a computer too.</dd></div>
+      <div><dt>In File Explorer</dt>
+        <dd>On Windows, each of your devices shows up under HearthDrive in File Explorer. A file downloads when you open it.</dd></div>
+      <div><dt>Updates itself</dt>
+        <dd>Every device checks for new versions and accepts only ones signed for HearthDrive. Computers update once their window is closed; phones ask first.</dd></div>
+    </dl>
+  </section>
+
+  <section class="pair wrap" aria-labelledby="pair-h">
+    <div class="pair-text">
+      <h2 id="pair-h">See which devices are home</h2>
+      <p>The Devices page shows each computer and phone you have paired, whether it is reachable right now, and how it is connected. You can block a lost phone from here, or wake a sleeping computer on the same network if its network card allows it.</p>
+    </div>
+    <img src="img/devices.webp" width="2544" height="880" alt="The Devices page with two paired devices, Living room PC and Laptop, both online." loading="lazy">
+  </section>
+
+  <figure class="photos wrap">
+    <img src="img/photos.webp" width="2544" height="1640" alt="The Photos page: pictures from the Family folder grouped by month, September, August and May 2026." loading="lazy">
+    <figcaption><strong>Photos by month</strong>Every picture in the folders you added, newest first, with albums, places on a map and memories from earlier years. Nothing is uploaded to do it; the computer that holds the photos does the work.</figcaption>
+  </figure>
+
+  <section class="how wrap" id="how" aria-labelledby="how-h">
+    <h2 id="how-h">Setting up</h2>
+    <ol class="steps">
+      <li><strong>Install it on the computer that holds your files.</strong> Give the computer a name, create your account, and pick the folders or drives to include.</li>
+      <li><strong>Install it on your other computers,</strong> and the Android app on your phone.</li>
+      <li><strong>On the first computer, open Devices and choose Add device.</strong> Scan the QR code with your phone, or paste the link on the other computer.</li>
+      <li><strong>Check that the fingerprint is the same on both screens,</strong> then approve. The new device can now see your files.</li>
+    </ol>
+  </section>
+
+  <section class="honest wrap" aria-labelledby="honest-h">
+    <h2 id="honest-h">Good to know before you install</h2>
+    <ul>
+      <li>A computer has to be on for its files to be reachable. A phone keeps nothing of its own; it opens the files on your computers.</li>
+      <li>There are apps for Windows and Android only. There is no Mac, Linux or iPhone version.</li>
+      <li>The Windows installer is not code-signed yet, so the first time you run it Windows SmartScreen warns you. Choose <em>More info</em>, then <em>Run anyway</em>.</li>
+      <li>The Android app is not in the Play Store. Download the APK on your phone and let your browser install it when Android asks.</li>
+      <li>HearthDrive is at version 0.1. Keep a separate backup of anything you could not bear to lose.</li>
+    </ul>
+  </section>
+
+  <section class="download wrap" id="download" aria-labelledby="download-h">
+    <div class="download-head">
+      <h2 id="download-h">Download</h2>
+      <p id="release-line">The latest version is on the <a href="https://github.com/Mohdjey123/hearthdrive/releases/latest">releases page</a>.</p>
+    </div>
+    <ul class="files">
+      <li>
+        <div>
+          <h3>Windows</h3>
+          <p>Windows 10 or 11, 64-bit. Installs for your user only; no administrator needed.</p>
+          <code id="win-name">HearthDrive_x64-setup.exe</code>
+        </div>
+        <a class="button" id="win-link" href="https://github.com/Mohdjey123/hearthdrive/releases/latest">Download installer</a>
+      </li>
+      <li>
+        <div>
+          <h3>Android</h3>
+          <p>Phones with a 64-bit ARM processor, which is most phones from the last several years.</p>
+          <code id="apk-name">HearthDrive_arm64.apk</code>
+        </div>
+        <a class="button" id="apk-link" href="https://github.com/Mohdjey123/hearthdrive/releases/latest">Download APK</a>
+      </li>
+    </ul>
+    <p class="after">Already have it? You don&rsquo;t need to download updates: your devices find them by themselves. Coming from NEXUS Cloud 0.1.4 or older, install this once by hand on one computer and it passes the update on to the rest.</p>
+  </section>
+</main>
+
+<footer class="bottom wrap">
+  <p>HearthDrive is source-available under the <a href="https://github.com/Mohdjey123/hearthdrive/blob/main/LICENSE.md">FSL-1.1-ALv2 license</a>: free to use, change and run, for anything except a competing product. Each version also becomes Apache 2.0 two years after its release.</p>
+  <p class="links"><a href="https://github.com/Mohdjey123/hearthdrive">Source code</a> <a href="https://github.com/Mohdjey123/hearthdrive/releases">All releases</a> <a href="https://github.com/Mohdjey123/hearthdrive/issues">Report a problem</a></p>
+  <p class="small">Called NEXUS Cloud up to version 0.1.5.</p>
+</footer>
+
+<script src="download.js" defer></script>
+</body>
+</html>

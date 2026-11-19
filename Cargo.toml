@@ -33,7 +33,7 @@ version = "0.1.7"
 edition = "2024"
 license = "FSL-1.1-ALv2"
 rust-version = "1.85"
-repository = "https://github.com/nexus-cloud/nexus-cloud"
+repository = "https://github.com/Mohdjey123/hearthdrive"
 
 [workspace.dependencies]
 nexus-common = { path = "crates/nexus-common" }

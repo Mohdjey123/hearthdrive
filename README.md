@@ -12,6 +12,8 @@ Free and source-available. No subscription, no third-party storage, nothing expo
 ![Rust](https://img.shields.io/badge/backend-Rust%20%2B%20Axum-orange)
 ![Tauri 2](https://img.shields.io/badge/app-Tauri%202%20%2B%20React-24c8db)
 
+**[Website](https://mohdjey123.github.io/hearthdrive/)** · **[Download](../../releases/latest)** · [Release notes](docs/releases)
+
 </div>
 
 ---
@@ -19,6 +21,29 @@ Free and source-available. No subscription, no third-party storage, nothing expo
 > HearthDrive was called **NEXUS Cloud** up to version 0.1.5. Updating keeps everything: devices, pairings, settings, the data folder and the install folder stay as they were, and the old name's shortcuts are renamed.
 
 Every computer you install HearthDrive on becomes a storage node: it indexes the folders and drives you choose (in place, nothing is moved or uploaded anywhere) and serves them to your other devices. Devices pair with a link or a QR code and talk over end-to-end encrypted peer-to-peer connections, from any network, with nothing else to install.
+
+![HearthDrive on a computer called Living room PC, showing a folder of photos](site/img/files.webp)
+
+<table>
+<tr>
+<td width="50%"><img src="site/img/photos.webp" alt="The Photos page: pictures grouped by month"></td>
+<td width="50%"><img src="site/img/devices.webp" alt="The Devices page with two paired computers, both online"></td>
+</tr>
+<tr>
+<td>Photos from every folder you added, by month</td>
+<td>Paired devices, whether they are online and how they connect</td>
+</tr>
+<tr>
+<td><img src="site/img/overview.webp" alt="The Overview page: storage across two devices and recent files"></td>
+<td align="center"><img src="site/img/phone.webp" width="200" alt="The Android app showing photos kept on another computer"></td>
+</tr>
+<tr>
+<td>Storage across all your devices, and recent files</td>
+<td>The Android app, browsing photos kept on the laptop</td>
+</tr>
+</table>
+
+The screenshots show two demo computers with sample files.
 
 > **Status:** Phases 0–6 are done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, encrypted share links, the Android app with photo backup, and updates that spread between your own devices. On top of that: photos, music and films, searchable documents, rules, WebDAV and S3 access, encrypted folders and plugins. A store-signed Android build is next (see [Roadmap](#roadmap)).
 
@@ -110,6 +135,7 @@ crates/
 migrations/            SQL migrations (embedded at build time)
 scripts/               Android build script
 docs/                  Architecture and development notes
+site/                  The website (GitHub Pages): plain HTML and CSS, published by .github/workflows/pages.yml
 ```
 
 ## Development

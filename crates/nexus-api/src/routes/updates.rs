@@ -410,7 +410,7 @@ pub const GITHUB_SETTING: &str = "updates.github";
 /// The public repository whose releases hold the update packages, each next
 /// to a signed `nexus-update-<platform>.json`. `NEXUS_UPDATE_REPO` names
 /// another (`off` turns GitHub off).
-const RELEASES_REPO: &str = "Mohdjey123/nexus-cloud";
+const RELEASES_REPO: &str = "Mohdjey123/hearthdrive";
 
 /// The release that always holds the newest beta's signed descriptions.
 const BETA_FEED_TAG: &str = "beta";
