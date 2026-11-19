@@ -7,7 +7,7 @@
 # Start it from the Actions tab (Promote a beta -> Run workflow), or:
 #   gh workflow run promote.yml -f version=1.2.3
 #
-# Secret: NEXUS_UPDATE_KEY (see release.yml).
+# Secret: NEXUS_UPDATE_KEY, in the "release" environment (see release.yml).
 name: Promote a beta
 
 on:
@@ -31,6 +31,7 @@ env:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    environment: release
     timeout-minutes: 30
     steps:
       - name: Check the version

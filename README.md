@@ -330,13 +330,14 @@ Updates are built and published by GitHub Actions, not on anyone's computer, and
 * **The update key** is at `~/.nexus-signing/update-key`; the release workflow uses a copy in the repository's secrets. Anyone with it can publish updates to all your devices, so keep it private.
 * **The spare key.** The app trusts a second key, `~/.nexus-signing/update-key-spare`, which has never signed anything. Move it off this computer (a USB stick in a drawer, a password manager) and delete it here. If the main key is ever lost or leaks: put the spare in the `NEXUS_UPDATE_KEY` secret, take the old key out of `TRUSTED_KEYS` (`crates/nexus-devices/src/release.rs`), add a new spare there, and release. Every device takes that release, because it trusts the spare, and from then on no longer trusts the old key. Without a spare, every device would have to be updated by hand.
 
-**Setting up the release workflow.** In the repository's **Settings** → **Secrets and variables** → **Actions**, add:
+**Setting up the release workflow.** In the repository's **Settings** → **Environments**, make an environment named `release`. Under **Deployment branches and tags** choose **Selected branches and tags** and allow the branch `main` (promoting a beta runs from it) and tags matching `v*`, so the keys are handed only to real releases. Add these as its **Environment secrets**:
 
 | Secret | What |
 |---|---|
 | `NEXUS_UPDATE_KEY` | The contents of `~/.nexus-signing/update-key`. |
 | `ANDROID_KEYSTORE_BASE64` | The keystore that signs the APK, base64-encoded. To keep updating the app already on your phones, use the key that signed it (builds from `build-android.sh` so far: `~/.android/debug.keystore`). |
-| `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Its password, the key's alias and the key's password (for the debug keystore: `android`, `androiddebugkey`, `android`). |
+| `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` | Its password and the key's alias (for the debug keystore: `android` and `androiddebugkey`). |
+| `ANDROID_KEY_PASSWORD` | The key's password, only if it differs from the keystore's; otherwise leave it out. |
 
 The workflows publish with the repository's own token, so no other token is needed.
 

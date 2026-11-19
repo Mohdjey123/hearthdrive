@@ -17,7 +17,8 @@
 #    download links, check the signature, and pass stable releases on to
 #    each other.
 #
-# Secrets (Settings -> Secrets and variables -> Actions):
+# Secrets, in the "release" environment (Settings -> Environments), which
+# hands them only to runs from v* tags and main:
 #   NEXUS_UPDATE_KEY           the contents of ~/.nexus-signing/update-key
 #   ANDROID_KEYSTORE_BASE64    the keystore that signs the APK, base64. Use the
 #                              key that signed the app already on your phones,
@@ -112,6 +113,7 @@ jobs:
   android:
     needs: prepare
     runs-on: ubuntu-latest
+    environment: release
     timeout-minutes: 90
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -185,6 +187,7 @@ jobs:
   publish:
     needs: [prepare, windows, android]
     runs-on: ubuntu-latest
+    environment: release
     timeout-minutes: 30
     permissions:
       contents: write
