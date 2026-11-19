@@ -104,7 +104,7 @@ export function StatusDot({ tone }: { tone: 'online' | 'offline' | 'busy' | 'err
     <span
       className={cx(
         'inline-block size-2 shrink-0 rounded-full',
-        tone === 'online' && 'bg-accent',
+        tone === 'online' && 'bg-success',
         tone === 'offline' && 'bg-subtle',
         tone === 'busy' && 'bg-warn animate-pulse',
         tone === 'error' && 'bg-danger',

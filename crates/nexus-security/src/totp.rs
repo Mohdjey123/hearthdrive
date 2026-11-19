@@ -142,8 +142,8 @@ mod tests {
     fn base32_and_uri() {
         assert_eq!(base32(b"foobar"), "MZXW6YTBOI");
         assert_eq!(base32(b"f"), "MY");
-        let uri = uri(SECRET, "Hearthdrive (Desk)", "anna");
-        assert!(uri.starts_with("otpauth://totp/Hearthdrive%20%28Desk%29:anna?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Hearthdrive%20%28Desk%29"), "{uri}");
+        let uri = uri(SECRET, "HearthDrive (Desk)", "anna");
+        assert!(uri.starts_with("otpauth://totp/HearthDrive%20%28Desk%29:anna?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=HearthDrive%20%28Desk%29"), "{uri}");
     }
 
     #[test]

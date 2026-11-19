@@ -1,4 +1,4 @@
-# Builds and publishes a Hearthdrive release for every platform, on GitHub's
+# Builds and publishes a HearthDrive release for every platform, on GitHub's
 # computers: no one's own PC has to build, sign or upload anything.
 #
 #   v1.2.3        a stable release: every device gets it.

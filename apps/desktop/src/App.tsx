@@ -65,15 +65,15 @@ function Root() {
     case 'loading':
       return (
         <div className="flex h-full flex-col items-center justify-center gap-4">
-          <Logo className="size-10" />
+          <Logo className="size-10 text-accent" />
           <Spinner />
         </div>
       )
     case 'error':
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-          <Logo className="size-10" />
-          <div className="text-[15px] font-semibold">{isMobile() ? "Hearthdrive couldn’t start" : "Can’t reach the Hearthdrive service"}</div>
+          <Logo className="size-10 text-accent" />
+          <div className="text-[15px] font-semibold">{isMobile() ? "HearthDrive couldn’t start" : "Can’t reach the HearthDrive service"}</div>
           <p className="max-w-md text-muted">{phase.message}</p>
           <Button icon={<RefreshCw className="size-3.5" />} onClick={() => void reload()}>Try again</Button>
         </div>

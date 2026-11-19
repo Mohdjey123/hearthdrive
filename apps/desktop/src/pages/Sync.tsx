@@ -249,7 +249,7 @@ export function Sync() {
             action={peers.length > 0 ? <Button variant="primary" onClick={() => setAdding(true)}>Sync a folder</Button> : undefined}
           >
             {peers.length > 0
-              ? 'Pick a folder here and a folder on another computer. Hearthdrive keeps them the same, both ways or one way.'
+              ? 'Pick a folder here and a folder on another computer. HearthDrive keeps them the same, both ways or one way.'
               : 'Pair another computer first (Devices → Add a device), then sync folders with it.'}
           </EmptyState>
         </div>

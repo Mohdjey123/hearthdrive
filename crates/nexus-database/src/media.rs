@@ -1,4 +1,4 @@
-//! What Hearthdrive read from inside photos, videos and music, and photo albums.
+//! What HearthDrive read from inside photos, videos and music, and photo albums.
 
 use crate::Database;
 use crate::files::FILE_COLUMNS;

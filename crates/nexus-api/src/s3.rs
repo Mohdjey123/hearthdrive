@@ -6,7 +6,7 @@
 //! token for programs' id and the secret key its secret. Supported: listing
 //! buckets and objects (V1 and V2), getting, heading, putting (plain,
 //! signed-chunked and unsigned-chunked bodies), copying and deleting
-//! objects (deleted objects go to the Hearthdrive trash), and multipart uploads.
+//! objects (deleted objects go to the HearthDrive trash), and multipart uploads.
 
 use crate::auth::{AuthUser, Need};
 use crate::programs::named_roots;
@@ -336,7 +336,7 @@ async fn dispatch(s: &SharedState, req: Request) -> S3Result<Response> {
             Method::GET => list_objects(s, &user, &root, &bucket_name, &pairs).await,
             Method::HEAD => Ok(StatusCode::OK.into_response()),
             Method::POST if has("delete") => delete_many(s, &user, &root, req).await,
-            Method::PUT => Err(S3Error::new(StatusCode::CONFLICT, "BucketAlreadyOwnedByYou", "Buckets are storage locations: add one in Hearthdrive")),
+            Method::PUT => Err(S3Error::new(StatusCode::CONFLICT, "BucketAlreadyOwnedByYou", "Buckets are storage locations: add one in HearthDrive")),
             _ => Err(S3Error::new(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "Not allowed on a bucket")),
         };
     }

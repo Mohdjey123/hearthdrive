@@ -73,7 +73,7 @@ export function ProgramsPanel({ manage }: { manage: boolean }) {
         <Row label="Address for programs">
           {!draft ? <Spinner /> : (
             <div className="space-y-2 text-[13px]">
-              <p>Scripts can use the Hearthdrive API, file managers can connect with WebDAV, and backup tools such as rclone or restic can use Hearthdrive as S3 storage. They sign in with a token from below.</p>
+              <p>Scripts can use the HearthDrive API, file managers can connect with WebDAV, and backup tools such as rclone or restic can use HearthDrive as S3 storage. They sign in with a token from below.</p>
               <label className="flex items-center gap-2">
                 <input type="checkbox" className="accent-[var(--nx-accent)]" checked={draft.enabled} disabled={!manage || busy}
                   onChange={(e) => void save({ ...draft, enabled: e.target.checked })} />

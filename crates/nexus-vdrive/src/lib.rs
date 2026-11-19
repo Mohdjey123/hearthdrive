@@ -1,4 +1,4 @@
-//! The Hearthdrive virtual drive: every paired device's storage in File Explorer.
+//! The HearthDrive virtual drive: every paired device's storage in File Explorer.
 //!
 //! On Windows the drive is a cloud sync root, the mechanism OneDrive uses
 //! (the Cloud Files API): a folder, shown in Explorer's navigation pane,
@@ -147,12 +147,12 @@ fn home() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
 }
 
-/// The default folder: `%USERPROFILE%\Hearthdrive`.
+/// The default folder: `%USERPROFILE%\HearthDrive`.
 pub fn default_path() -> PathBuf {
-    home().join("Hearthdrive")
+    home().join("HearthDrive")
 }
 
-/// The default folder before the app was called Hearthdrive. A drive
+/// The default folder before the app was called HearthDrive. A drive
 /// turned on there stays there: moving it would delete its placeholders
 /// and the files kept on this computer.
 pub fn earlier_default_path() -> PathBuf {
@@ -176,7 +176,7 @@ pub fn check_path(path: &Path, avoid: &[PathBuf]) -> Result<(), String> {
     let text = path.to_string_lossy();
     let absolute = path.is_absolute() && (text.len() > 3 || !text.ends_with(['\\', '/']));
     if !absolute || text.starts_with("\\\\") {
-        return Err("Choose a folder on a drive of this computer, such as C:\\Users\\you\\Hearthdrive".into());
+        return Err("Choose a folder on a drive of this computer, such as C:\\Users\\you\\HearthDrive".into());
     }
     if path.parent().is_none() || path.parent() == Some(Path::new("")) {
         return Err("Choose a folder, not a whole drive".into());
@@ -184,7 +184,7 @@ pub fn check_path(path: &Path, avoid: &[PathBuf]) -> Result<(), String> {
     for other in avoid {
         if within(path, other) || within(other, path) {
             return Err(format!(
-                "The virtual drive cannot be in or around {}, which Hearthdrive already uses. Choose another folder.",
+                "The virtual drive cannot be in or around {}, which HearthDrive already uses. Choose another folder.",
                 other.display()
             ));
         }
@@ -333,11 +333,11 @@ mod tests {
 
     #[test]
     fn checks_chosen_folders() {
-        let avoid = [PathBuf::from("D:\\Media"), PathBuf::from("C:\\Users\\me\\AppData\\Local\\Hearthdrive")];
+        let avoid = [PathBuf::from("D:\\Media"), PathBuf::from("C:\\Users\\me\\AppData\\Local\\HearthDrive")];
         if cfg!(windows) {
-            assert!(check_path(Path::new("C:\\Users\\me\\Hearthdrive"), &avoid).is_ok());
+            assert!(check_path(Path::new("C:\\Users\\me\\HearthDrive"), &avoid).is_ok());
             assert!(check_path(Path::new("D:\\Other"), &avoid).is_ok());
-            assert!(check_path(Path::new("D:\\Media\\Hearthdrive"), &avoid).is_err(), "inside a storage location");
+            assert!(check_path(Path::new("D:\\Media\\HearthDrive"), &avoid).is_err(), "inside a storage location");
             assert!(check_path(Path::new("d:\\media"), &avoid).is_err(), "case does not matter");
             assert!(check_path(Path::new("D:\\"), &avoid).is_err(), "a whole drive");
             assert!(check_path(Path::new("C:\\Users\\me\\AppData"), &avoid).is_err(), "around the data folder");
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn default_path_is_in_the_profile() {
-        assert!(default_path().ends_with("Hearthdrive"));
+        assert!(default_path().ends_with("HearthDrive"));
         assert!(earlier_default_path().ends_with("NEXUS"));
     }
 

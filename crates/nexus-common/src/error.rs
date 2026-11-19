@@ -1,6 +1,6 @@
 pub type Result<T, E = NexusError> = std::result::Result<T, E>;
 
-/// The error type shared by every Hearthdrive crate. The API layer maps each
+/// The error type shared by every HearthDrive crate. The API layer maps each
 /// variant onto an HTTP status and a stable machine-readable code.
 #[derive(Debug, thiserror::Error)]
 pub enum NexusError {

@@ -171,7 +171,7 @@ function Timeline({ prefix, kind, onOpen, selected, setSelected }: {
         <EmptyState icon={kind === 'video' ? <Video className="size-6" /> : <Images className="size-6" />} title={kind === 'video' ? 'No videos yet' : 'No photos yet'}>
           {kind === 'video'
             ? 'Videos in your storage show up here.'
-            : 'Photos in your storage show up here with their dates, cameras and places, once Hearthdrive has read them.'}
+            : 'Photos in your storage show up here with their dates, cameras and places, once HearthDrive has read them.'}
         </EmptyState>
       ) : (
         groups.map((g) => (

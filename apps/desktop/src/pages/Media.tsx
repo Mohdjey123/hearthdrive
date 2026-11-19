@@ -67,7 +67,7 @@ function Player({ prefix, item, onClose }: { prefix: string; item: (FileEntry & 
       if (!live) return
       setResumeAt(resume)
       if (PLAYABLE.has(ext) || !caps?.transcode) {
-        if (!PLAYABLE.has(ext)) setError('This browser may not play this format. Install ffmpeg on the computer that holds it, and Hearthdrive converts it while it plays.')
+        if (!PLAYABLE.has(ext)) setError('This browser may not play this format. Install ffmpeg on the computer that holds it, and HearthDrive converts it while it plays.')
         setConverted(false)
         setSrc(await contentUrl(item.id, false, prefix))
       } else {

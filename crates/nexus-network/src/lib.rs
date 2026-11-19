@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 pub use iroh::PublicKey as PeerKey;
 pub use iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 
-/// Application protocol spoken on Hearthdrive connections: HTTP/1.1, one request
+/// Application protocol spoken on HearthDrive connections: HTTP/1.1, one request
 /// per bidirectional stream.
 pub const ALPN: &[u8] = b"nexus/http/1";
 
@@ -163,14 +163,14 @@ pub struct P2pNode {
     incoming: Mutex<HashMap<usize, Connection>>,
 }
 
-/// Decodes a Hearthdrive public key (base64url of 32 bytes).
+/// Decodes a HearthDrive public key (base64url of 32 bytes).
 pub fn public_key(b64: &str) -> Option<PublicKey> {
     let bytes = URL_SAFE_NO_PAD.decode(b64.trim()).ok()?;
     let bytes: [u8; 32] = bytes.as_slice().try_into().ok()?;
     PublicKey::from_bytes(&bytes).ok()
 }
 
-/// Encodes a key the way Hearthdrive stores device keys.
+/// Encodes a key the way HearthDrive stores device keys.
 pub fn key_string(key: &PublicKey) -> String {
     URL_SAFE_NO_PAD.encode(key.as_bytes())
 }

@@ -1,55 +1,65 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
+@import "@fontsource-variable/source-sans-3";
+@import "@fontsource/cascadia-mono/400.css";
+@import "@fontsource/cascadia-mono/600.css";
 
-/* Design tokens. Dark is the default; light is opt-in via data-theme. */
+/* HearthDrive brand tokens (brand book v1.0). Dark (Night) is the default;
+   light (Paper) is opt-in via data-theme. On Night the accent is the lighter
+   ember, so it keeps its contrast; Ember itself is never placed on Night. */
 :root,
 [data-theme="dark"] {
-  --nx-bg: #0d0f10;
-  --nx-panel: #131618;
-  --nx-elevated: #1a1e21;
-  --nx-hover: #1f2427;
-  --nx-line: #252a2e;
-  --nx-line-strong: #343a3f;
-  --nx-fg: #e4e7e9;
-  --nx-muted: #8a9298;
-  --nx-subtle: #5f676d;
-  --nx-accent: #6fae86;
-  --nx-accent-strong: #84c29b;
-  --nx-accent-soft: rgb(111 174 134 / 0.14);
-  --nx-accent-fg: #0b130e;
-  --nx-danger: #e07070;
-  --nx-danger-soft: rgb(224 112 112 / 0.12);
-  --nx-warn: #d9a54a;
-  --nx-warn-soft: rgb(217 165 74 / 0.12);
-  --nx-info: #6fa3d6;
+  --nx-bg: #14100e;            /* night */
+  --nx-panel: #1a1512;
+  --nx-elevated: #201a16;      /* night raised */
+  --nx-hover: #2a221d;
+  --nx-line: #2c241f;
+  --nx-line-strong: #352c26;   /* night line */
+  --nx-fg: #f4eee6;            /* night text */
+  --nx-muted: #b3a597;         /* night muted */
+  --nx-subtle: #8c7f73;
+  --nx-accent: #f08a5d;        /* ember on night */
+  --nx-accent-strong: #f5a47f;
+  --nx-accent-soft: rgb(240 138 93 / 0.14);
+  --nx-accent-fg: #14100e;
+  --nx-success: #7ccbb0;       /* pine on night */
+  --nx-success-soft: rgb(124 203 176 / 0.14);
+  --nx-focus: #e4622e;         /* ember bright */
+  --nx-danger: #f0727f;
+  --nx-danger-soft: rgb(240 114 127 / 0.12);
+  --nx-warn: #e0b04f;
+  --nx-warn-soft: rgb(224 176 79 / 0.12);
+  --nx-info: #8fb4d6;
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  --nx-bg: #f5f6f6;
-  --nx-panel: #ffffff;
-  --nx-elevated: #eff1f1;
-  --nx-hover: #e8ebea;
-  --nx-line: #dfe3e2;
-  --nx-line-strong: #c9cfcd;
-  --nx-fg: #15191b;
-  --nx-muted: #5c656a;
-  --nx-subtle: #8b9398;
-  --nx-accent: #2e7b50;
-  --nx-accent-strong: #256843;
-  --nx-accent-soft: rgb(46 123 80 / 0.1);
+  --nx-bg: #fbf7f0;            /* paper */
+  --nx-panel: #fffdf9;
+  --nx-elevated: #f3ece2;      /* sand */
+  --nx-hover: #ece3d7;
+  --nx-line: #e2d8cb;          /* line */
+  --nx-line-strong: #d2c5b5;
+  --nx-fg: #1c1714;            /* ink */
+  --nx-muted: #4f443c;
+  --nx-subtle: #736558;        /* stone */
+  --nx-accent: #b4431b;        /* ember */
+  --nx-accent-strong: #8e3411; /* ember deep */
+  --nx-accent-soft: rgb(180 67 27 / 0.1);
   --nx-accent-fg: #ffffff;
-  --nx-danger: #c24444;
-  --nx-danger-soft: rgb(194 68 68 / 0.08);
-  --nx-warn: #9a6a0f;
-  --nx-warn-soft: rgb(154 106 15 / 0.1);
-  --nx-info: #2f6aa6;
+  --nx-success: #1e5a49;       /* pine */
+  --nx-success-soft: rgb(30 90 73 / 0.1);
+  --nx-focus: #e4622e;         /* ember bright */
+  --nx-danger: #a3263a;
+  --nx-danger-soft: rgb(163 38 58 / 0.08);
+  --nx-warn: #8a5a00;
+  --nx-warn-soft: rgb(138 90 0 / 0.1);
+  --nx-info: #2f5f8a;
   color-scheme: light;
 }
 
 @theme inline {
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  --font-sans: "Source Sans 3 Variable", "Source Sans 3", system-ui, "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", ui-monospace, "Consolas", monospace;
   --color-bg: var(--nx-bg);
   --color-panel: var(--nx-panel);
   --color-elevated: var(--nx-elevated);
@@ -63,6 +73,8 @@
   --color-accent-strong: var(--nx-accent-strong);
   --color-accent-soft: var(--nx-accent-soft);
   --color-accent-fg: var(--nx-accent-fg);
+  --color-success: var(--nx-success);
+  --color-success-soft: var(--nx-success-soft);
   --color-danger: var(--nx-danger);
   --color-danger-soft: var(--nx-danger-soft);
   --color-warn: var(--nx-warn);
@@ -83,8 +95,10 @@ body {
   font-family: var(--font-sans);
   font-size: 13px;
   line-height: 1.45;
+  /* Sizes across the app were set for a taller-x-height face; this keeps
+     Source Sans 3 reading at the same size. */
+  font-size-adjust: 0.53;
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: "cv11", "ss01";
 }
 
 ::selection {
@@ -96,9 +110,10 @@ body {
   scrollbar-color: var(--nx-line-strong) transparent;
 }
 
+/* The brand focus ring: 3 px Ember bright at 2 px offset. */
 :focus-visible {
-  outline: 2px solid var(--nx-accent);
-  outline-offset: 1px;
+  outline: 3px solid var(--nx-focus);
+  outline-offset: 2px;
 }
 
 .tabular {

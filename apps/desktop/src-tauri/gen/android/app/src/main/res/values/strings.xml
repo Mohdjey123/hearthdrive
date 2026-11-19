@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">"Hearthdrive"</string>
-    <string name="main_activity_title">"Hearthdrive"</string>
-    <string name="share_label">"Hearthdrive"</string>
+    <string name="app_name">"HearthDrive"</string>
+    <string name="main_activity_title">"HearthDrive"</string>
+    <string name="share_label">"HearthDrive"</string>
 </resources>

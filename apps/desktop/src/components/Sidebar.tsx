@@ -37,17 +37,16 @@ export function pageAvailable(page: Page) {
   return isMobile() ? !PHONELESS.includes(page) : !PHONE_ONLY.includes(page)
 }
 
-export function Logo({ className }: { className?: string }) {
+/** The HearthDrive mark: a hearth opening, drawn on a 32-unit grid. It takes
+ *  the text colour; `micro` drops the opening for sizes under 20 px. */
+export function Logo({ className, micro }: { className?: string; micro?: boolean }) {
   return (
-    <svg viewBox="0 0 512 512" className={className} aria-hidden>
-      <g stroke="var(--nx-accent)" strokeWidth="26" strokeLinecap="round">
-        <line x1="150" y1="170" x2="362" y2="170" />
-        <line x1="150" y1="170" x2="256" y2="356" />
-        <line x1="362" y1="170" x2="256" y2="356" />
-      </g>
-      <circle cx="150" cy="170" r="62" fill="var(--nx-accent)" />
-      <circle cx="362" cy="170" r="62" fill="var(--nx-accent)" />
-      <circle cx="256" cy="356" r="62" fill="var(--nx-fg)" />
+    <svg viewBox="0 0 32 32" className={className} aria-hidden>
+      <path
+        d={micro ? 'M3.2 29V20.4A12.8 12.8 0 0 1 28.8 20.4V29Z' : 'M3.2 29V20.4A12.8 12.8 0 0 1 28.8 20.4V29ZM9.2 29V20.2A6.8 6.8 0 0 1 22.8 20.2V29Z'}
+        fill="currentColor"
+        fillRule="evenodd"
+      />
     </svg>
   )
 }
@@ -71,8 +70,8 @@ export function Sidebar({ current }: { current: Page }) {
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
       <div className="flex h-14 items-center gap-2.5 px-4">
-        <Logo className="size-6" />
-        <span className="text-[14px] font-semibold tracking-tight">Hearthdrive</span>
+        <Logo className="size-6 text-fg" />
+        <span className="text-[15px] font-bold">HearthDrive</span>
       </div>
       <nav className="flex-1 space-y-0.5 px-2 py-2">
         {NAV.filter((n) => pageAvailable(n.page)).map(({ page, label, icon: Icon }) => (

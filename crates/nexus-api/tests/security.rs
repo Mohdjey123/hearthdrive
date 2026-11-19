@@ -142,7 +142,7 @@ async fn two_step_sign_in_passkeys_sessions_and_locks() {
     assert_eq!(st, StatusCode::FORBIDDEN);
     let (st, v) = call(app, Method::POST, "/auth/2fa/setup", Some(&first_session), Some(json!({"password": "anna password 1"}))).await;
     assert_eq!(st, StatusCode::OK, "{v}");
-    assert!(s(&v, "uri").starts_with("otpauth://totp/Hearthdrive%20%28Desk%29:anna?secret="));
+    assert!(s(&v, "uri").starts_with("otpauth://totp/HearthDrive%20%28Desk%29:anna?secret="));
     let secret = unbase32(&s(&v, "secret"));
     let (st, _) = call(app, Method::POST, "/auth/2fa/enable", Some(&first_session), Some(json!({"code": "000000"}))).await;
     assert_eq!(st, StatusCode::FORBIDDEN);

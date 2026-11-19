@@ -52,7 +52,7 @@ export interface SharedFolder {
   name: string
   created_by: string
   created_at: number
-  /** `null` when the folder was moved or deleted outside Hearthdrive. */
+  /** `null` when the folder was moved or deleted outside HearthDrive. */
   file_id: string | null
   members: FolderMember[]
 }
@@ -174,7 +174,7 @@ export interface Device {
   can_wake: boolean
 }
 
-/** What Hearthdrive read from inside a photo, video or song. */
+/** What HearthDrive read from inside a photo, video or song. */
 export interface MediaInfo {
   kind: 'photo' | 'video' | 'music' | 'other'
   taken_at: number | null
@@ -272,7 +272,7 @@ export function libraryApi(prefix = '') {
   }
 }
 
-/** A Hearthdrive device heard on the local network. */
+/** A HearthDrive device heard on the local network. */
 export interface NearbyDevice {
   id: string
   name: string
@@ -664,7 +664,7 @@ interface AndroidBridge {
   openAppSettings(): void
   /**
    * Hands the node's verified update package to Android's installer. On
-   * Android 12 and later it installs without asking (Hearthdrive closes while it
+   * Android 12 and later it installs without asking (HearthDrive closes while it
    * does); otherwise, or when Android wants to, Android asks.
    */
   installUpdate?(path: string): 'started' | 'permission' | 'missing'
@@ -673,7 +673,7 @@ interface AndroidBridge {
    * background (Android 12 and later), or '' for none.
    */
   installInBackground?(path: string): void
-  /** Whether Android lets Hearthdrive install updates without asking (Android 12 and later). */
+  /** Whether Android lets HearthDrive install updates without asking (Android 12 and later). */
   canUpdateQuietly?(): boolean
 }
 
@@ -739,7 +739,7 @@ export interface PhysicalDisk {
   write_errors: number | null
   /** Whether temperature, wear and errors could be read (needs administrator rights). */
   details: boolean
-  /** Hearthdrive storage locations on this disk. */
+  /** HearthDrive storage locations on this disk. */
   storage: string[]
 }
 
@@ -858,7 +858,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       body: body === undefined ? undefined : JSON.stringify(body),
     })
   } catch {
-    throw new ApiError(0, 'unreachable', 'The Hearthdrive service is not reachable')
+    throw new ApiError(0, 'unreachable', 'The HearthDrive service is not reachable')
   }
   if (!res.ok) {
     let code = 'error'
@@ -885,7 +885,7 @@ async function requestJson<T>(method: string, path: string, body?: unknown): Pro
   try {
     res = await fetch(`${conn.baseUrl}/api/v1${path}`, { method, headers, body: JSON.stringify(body) })
   } catch {
-    throw new ApiError(0, 'unreachable', 'The Hearthdrive service is not reachable')
+    throw new ApiError(0, 'unreachable', 'The HearthDrive service is not reachable')
   }
   const j = await res.json().catch(() => null)
   if (!res.ok) {

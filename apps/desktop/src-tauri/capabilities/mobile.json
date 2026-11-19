@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "mobile",
-  "description": "Permissions for the Hearthdrive app on phones",
+  "description": "Permissions for the HearthDrive app on phones",
   "platforms": [
     "android",
     "iOS"

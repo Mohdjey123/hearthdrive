@@ -297,7 +297,7 @@ pub async fn suggestions(State(s): State<SharedState>, user: AuthUser) -> ApiRes
                     id: format!("sort:{}:{tag}", root.id),
                     kind: "sort",
                     title: format!("Sort {n} {}s into {target}", tag),
-                    detail: format!("Hearthdrive recognised these documents as {tag}s from what they say. A rule can file them, now and when new ones arrive."),
+                    detail: format!("HearthDrive recognised these documents as {tag}s from what they say. A rule can file them, now and when new ones arrive."),
                     root_id: root.id.clone(),
                     bytes: 0,
                     files: Vec::new(),

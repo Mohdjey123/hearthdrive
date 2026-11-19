@@ -299,7 +299,7 @@ fn passkeys_here(headers: &HeaderMap) -> bool {
 }
 
 fn need_origin(headers: &HeaderMap) -> Result<String, NexusError> {
-    page_origin(headers).ok_or_else(|| NexusError::invalid("Passkeys work in the Hearthdrive app, or in a browser at http://localhost (not 127.0.0.1)"))
+    page_origin(headers).ok_or_else(|| NexusError::invalid("Passkeys work in the HearthDrive app, or in a browser at http://localhost (not 127.0.0.1)"))
 }
 
 /// `POST /auth/passkey/start`: a challenge for signing in with a passkey.
@@ -446,7 +446,7 @@ pub async fn setup_two_factor(
     let node = s.db.get_device(&s.node.device_id).await?.name;
     Ok(Json(json!({
         "secret": totp::base32(&secret),
-        "uri": totp::uri(&secret, &format!("Hearthdrive ({node})"), &user.username),
+        "uri": totp::uri(&secret, &format!("HearthDrive ({node})"), &user.username),
     })))
 }
 
@@ -480,7 +480,7 @@ pub async fn enable_two_factor(
         s.security.code_failures.fail(user_id);
         slow_down().await;
         return Err(NexusError::PermissionDenied(
-            "That code is not right. Check the app shows Hearthdrive and that your phone sets its clock automatically.".into(),
+            "That code is not right. Check the app shows HearthDrive and that your phone sets its clock automatically.".into(),
         )
         .into());
     };
@@ -545,7 +545,7 @@ pub async fn add_passkey_start(
     let node = s.db.get_device(&s.node.device_id).await?.name;
     Ok(Json(json!({
         "challenge": b64(&challenge),
-        "rp": { "id": webauthn::RP_ID, "name": format!("Hearthdrive ({node})") },
+        "rp": { "id": webauthn::RP_ID, "name": format!("HearthDrive ({node})") },
         "user": { "id": b64(user_id.as_bytes()), "name": user.username, "display_name": user.username },
         "algorithms": webauthn::ALGORITHMS,
         "exclude": existing,

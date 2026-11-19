@@ -53,7 +53,7 @@ pub struct FolderView {
     name: String,
     created_by: String,
     created_at: i64,
-    /// The folder's file id; `None` when it was moved or deleted outside Hearthdrive.
+    /// The folder's file id; `None` when it was moved or deleted outside HearthDrive.
     file_id: Option<String>,
     members: Vec<MemberView>,
 }

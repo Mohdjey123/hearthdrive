@@ -1,4 +1,4 @@
-//! Hearthdrive app shell.
+//! HearthDrive app shell.
 //!
 //! **Desktop.** The window is only a client: storage, indexing and the API
 //! live in the separate `nexus-service` process, which keeps running when
@@ -45,7 +45,7 @@ mod host {
             Ok(candidate)
         } else {
             Err(format!(
-                "The Hearthdrive background service was not found at {}. Build it with `cargo build -p nexus-core`.",
+                "The HearthDrive background service was not found at {}. Build it with `cargo build -p nexus-core`.",
                 candidate.display()
             ))
         }
@@ -61,7 +61,7 @@ mod host {
             const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
             command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
         }
-        command.spawn().map(|_| ()).map_err(|e| format!("Could not start the Hearthdrive service: {e}"))
+        command.spawn().map(|_| ()).map_err(|e| format!("Could not start the HearthDrive service: {e}"))
     }
 
     /// Whether the running service is the program next to this app, as it
@@ -137,7 +137,7 @@ mod host {
             }
         }
         Err(format!(
-            "The Hearthdrive service did not start in time. Its logs are in {}",
+            "The HearthDrive service did not start in time. Its logs are in {}",
             data_dir.join("logs").display()
         ))
     }
@@ -204,8 +204,8 @@ mod host {
                 shell: "mobile",
             }),
             Err(_) => Err(match failed_rx.await {
-                Ok(e) => format!("Hearthdrive could not start: {e}"),
-                Err(_) => "Hearthdrive could not start".into(),
+                Ok(e) => format!("HearthDrive could not start: {e}"),
+                Err(_) => "HearthDrive could not start".into(),
             }),
         }
     }
@@ -268,7 +268,7 @@ mod host {
     }
 
     /// Streams a file from this app's own node into the phone's Download
-    /// folder (`Download/Hearthdrive`), or the app's own folder if that is not
+    /// folder (`Download/HearthDrive`), or the app's own folder if that is not
     /// writable. Returns where it was saved, for display.
     pub async fn save_download(app: tauri::AppHandle, url: String, filename: String) -> Result<String, String> {
         // Only this app's node may be the source.
@@ -277,10 +277,10 @@ mod host {
             return Err("Downloads must come from this app's own node".into());
         }
         let name = safe_name(&filename);
-        let public = PathBuf::from(PUBLIC_DOWNLOADS).join("Hearthdrive");
+        let public = PathBuf::from(PUBLIC_DOWNLOADS).join("HearthDrive");
         let private = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Downloads");
         let mut last_error = String::new();
-        for (dir, label) in [(public, "Download/Hearthdrive"), (private, "the app's Downloads folder")] {
+        for (dir, label) in [(public, "Download/HearthDrive"), (private, "the app's Downloads folder")] {
             if let Err(e) = tokio::fs::create_dir_all(&dir).await {
                 last_error = e.to_string();
                 continue;
@@ -324,5 +324,5 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![service_connection, save_download])
         .run(tauri::generate_context!())
-        .expect("error while running Hearthdrive");
+        .expect("error while running HearthDrive");
 }

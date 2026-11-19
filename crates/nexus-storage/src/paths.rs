@@ -6,7 +6,7 @@
 use nexus_common::{NexusError, Result};
 use std::path::{Path, PathBuf};
 
-/// Hearthdrive bookkeeping directory inside each writable root (trash, staging).
+/// HearthDrive bookkeeping directory inside each writable root (trash, staging).
 pub const INTERNAL_DIR: &str = ".nexus";
 
 /// Device names Windows reserves in every folder (with any extension),
@@ -64,11 +64,11 @@ pub fn normalize_relative(input: &str) -> Result<String> {
 }
 
 /// The file that makes a folder encrypted (its salt and password check):
-/// never shown, and never changed through Hearthdrive, since losing it loses the
+/// never shown, and never changed through HearthDrive, since losing it loses the
 /// folder's files.
 pub const VAULT_MARKER: &str = ".nexus-vault";
 
-/// True for paths inside folders Hearthdrive never exposes (its own bookkeeping
+/// True for paths inside folders HearthDrive never exposes (its own bookkeeping
 /// directory, the recycle bin, volume metadata) and for encrypted folders'
 /// marker files.
 pub fn is_hidden_internal(rel: &str) -> bool {
@@ -101,7 +101,7 @@ pub fn describe(name: &str, is_dir: bool) -> (Option<String>, Option<String>) {
     (extension, mime)
 }
 
-/// Converts an absolute path under `base` into a Hearthdrive relative path.
+/// Converts an absolute path under `base` into a HearthDrive relative path.
 pub fn relative_of(base: &Path, path: &Path) -> Option<String> {
     let rest = path.strip_prefix(base).ok()?;
     let parts: Vec<String> = rest
@@ -114,7 +114,7 @@ pub fn relative_of(base: &Path, path: &Path) -> Option<String> {
 /// Resolves `rel` inside `root`, guaranteeing the result cannot escape it.
 ///
 /// * the relative path is normalised and validated first;
-/// * Hearthdrive-internal folders are not addressable;
+/// * HearthDrive-internal folders are not addressable;
 /// * the nearest existing ancestor is canonicalised (resolving symlinks and
 ///   junctions) and must still be inside the canonical root;
 /// * an existing symlink or junction at the target itself is refused.

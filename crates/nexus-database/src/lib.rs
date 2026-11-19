@@ -1,4 +1,4 @@
-//! SQLite access for a single Hearthdrive node.
+//! SQLite access for a single HearthDrive node.
 //!
 //! Every node owns its own database file. The database is never shared over
 //! the network; nodes exchange metadata events instead.

@@ -900,7 +900,7 @@ fn publish(node: &Node, platform: &str, version: &str, package: &[u8]) {
     let release = Release {
         platform: platform.into(),
         version: version.into(),
-        file: format!("Hearthdrive_{version}"),
+        file: format!("HearthDrive_{version}"),
         size: package.len() as u64,
         blake3: blake3::hash(package).to_hex().to_string(),
         notes: "Better things".into(),

@@ -71,7 +71,7 @@ export function Login({ nodeName }: { nodeName: string }) {
 
   const header = (
     <div className="flex items-center gap-3 pb-1">
-      <Logo className="size-8" />
+      <Logo className="size-8 text-accent" />
       <div>
         <div className="text-[15px] font-semibold">{ticket ? 'Two-step sign-in' : 'Sign in'}</div>
         <div className="text-muted">{nodeName}</div>
@@ -84,7 +84,7 @@ export function Login({ nodeName }: { nodeName: string }) {
       <div className="flex min-h-full items-center justify-center bg-bg p-6">
         <form key="code" onSubmit={submitCode} className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-panel p-6">
           {header}
-          <Field label="Code" hint="The six-digit code your authenticator app shows for Hearthdrive, or one of your recovery codes.">
+          <Field label="Code" hint="The six-digit code your authenticator app shows for HearthDrive, or one of your recovery codes.">
             <Input
               value={code}
               onChange={(e) => setCode(e.target.value)}

@@ -36,7 +36,7 @@ export function ConfirmFields({ twoFactor, password, code, onPassword, onCode }:
 
 /** Recovery codes, shown once, with ways to keep them. */
 function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
-  const text = `Hearthdrive recovery codes (each works once)\n\n${codes.join('\n')}\n`
+  const text = `HearthDrive recovery codes (each works once)\n\n${codes.join('\n')}\n`
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text)

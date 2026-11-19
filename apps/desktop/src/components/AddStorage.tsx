@@ -7,7 +7,7 @@ import { Button, ErrorNote, Field, Input, ProgressBar, Spinner, cx } from './ui'
 
 async function pickFolder(): Promise<string | null> {
   const { open } = await import('@tauri-apps/plugin-dialog')
-  const picked = await open({ directory: true, multiple: false, title: 'Choose a folder for Hearthdrive' })
+  const picked = await open({ directory: true, multiple: false, title: 'Choose a folder for HearthDrive' })
   return typeof picked === 'string' ? picked : null
 }
 
@@ -78,7 +78,7 @@ export function AddStorageForm({ onAdded, submitLabel = 'Add storage' }: { onAdd
         <span className="block text-[12px] font-medium text-muted">Detected drives</span>
         <DriveList selected={path} onSelect={(d) => setPath(d.mount_point)} />
       </div>
-      <Field label="Folder or drive" hint="Hearthdrive indexes this location in place. Nothing is moved or copied.">
+      <Field label="Folder or drive" hint="HearthDrive indexes this location in place. Nothing is moved or copied.">
         <div className="flex gap-2">
           <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\Cloud" spellCheck={false} />
           {isTauri() && (

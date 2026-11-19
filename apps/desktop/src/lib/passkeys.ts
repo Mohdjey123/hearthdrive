@@ -65,8 +65,8 @@ export function passkeyError(e: unknown): string {
   if (e instanceof DOMException) {
     if (e.name === 'NotAllowedError') return 'Cancelled, or the passkey did not answer in time.'
     if (e.name === 'InvalidStateError') return 'This passkey is already added.'
-    if (e.name === 'SecurityError') return 'Passkeys do not work on this page. Open Hearthdrive at http://localhost instead.'
-    if (e.name === 'NotSupportedError') return 'This browser or device cannot make a passkey Hearthdrive can use.'
+    if (e.name === 'SecurityError') return 'Passkeys do not work on this page. Open HearthDrive at http://localhost instead.'
+    if (e.name === 'NotSupportedError') return 'This browser or device cannot make a passkey HearthDrive can use.'
   }
   return e instanceof Error ? e.message : String(e)
 }

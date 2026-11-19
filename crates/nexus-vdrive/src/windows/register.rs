@@ -1,5 +1,5 @@
 //! Registering the drive's folder with Windows as a cloud sync root, which
-//! also puts it in File Explorer's navigation pane with the Hearthdrive icon.
+//! also puts it in File Explorer's navigation pane with the HearthDrive icon.
 
 use std::path::{Path, PathBuf};
 use windows::Security::Cryptography::{BinaryStringEncoding, CryptographicBuffer};
@@ -87,13 +87,13 @@ pub fn register(id: &str, path: &Path, data_dir: &Path) -> Result<(), String> {
         info.SetId(&HSTRING::from(id))?;
         let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path.as_os_str()))?.join()?;
         info.SetPath(&folder)?;
-        info.SetDisplayNameResource(&HSTRING::from("Hearthdrive"))?;
+        info.SetDisplayNameResource(&HSTRING::from("HearthDrive"))?;
         info.SetIconResource(&HSTRING::from(format!("{},0", icon.display())))?;
         // Files are downloaded piece by piece as they are read, so a video
         // can start before all of it arrived.
         info.SetHydrationPolicy(StorageProviderHydrationPolicy::Progressive)?;
         info.SetHydrationPolicyModifier(StorageProviderHydrationPolicyModifier::AutoDehydrationAllowed)?;
-        // Folders are listed by Hearthdrive when first opened.
+        // Folders are listed by HearthDrive when first opened.
         info.SetPopulationPolicy(StorageProviderPopulationPolicy::Full)?;
         info.SetInSyncPolicy(StorageProviderInSyncPolicy::Default)?;
         info.SetHardlinkPolicy(StorageProviderHardlinkPolicy::None)?;

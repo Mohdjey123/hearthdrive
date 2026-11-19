@@ -50,13 +50,13 @@ export async function installUpdate(status: UpdateStatus): Promise<void> {
     const bridge = androidBridge()
     if (!bridge?.installUpdate || !status.package_path) throw new Error('This app cannot install updates itself. Install the new APK by hand.')
     const result = bridge.installUpdate(status.package_path)
-    if (result === 'permission') toast('Allow Hearthdrive to install apps, then tap Install again.')
+    if (result === 'permission') toast('Allow HearthDrive to install apps, then tap Install again.')
     else if (result === 'missing') throw new Error('The update is no longer there. Check for updates again.')
-    else if (bridge.canUpdateQuietly?.()) toast(`Installing Hearthdrive ${status.available?.version}. The app closes for a moment; open it again after.`)
+    else if (bridge.canUpdateQuietly?.()) toast(`Installing HearthDrive ${status.available?.version}. The app closes for a moment; open it again after.`)
     return
   }
   await api.installUpdate()
-  toast(`Installing Hearthdrive ${status.available?.version}. This window closes and opens again when it is done.`)
+  toast(`Installing HearthDrive ${status.available?.version}. This window closes and opens again when it is done.`)
 }
 
 /** A strip at the top of every page while an update is ready. */
@@ -91,15 +91,15 @@ export function UpdateBanner() {
     <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-line bg-accent-soft px-4 py-3">
       <Download className="size-4 shrink-0 text-accent" />
       <div className="min-w-0 flex-1">
-        <div className="font-medium">Hearthdrive {ready.version}{ready.beta ? ' beta' : ''} is ready</div>
+        <div className="font-medium">HearthDrive {ready.version}{ready.beta ? ' beta' : ''} is ready</div>
         <div className="text-[12.5px] text-muted">
           {s.install === 'app'
             ? s.auto_install && androidBridge()?.canUpdateQuietly?.()
-              ? 'It installs by itself next time Hearthdrive is in the background, or now if you like. Your files and settings stay.'
+              ? 'It installs by itself next time HearthDrive is in the background, or now if you like. Your files and settings stay.'
               : 'Android asks you to confirm. Your files and settings stay.'
             : s.auto_install
               ? 'It installs by itself once this window is closed, or now if you like.'
-              : 'Installing takes a few seconds and opens Hearthdrive again.'}
+              : 'Installing takes a few seconds and opens HearthDrive again.'}
         </div>
       </div>
       <Button size="sm" variant="ghost" onClick={() => setDismissed(ready.version)}>Later</Button>
@@ -160,7 +160,7 @@ export function UpdateSettings() {
       <div className="flex flex-wrap items-center gap-2">
         {s.available ? (
           <>
-            <Badge tone="accent">Hearthdrive {s.available.version}{s.available.beta ? ' beta' : ''} is ready</Badge>
+            <Badge tone="accent">HearthDrive {s.available.version}{s.available.beta ? ' beta' : ''} is ready</Badge>
             {s.install !== 'none' && (
               <Button size="sm" variant="primary" icon={<Download className="size-3.5" />} loading={busy} onClick={() => void install()}>
                 Install now
@@ -168,7 +168,7 @@ export function UpdateSettings() {
             )}
           </>
         ) : (
-          <span>Hearthdrive {s.version} is up to date.</span>
+          <span>HearthDrive {s.version} is up to date.</span>
         )}
         <Button size="sm" variant="ghost" icon={<RefreshCw className="size-3.5" />} disabled={s.checking} onClick={() => void check()}>
           Check now
@@ -193,7 +193,7 @@ export function UpdateSettings() {
             Install updates automatically
             <span className="mt-0.5 block text-[12px] text-subtle">
               {s.install === 'app'
-                ? 'When Hearthdrive is in the background, without asking. Open it again to use the new version.'
+                ? 'When HearthDrive is in the background, without asking. Open it again to use the new version.'
                 : 'When this window is closed and no copy or sync is running. The service restarts in a few seconds.'}
             </span>
           </span>
@@ -238,7 +238,7 @@ export function UpdateSettings() {
       )}
 
       <p className="text-[12px] text-subtle">
-        Updates come from your own devices{s.from_github ? ' and GitHub' : ''}: devices pass signed packages on to each other, and Hearthdrive
+        Updates come from your own devices{s.from_github ? ' and GitHub' : ''}: devices pass signed packages on to each other, and HearthDrive
         checks the signature before keeping or installing one.
         {!isMobile() && s.carried.length > 0 && (
           <> Passing on: {s.carried.map((r) => `${platformName(r.platform)} ${r.version} (${formatBytes(r.size)})`).join(', ')}.</>

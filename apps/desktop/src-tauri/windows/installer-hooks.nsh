@@ -1,4 +1,4 @@
-; Hearthdrive installer hooks (Tauri NSIS).
+; HearthDrive installer hooks (Tauri NSIS).
 ;
 ; The background service, nexus-service.exe, runs from the install folder
 ; whether or not the app's window is open, so the installer stops it before
@@ -19,7 +19,7 @@ Var NewNameFolder
 !macroend
 
 ; The app was called NEXUS Cloud before. Windows knows an install by the
-; app's name, so this installer would otherwise put Hearthdrive next to it.
+; app's name, so this installer would otherwise put HearthDrive next to it.
 ; Instead it updates that install in its folder, which keeps the program's
 ; paths the same (its firewall permission, the startup entry and the
 ; virtual drive's registration point there), renames its shortcuts, and

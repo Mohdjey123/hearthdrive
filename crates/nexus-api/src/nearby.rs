@@ -1,4 +1,4 @@
-//! Finding Hearthdrive devices on the same local network.
+//! Finding HearthDrive devices on the same local network.
 //!
 //! Every few seconds each node with remote access on announces itself with a
 //! small UDP broadcast (name, device id, public key). While someone has the
@@ -26,7 +26,7 @@ const MAX_SEEN: usize = 64;
 /// What a node announces.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Beacon {
-    /// Always 1; anything else is not a Hearthdrive announcement.
+    /// Always 1; anything else is not a HearthDrive announcement.
     pub nexus: u8,
     pub id: String,
     pub name: String,

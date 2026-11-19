@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts a Hearthdrive release.
+# Starts a HearthDrive release.
 #
 #   scripts/release.sh 1.2.3 [notes.md]            a stable release
 #   scripts/release.sh 1.2.3 [notes.md] --beta     a beta
@@ -21,7 +21,7 @@
 #
 # --local builds Windows and Android on this computer instead, signs them
 # with ~/.nexus-signing/update-key (or NEXUS_UPDATE_KEY) and adds them to
-# this computer's Hearthdrive update store, from where paired devices fetch them.
+# this computer's HearthDrive update store, from where paired devices fetch them.
 # Nothing goes to GitHub, and nothing is committed. For testing, or when
 # GitHub is out of reach.
 set -euo pipefail
@@ -76,7 +76,7 @@ if [[ $LOCAL == 0 ]]; then
   fi
   git add Cargo.toml Cargo.lock apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json package-lock.json
   if [[ $BETA == 1 ]]; then git commit -q -m "Release $VERSION beta"; else git commit -q -m "Release $VERSION"; fi
-  git tag -a "$TAG" -m "Hearthdrive $VERSION$([[ $BETA == 1 ]] && echo ' beta')"
+  git tag -a "$TAG" -m "HearthDrive $VERSION$([[ $BETA == 1 ]] && echo ' beta')"
   echo "== Pushing $BRANCH and $TAG"
   git push -q origin "$BRANCH" "refs/tags/$TAG"
   echo "GitHub is building $TAG now. Follow it with:"
@@ -98,14 +98,14 @@ mkdir -p "$OUT"
 
 echo "== Windows"
 npm run desktop:build
-cp "target/release/bundle/nsis/Hearthdrive_${VERSION}_x64-setup.exe" "$OUT/Hearthdrive_${VERSION}_x64-setup.exe"
+cp "target/release/bundle/nsis/HearthDrive_${VERSION}_x64-setup.exe" "$OUT/HearthDrive_${VERSION}_x64-setup.exe"
 "$TOOL" publish --platform windows-x86_64 --version "$VERSION" \
-  --package "$OUT/Hearthdrive_${VERSION}_x64-setup.exe" "${NOTE_ARGS[@]}"
+  --package "$OUT/HearthDrive_${VERSION}_x64-setup.exe" "${NOTE_ARGS[@]}"
 
 echo "== Android"
 bash scripts/build-android.sh aarch64 release
-cp "apps/desktop/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk" "$OUT/Hearthdrive_${VERSION}_arm64.apk"
+cp "apps/desktop/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk" "$OUT/HearthDrive_${VERSION}_arm64.apk"
 "$TOOL" publish --platform android-aarch64 --version "$VERSION" \
-  --package "$OUT/Hearthdrive_${VERSION}_arm64.apk" "${NOTE_ARGS[@]}"
+  --package "$OUT/HearthDrive_${VERSION}_arm64.apk" "${NOTE_ARGS[@]}"
 
-echo "Done: $OUT (published to this computer's Hearthdrive; the version change is not committed)"
+echo "Done: $OUT (published to this computer's HearthDrive; the version change is not committed)"

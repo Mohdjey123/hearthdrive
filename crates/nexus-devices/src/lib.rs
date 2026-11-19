@@ -1,4 +1,4 @@
-//! Device identity and trust between Hearthdrive nodes.
+//! Device identity and trust between HearthDrive nodes.
 //!
 //! * [`NodeIdentity`]: each node's Ed25519 key, created on first run and
 //!   stored encrypted with Windows DPAPI (current user).

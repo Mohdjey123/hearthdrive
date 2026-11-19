@@ -21,7 +21,7 @@ pub struct CommandInfo {
 
 const COMMANDS: &[CommandInfo] = &[
     CommandInfo { name: "rescan", label: "Look for changes", description: "Scans every connected storage location again." },
-    CommandInfo { name: "check-updates", label: "Check for updates", description: "Asks for a newer Hearthdrive version now." },
+    CommandInfo { name: "check-updates", label: "Check for updates", description: "Asks for a newer HearthDrive version now." },
     CommandInfo { name: "pause-transfers", label: "Pause transfers", description: "Pauses every copy, sync and backup." },
     CommandInfo { name: "resume-transfers", label: "Resume transfers", description: "Continues paused copies, syncs and backups." },
     CommandInfo { name: "sleep", label: "Put to sleep", description: "Puts the computer to sleep. Wake it again from Devices." },

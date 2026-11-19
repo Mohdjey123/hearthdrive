@@ -136,7 +136,7 @@ enum PublicKey {
 /// Reads a COSE key (RFC 9053) of a kind this module can check.
 fn parse_cose_key(bytes: &[u8]) -> Checked<(PublicKey, i64)> {
     use cbor::Value;
-    let unsupported = Refused("This passkey uses a kind of key Hearthdrive does not support");
+    let unsupported = Refused("This passkey uses a kind of key HearthDrive does not support");
     let (Value::Map(map), _) = cbor::decode(bytes).map_err(|_| Refused("The passkey's key is damaged"))? else {
         return Err(Refused("The passkey's key is damaged"));
     };

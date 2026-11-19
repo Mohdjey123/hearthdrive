@@ -268,7 +268,7 @@ pub(crate) fn api_routes(state: SharedState) -> Router {
                 StatusCode::NOT_FOUND,
                 axum::Json(serde_json::json!({ "error": {
                     "code": "unknown_route",
-                    "message": "This Hearthdrive service does not support this yet. It may be an older version: restart Hearthdrive, or update the device it runs on.",
+                    "message": "This HearthDrive service does not support this yet. It may be an older version: restart HearthDrive, or update the device it runs on.",
                 } })),
             )
         })

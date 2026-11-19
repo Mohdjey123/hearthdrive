@@ -18,7 +18,7 @@ pub enum Availability {
 #[serde(rename_all = "snake_case")]
 #[sqlx(rename_all = "snake_case")]
 pub enum RootType {
-    /// Hearthdrive created and manages the directory.
+    /// HearthDrive created and manages the directory.
     Managed,
     /// A folder the user already had.
     Existing,

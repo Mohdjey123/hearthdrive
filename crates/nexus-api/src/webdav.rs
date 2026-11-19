@@ -23,7 +23,7 @@ use nexus_storage::paths;
 use percent_encoding::percent_decode_str;
 use std::time::SystemTime;
 
-/// A storage location's folder, without Hearthdrive's own `.nexus` folder.
+/// A storage location's folder, without HearthDrive's own `.nexus` folder.
 #[derive(Clone)]
 struct StorageFs(Box<LocalFs>);
 
@@ -137,7 +137,7 @@ impl DavFileSystem for StorageFs {
 fn unauthorized() -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        [(header::WWW_AUTHENTICATE, HeaderValue::from_static("Basic realm=\"Hearthdrive\", charset=\"UTF-8\""))],
+        [(header::WWW_AUTHENTICATE, HeaderValue::from_static("Basic realm=\"HearthDrive\", charset=\"UTF-8\""))],
         "Sign in with a token for programs as the password.",
     )
         .into_response()
@@ -252,7 +252,7 @@ async fn top(s: &SharedState, user: &AuthUser, method: Method, depth0: bool) -> 
         )
             .into_response(),
         Method::GET | Method::HEAD => {
-            let mut out = String::from("Hearthdrive storage:\n");
+            let mut out = String::from("HearthDrive storage:\n");
             for (name, root) in &roots {
                 out.push_str(&format!("/dav/{name}/  ({})\n", root.name));
             }
@@ -268,7 +268,7 @@ async fn top(s: &SharedState, user: &AuthUser, method: Method, depth0: bool) -> 
                 )
             };
             let mut body = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\">");
-            body.push_str(&entry("/dav/", "Hearthdrive"));
+            body.push_str(&entry("/dav/", "HearthDrive"));
             if !depth0 {
                 for (name, root) in &roots {
                     body.push_str(&entry(&format!("/dav/{name}/"), &root.name));

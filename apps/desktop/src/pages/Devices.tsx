@@ -457,7 +457,7 @@ function WakeButton({ d }: { d: Device }) {
   return <Button size="sm" icon={<Power className="size-3.5" />} loading={busy} onClick={() => void wake()}>Wake</Button>
 }
 
-/** Hearthdrive devices on the same local network, and pairing with them. */
+/** HearthDrive devices on the same local network, and pairing with them. */
 function NearbyPanel({ onPair }: { onPair: (link: string) => void }) {
   const [list, setList] = useState<NearbyDevice[] | null>(null)
   useEffect(() => {

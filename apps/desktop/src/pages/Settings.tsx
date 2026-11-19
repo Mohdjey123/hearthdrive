@@ -167,7 +167,7 @@ function PersonAccess({ user, onClose, onSaved }: { user: User; onClose: () => v
   )
 }
 
-/** Accounts that can sign in to this computer's Hearthdrive from a browser on it. */
+/** Accounts that can sign in to this computer's HearthDrive from a browser on it. */
 function People({ meId }: { meId: string | null }) {
   const users = useResource(() => api.users(), [])
   const [adding, setAdding] = useState(false)
@@ -413,7 +413,7 @@ function NotificationsRow() {
           : level === 'all'
             ? 'Every finished transfer, devices going offline and coming back, and pairing requests.'
             : 'Failed transfers, finished backups and big transfers, and devices asking to pair.'}
-        {' '}Shown while the Hearthdrive window is not in front.
+        {' '}Shown while the HearthDrive window is not in front.
       </div>
     </Row>
   )
@@ -461,7 +461,7 @@ function DocumentsPanel() {
           <div className="text-[13px]">
             {c.transcode
               ? 'Videos browsers cannot play (MKV, AVI, WMV…) are converted while they play, with the ffmpeg found on this computer.'
-              : 'Videos browsers cannot play (MKV, AVI, WMV…) can be converted while they play once ffmpeg is installed on this computer and on its PATH. Hearthdrive does not download it.'}
+              : 'Videos browsers cannot play (MKV, AVI, WMV…) can be converted while they play once ffmpeg is installed on this computer and on its PATH. HearthDrive does not download it.'}
           </div>
         </Row>
       </div>
@@ -477,7 +477,7 @@ function AutostartRow() {
     setBusy(true)
     try {
       await api.setAutostart(enabled)
-      toast(enabled ? 'Hearthdrive will start when you sign in to Windows' : 'Hearthdrive will no longer start automatically')
+      toast(enabled ? 'HearthDrive will start when you sign in to Windows' : 'HearthDrive will no longer start automatically')
     } catch (e) {
       toastError(e)
     } finally {
@@ -583,7 +583,7 @@ function VirtualDrivePanel() {
           ? 'The virtual drive was removed from File Explorer'
           : moved
             ? `The virtual drive moved to ${s.path}`
-            : `Your devices are in File Explorer under Hearthdrive (${s.path})`,
+            : `Your devices are in File Explorer under HearthDrive (${s.path})`,
       )
     } catch (e) {
       toastError(e)
@@ -608,7 +608,7 @@ function VirtualDrivePanel() {
             <span>
               Show my devices in File Explorer
               <span className="mt-0.5 block text-[12px] text-subtle">
-                Hearthdrive in File Explorer has My Files (this computer and every paired device) and Shared With Me (folders
+                HearthDrive in File Explorer has My Files (this computer and every paired device) and Shared With Me (folders
                 other devices shared with this one). Files download when you open them; right-click and choose Always
                 keep on this device, or Free up space. What you change there goes back to the device: edits and new
                 files are uploaded once saved, and renames, moves and deletes happen on the device (deleted items go to
@@ -738,7 +738,7 @@ export function Settings() {
             {!isMobile() && <AutostartRow />}
             <Row label={isMobile() ? 'While the app is closed' : 'Background service'}>
               {isMobile()
-                ? 'Hearthdrive runs on this phone while the app is open. Your computers keep running on their own and are reachable again as soon as you open the app.'
+                ? 'HearthDrive runs on this phone while the app is open. Your computers keep running on their own and are reachable again as soon as you open the app.'
                 : 'The storage service keeps running when this window is closed.'}
             </Row>
           </div>
@@ -758,7 +758,7 @@ export function Settings() {
 
       <Panel title="About">
         <div className="divide-y divide-line">
-          <Row label="Version">Hearthdrive {info.data?.node.version ?? ''}</Row>
+          <Row label="Version">HearthDrive {info.data?.node.version ?? ''}</Row>
           <Row label="License">MIT · free, self-hosted, no subscription, no analytics</Row>
         </div>
       </Panel>

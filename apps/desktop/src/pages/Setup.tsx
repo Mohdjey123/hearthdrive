@@ -80,9 +80,9 @@ function MobileSetup({ defaultName }: { defaultName: string }) {
     <div className="safe-area flex min-h-full flex-col bg-bg">
       <div className="flex flex-1 flex-col justify-center p-5">
         <div className="mb-6 flex items-center gap-3">
-          <Logo className="size-9" />
+          <Logo className="size-9 text-accent" />
           <div>
-            <div className="text-[17px] font-semibold tracking-tight">Hearthdrive</div>
+            <div className="text-[17px] font-semibold tracking-tight">HearthDrive</div>
             <div className="text-muted">Your devices. Your storage. One cloud.</div>
           </div>
         </div>
@@ -121,7 +121,7 @@ function MobileSetup({ defaultName }: { defaultName: string }) {
                   ? 'You can now browse, download and upload its files from anywhere.'
                   : 'Pair it with a computer from Devices whenever you like.'}
               </p>
-              <Button variant="primary" className="h-11 w-full" onClick={() => void reload()}>Open Hearthdrive</Button>
+              <Button variant="primary" className="h-11 w-full" onClick={() => void reload()}>Open HearthDrive</Button>
             </div>
           )}
         </div>
@@ -173,9 +173,9 @@ function DesktopSetup({ defaultName }: { defaultName: string }) {
     <div className="flex min-h-full items-center justify-center bg-bg p-6">
       <div className="w-full max-w-xl">
         <div className="mb-6 flex items-center gap-3">
-          <Logo className="size-8" />
+          <Logo className="size-8 text-accent" />
           <div>
-            <div className="text-[16px] font-semibold tracking-tight">Hearthdrive setup</div>
+            <div className="text-[16px] font-semibold tracking-tight">HearthDrive setup</div>
             <div className="text-muted">Your devices. Your storage. One cloud.</div>
           </div>
         </div>
@@ -207,14 +207,14 @@ function DesktopSetup({ defaultName }: { defaultName: string }) {
               <Choice
                 icon={<Link2 className="size-5" />}
                 title="Join an existing cloud"
-                body="Pair this computer with one that already runs Hearthdrive, using its pairing link."
+                body="Pair this computer with one that already runs HearthDrive, using its pairing link."
                 selected={mode === 'join'}
                 onClick={() => setMode('join')}
               />
               <Choice
                 icon={<Smartphone className="size-5" />}
                 title="Connect my phone"
-body="Install the Hearthdrive app on an Android phone and scan this computer's pairing code. Set up this computer first, then use Devices → Add device."
+body="Install the HearthDrive app on an Android phone and scan this computer's pairing code. Set up this computer first, then use Devices → Add device."
                 tag={<Badge>From the phone app</Badge>}
                 disabled
               />
@@ -259,7 +259,7 @@ body="Install the Hearthdrive app on an Android phone and scan this computer's p
             <div className="space-y-4">
               <div>
                 <h2 className="text-[15px] font-semibold">Join your cloud</h2>
-                <p className="mt-1 text-muted">Pair with a computer that already runs Hearthdrive. Its owner approves the request there.</p>
+                <p className="mt-1 text-muted">Pair with a computer that already runs HearthDrive. Its owner approves the request there.</p>
               </div>
               <JoinForm onJoined={setJoined} />
               <div className="border-t border-line pt-3 text-right">
@@ -324,7 +324,7 @@ body="Install the Hearthdrive app on an Android phone and scan this computer's p
                 </li>
               </ul>
               <div className="flex justify-end pt-2">
-                <Button variant="primary" data-autofocus onClick={() => void reload()}>Open Hearthdrive</Button>
+                <Button variant="primary" data-autofocus onClick={() => void reload()}>Open HearthDrive</Button>
               </div>
             </div>
           )}

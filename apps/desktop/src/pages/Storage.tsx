@@ -20,7 +20,7 @@ export function Storage({ route }: { route: Route }) {
     setBusy(true)
     try {
       await api.removeRoot(removing.id)
-      toast(`Removed ${removing.name} from Hearthdrive. Its files were not touched.`)
+      toast(`Removed ${removing.name} from HearthDrive. Its files were not touched.`)
       setRemoving(null)
       roots.reload()
     } catch (e) {
@@ -64,7 +64,7 @@ export function Storage({ route }: { route: Route }) {
             title="No storage locations"
             action={<Button variant="primary" onClick={() => navigate('storage', { add: '1' })}>Add a folder or drive</Button>}
           >
-            Register existing folders or whole drives. Hearthdrive indexes them in place and never moves your files.
+            Register existing folders or whole drives. HearthDrive indexes them in place and never moves your files.
           </EmptyState>
         ) : (
           <ul className="divide-y divide-line">
@@ -121,7 +121,7 @@ export function Storage({ route }: { route: Route }) {
                     <IconButton label="Rescan" disabled={!r.online || r.scanning} onClick={() => void rescan(r)}>
                       <RefreshCw className={r.scanning ? 'size-4 animate-spin' : 'size-4'} />
                     </IconButton>
-                    <IconButton label="Remove from Hearthdrive" className="hover:text-danger" onClick={() => setRemoving(r)}>
+                    <IconButton label="Remove from HearthDrive" className="hover:text-danger" onClick={() => setRemoving(r)}>
                       <Trash2 className="size-4" />
                     </IconButton>
                   </div>
@@ -149,12 +149,12 @@ export function Storage({ route }: { route: Route }) {
         footer={
           <>
             <Button variant="ghost" onClick={() => setRemoving(null)}>Cancel</Button>
-            <Button variant="danger" loading={busy} onClick={() => void remove()}>Remove from Hearthdrive</Button>
+            <Button variant="danger" loading={busy} onClick={() => void remove()}>Remove from HearthDrive</Button>
           </>
         }
       >
         <p>
-          Hearthdrive will stop indexing <span className="font-mono text-[12px]">{removing?.absolute_path}</span> and forget its index.
+          HearthDrive will stop indexing <span className="font-mono text-[12px]">{removing?.absolute_path}</span> and forget its index.
         </p>
         <p className="mt-2 text-muted">Your files stay exactly where they are. Nothing on the drive is deleted.</p>
       </Modal>

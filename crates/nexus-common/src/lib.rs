@@ -1,4 +1,4 @@
-//! Shared types, errors and utilities used across the Hearthdrive crates.
+//! Shared types, errors and utilities used across the HearthDrive crates.
 
 pub mod error;
 pub mod events;

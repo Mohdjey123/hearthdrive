@@ -10,12 +10,12 @@
 //! ```
 //!
 //! `publish` signs the package and adds it to a node's update store (this
-//! computer's Hearthdrive by default). From there it spreads to every paired
+//! computer's HearthDrive by default). From there it spreads to every paired
 //! device. `sign` only writes the signed description to `--out`, to upload
 //! next to the package on GitHub (named `nexus-update-<platform>.json`),
 //! where every device also looks for updates. The key defaults to `NEXUS_UPDATE_KEY`, or
 //! `~/.nexus-signing/update-key`. Anyone holding that file can publish
-//! updates to every Hearthdrive device that trusts it: keep it private and keep a
+//! updates to every HearthDrive device that trusts it: keep it private and keep a
 //! copy somewhere safe, because without it no further updates can be made.
 
 use anyhow::{Context, bail};

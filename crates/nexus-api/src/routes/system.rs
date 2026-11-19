@@ -53,10 +53,10 @@ pub async fn setup(
     if !peer.ip().is_loopback() {
         return Err(NexusError::PermissionDenied("Setup must be completed on this computer".into()).into());
     }
-    // On a phone every app can reach this port, so only the Hearthdrive app
+    // On a phone every app can reach this port, so only the HearthDrive app
     // itself (which holds the local token) may set the node up.
     if s.setup_needs_token && !bearer(&headers).is_some_and(|t| token_matches(t, &s.local_token)) {
-        return Err(NexusError::PermissionDenied("Set up Hearthdrive from its app".into()).into());
+        return Err(NexusError::PermissionDenied("Set up HearthDrive from its app".into()).into());
     }
     let node_name = req.node_name.trim();
     if node_name.is_empty() || node_name.len() > 64 {

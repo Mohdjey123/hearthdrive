@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Hearthdrive",
+  "productName": "HearthDrive",
   "version": "0.1.5",
   "identifier": "app.nexuscloud.desktop",
   "build": {
@@ -12,12 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "Hearthdrive",
+        "title": "HearthDrive",
         "width": 1280,
         "height": 820,
         "minWidth": 960,
         "minHeight": 600,
-        "backgroundColor": "#0d0f10"
+        "backgroundColor": "#14100e"
       }
     ],
     "security": {

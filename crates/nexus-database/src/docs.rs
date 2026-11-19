@@ -10,7 +10,7 @@ use sqlx::{QueryBuilder, Sqlite};
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct FileTag {
     pub tag: String,
-    /// Given by Hearthdrive from what the document says, not by a person.
+    /// Given by HearthDrive from what the document says, not by a person.
     pub auto: bool,
     pub added_by: String,
     pub added_at: i64,
@@ -110,7 +110,7 @@ impl Database {
         .await?)
     }
 
-    /// Replaces the tags people gave a file (`auto` false) or the ones Hearthdrive
+    /// Replaces the tags people gave a file (`auto` false) or the ones HearthDrive
     /// gave it (`auto` true).
     pub async fn set_file_tags(&self, file: &FileEntry, tags: &[String], auto: bool, by: &str, at: i64) -> Result<()> {
         let mut tx = self.pool.begin().await?;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Hearthdrive Android app (APK).
+# Builds the HearthDrive Android app (APK).
 #
 #   scripts/build-android.sh [x86_64|aarch64] [debug|release]
 #

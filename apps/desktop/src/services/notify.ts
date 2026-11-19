@@ -1,6 +1,6 @@
 /**
  * System notifications: a finished or failed transfer, a device asking to
- * pair, a device that went offline, while the Hearthdrive window is not in front.
+ * pair, a device that went offline, while the HearthDrive window is not in front.
  */
 import { api, isTauri, type Job } from './api'
 import { subscribe } from './events'

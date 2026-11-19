@@ -285,7 +285,7 @@ pub async fn file_tags(State(s): State<SharedState>, user: AuthUser, Path(id): P
 pub struct TagsBody {
     /// The tags people give the file (replacing theirs).
     tags: Vec<String>,
-    /// Tags Hearthdrive gave it that should stay (the others are removed).
+    /// Tags HearthDrive gave it that should stay (the others are removed).
     #[serde(default)]
     keep_auto: Option<Vec<String>>,
 }

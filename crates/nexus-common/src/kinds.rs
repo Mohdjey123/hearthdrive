@@ -5,7 +5,7 @@
 pub const IMAGE: &[&str] = &[
     "jpg", "jpeg", "jfif", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "svg", "ico",
 ];
-/// Camera raw formats. Each embeds a JPEG preview that Hearthdrive shows.
+/// Camera raw formats. Each embeds a JPEG preview that HearthDrive shows.
 pub const RAW: &[&str] = &[
     "dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "orf", "rw2", "raf", "srw", "pef", "x3f", "3fr",
     "erf", "kdc", "mrw", "iiq", "rwl",

@@ -32,7 +32,7 @@ pub fn program_stamp(path: &std::path::Path) -> Option<i64> {
     Some(modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as i64)
 }
 
-/// `%LOCALAPPDATA%\Hearthdrive` on Windows, overridable with `NEXUS_DATA_DIR`.
+/// `%LOCALAPPDATA%\HearthDrive` on Windows, overridable with `NEXUS_DATA_DIR`.
 /// A computer that ran the app under its earlier name, NEXUS Cloud, keeps
 /// its data in `%LOCALAPPDATA%\NEXUS Cloud`: the device's identity, the
 /// database and everything else stay where they are.
@@ -48,7 +48,7 @@ pub fn default_data_dir() -> PathBuf {
             if earlier.join("identity.key").is_file() {
                 return earlier;
             }
-            return local.join("Hearthdrive");
+            return local.join("HearthDrive");
         }
     }
     if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {

@@ -33,11 +33,11 @@ impl PairingInvite {
     pub fn parse(link: &str) -> Result<Self> {
         let body = link.trim();
         let body = body.strip_prefix(SCHEME).unwrap_or(body);
-        let bytes = b64_decode(body).ok_or_else(|| NexusError::invalid("This is not a Hearthdrive pairing link"))?;
+        let bytes = b64_decode(body).ok_or_else(|| NexusError::invalid("This is not a HearthDrive pairing link"))?;
         let invite: Self =
-            serde_json::from_slice(&bytes).map_err(|_| NexusError::invalid("This is not a Hearthdrive pairing link"))?;
+            serde_json::from_slice(&bytes).map_err(|_| NexusError::invalid("This is not a HearthDrive pairing link"))?;
         if invite.v != 1 {
-            return Err(NexusError::invalid("This pairing link needs a newer version of Hearthdrive"));
+            return Err(NexusError::invalid("This pairing link needs a newer version of HearthDrive"));
         }
         if crate::identity::parse_public_key(&invite.public_key).is_none() {
             return Err(NexusError::invalid("This pairing link is incomplete"));

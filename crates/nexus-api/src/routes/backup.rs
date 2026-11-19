@@ -172,7 +172,7 @@ async fn run_backup(s: &AppState, backup: &Backup) -> Result<String> {
     let found = tokio::task::spawn_blocking(move || scan(&media, &sources, now))
         .await
         .map_err(NexusError::internal)?
-        .map_err(|_| NexusError::PermissionDenied("Hearthdrive is not allowed to read your photos and videos".into()))?;
+        .map_err(|_| NexusError::PermissionDenied("HearthDrive is not allowed to read your photos and videos".into()))?;
     let done = s.db.backed_up(&backup.id).await?;
     let todo: Vec<&Found> = found.iter().filter(|f| done.get(&f.rel) != Some(&f.fingerprint())).collect();
     if todo.is_empty() {

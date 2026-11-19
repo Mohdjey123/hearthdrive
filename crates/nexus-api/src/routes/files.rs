@@ -226,7 +226,7 @@ pub async fn content(
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_DISPOSITION, content_disposition(q.download == Some(1), &file.filename));
     // Opened directly, user content runs in an opaque origin: an uploaded
-    // HTML or SVG file can never read the Hearthdrive session.
+    // HTML or SVG file can never read the HearthDrive session.
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static("sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'"),

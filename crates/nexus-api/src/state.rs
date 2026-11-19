@@ -72,7 +72,7 @@ pub struct AppState {
     pub changes: crate::routes::changes::ChangeLog,
     /// Traffic rates and connection problems per paired device.
     pub peer_health: crate::peers::PeerHealth,
-    /// Hearthdrive devices heard on the local network.
+    /// HearthDrive devices heard on the local network.
     pub nearby: crate::nearby::Nearby,
     /// The address for programs (API, WebDAV, S3), when turned on.
     pub programs: crate::programs::Programs,

@@ -1,7 +1,7 @@
-//! Plugins: programs on this computer that Hearthdrive can run on files and
+//! Plugins: programs on this computer that HearthDrive can run on files and
 //! folders ("Convert to PDF", "Make a web-sized copy", "Scan for viruses").
 //!
-//! Each plugin is a folder in `plugins` in Hearthdrive's data folder with a
+//! Each plugin is a folder in `plugins` in HearthDrive's data folder with a
 //! `plugin.json`:
 //!
 //! ```json

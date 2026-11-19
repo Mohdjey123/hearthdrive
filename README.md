@@ -1,6 +1,6 @@
 <div align="center">
 
-# Hearthdrive
+# HearthDrive
 
 **Your devices. Your storage. One cloud.**
 
@@ -16,9 +16,9 @@ Free and source-available. No subscription, no third-party storage, nothing expo
 
 ---
 
-> Hearthdrive was called **NEXUS Cloud** up to version 0.1.5. Updating keeps everything: devices, pairings, settings, the data folder and the install folder stay as they were, and the old name's shortcuts are renamed.
+> HearthDrive was called **NEXUS Cloud** up to version 0.1.5. Updating keeps everything: devices, pairings, settings, the data folder and the install folder stay as they were, and the old name's shortcuts are renamed.
 
-Every computer you install Hearthdrive on becomes a storage node: it indexes the folders and drives you choose (in place, nothing is moved or uploaded anywhere) and serves them to your other devices. Devices pair with a link or a QR code and talk over end-to-end encrypted peer-to-peer connections, from any network, with nothing else to install.
+Every computer you install HearthDrive on becomes a storage node: it indexes the folders and drives you choose (in place, nothing is moved or uploaded anywhere) and serves them to your other devices. Devices pair with a link or a QR code and talk over end-to-end encrypted peer-to-peer connections, from any network, with nothing else to install.
 
 > **Status:** Phases 0–6 are done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, encrypted share links, the Android app with photo backup, and updates that spread between your own devices. On top of that: photos, music and films, searchable documents, rules, WebDAV and S3 access, encrypted folders and plugins. A store-signed Android build is next (see [Roadmap](#roadmap)).
 
@@ -52,12 +52,12 @@ Every computer you install Hearthdrive on becomes a storage node: it indexes the
 
 ## Features
 
-- **Your files stay where they are.** Add existing folders or whole drives; Hearthdrive indexes them in place and never moves or copies them on its own.
+- **Your files stay where they are.** Add existing folders or whole drives; HearthDrive indexes them in place and never moves or copies them on its own.
 - **One view of everything.** Browse, search, preview, stream, download and upload files on any of your devices from any other.
 - **Built-in, encrypted networking.** Devices connect directly whenever possible and through an encrypted relay otherwise. No VPN, port forwarding or account with anyone.
 - **Copy and sync between devices.** Background copies that resume after a dropped connection; one-way or two-way folder sync with conflict copies, a safety stop and version history.
 - **Extra copies and drive health.** Keep a checked copy of a folder on one or more other computers, with removed files held back for a while; watch every disk's health and free space, and find and repair files a drive has silently damaged.
-- **Your devices in File Explorer.** On Windows, every paired device's storage appears under **Hearthdrive** in Explorer; files download when opened, like OneDrive.
+- **Your devices in File Explorer.** On Windows, every paired device's storage appears under **HearthDrive** in Explorer; files download when opened, like OneDrive.
 - **Phone app.** The Android app runs the same node: browse your computers, back up photos and videos, and send files to a computer from any app's **Share** menu.
 - **Share links.** Send anyone a link to a file or folder. With Send it is encrypted on your computer first, so the host never sees what it holds; links expire and can be limited to a number of downloads and protected with a password.
 - **You decide who sees what.** Accounts with roles, per-device and per-person limits to chosen storage locations, and folders shared with chosen people and devices (to view, to edit, or only to add files), enforced on every device.
@@ -83,13 +83,13 @@ Every computer you install Hearthdrive on becomes a storage node: it indexes the
 | Backups | Scheduled snapshots of a folder on a paired computer, each content stored once by BLAKE3; keep rules (latest, daily, weekly, monthly) with cleanup; stored contents read back and repaired; browse and restore any snapshot, beside or over the original; encrypted with a recovery key, and openable from another computer |
 | Copies | A one-way, checked copy of a folder on one or more paired computers ("2 copies", "3 copies"); files removed here kept on the copy for a chosen time and brought back on request; copies read back weekly and repaired; a check for room before starting |
 | Drive health | Windows' health verdict for every disk, with temperature, wear and error counts (asked of the disks directly when not running as administrator); free-space warnings; storage that goes missing or comes back; a monthly read of every file against its BLAKE3 hash to find silent damage, repaired from an extra copy or a backup; the same view of your other devices; a text report |
-| Shared folders | A folder shared with people on a computer or with paired devices, on top of the storage they may see: view, edit, or add files only (a drop folder that shows nothing and never replaces a file); never beyond someone's role; follows the folder when Hearthdrive renames or moves it; "Shared with you" in Files and on Sharing; groups of people (a family) to share with, and family spaces made in one step; upload links that let people without Hearthdrive add files to a folder from your local network; comments on files for everyone who can open them |
+| Shared folders | A folder shared with people on a computer or with paired devices, on top of the storage they may see: view, edit, or add files only (a drop folder that shows nothing and never replaces a file); never beyond someone's role; follows the folder when HearthDrive renames or moves it; "Shared with you" in Files and on Sharing; groups of people (a family) to share with, and family spaces made in one step; upload links that let people without HearthDrive add files to a folder from your local network; comments on files for everyone who can open them |
 | Share links | Links to a file or folder (sent as a zip) that anyone can open: end-to-end encrypted through [Send](https://github.com/timvisee/send) (AES-GCM, key only in the link) with expiry, a download limit and an optional password, or unencrypted through temp.sh for larger files; take a link down at any time; uploads appear under Transfers |
 | Updates | Signed packages (Ed25519 over the version, size and BLAKE3 hash) passed between paired devices; computers keep packages for every platform to pass on; Windows installs by itself when its window is closed and nothing is copying, Android opens the system installer |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices; locked accounts; two-step sign-in turned off for someone who lost their phone |
 | Sign-in | Two-step sign-in with an authenticator app (TOTP, RFC 6238; each code works once) and ten one-time recovery codes; passkeys (WebAuthn: Windows Hello, a phone or a security key; ES256, EdDSA and RS256 checked on the node); sessions listed with browser, sign-in method and last use, signed out one by one or all at once; the password and a code asked again before sensitive changes; wrong codes slowed down per account; a security log with refused sign-ins |
 | Virtual drive | Paired devices' storage in File Explorer through the Windows Cloud Files API (no driver): folders listed on first open, files downloaded on read, Always keep on this device / Free up space, offline devices marked; edits, new files, renames, moves and deletes carried back to their device; this computer's own storage and folders shared with you; changes pushed within seconds; an offline cache with a size limit |
-| Android | The same node inside the app; QR pairing; photo and video backup to a computer; Hearthdrive in the system share menu |
+| Android | The same node inside the app; QR pairing; photo and video backup to a computer; HearthDrive in the system share menu |
 | Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; a strict Content Security Policy on the web interface; user content and everything shown from a paired device served with `CSP: sandbox`; origin check on the live event stream; per-person limits enforced on downloads too; blocked devices refused and sent nothing; phones accept first-run setup only from the app itself and keep their data out of Android backups; audit log |
 
 ## Repository layout
@@ -142,7 +142,7 @@ Tests:
 cargo test
 ```
 
-Service options: `--data-dir`, `--port`, `--ui-dir` (or `NEXUS_DATA_DIR`, `NEXUS_PORT`, `NEXUS_UI_DIR`). Data defaults to `%LOCALAPPDATA%\Hearthdrive` (`%LOCALAPPDATA%\NEXUS Cloud` on a computer that ran NEXUS Cloud before the rename, which keeps using it). It holds the database, logs, `runtime.json` and the encrypted device key (`identity.key`), never your files.
+Service options: `--data-dir`, `--port`, `--ui-dir` (or `NEXUS_DATA_DIR`, `NEXUS_PORT`, `NEXUS_UI_DIR`). Data defaults to `%LOCALAPPDATA%\HearthDrive` (`%LOCALAPPDATA%\NEXUS Cloud` on a computer that ran NEXUS Cloud before the rename, which keeps using it). It holds the database, logs, `runtime.json` and the encrypted device key (`identity.key`), never your files.
 
 Networking options:
 
@@ -155,9 +155,9 @@ Networking options:
 
 ## Connecting your computers
 
-Nothing extra to install: each Hearthdrive node connects to other nodes by itself.
+Nothing extra to install: each HearthDrive node connects to other nodes by itself.
 
-1. Open **Devices** in Hearthdrive on the first computer and choose **Add device**. **Connections** should say **Reachable from anywhere**.
+1. Open **Devices** in HearthDrive on the first computer and choose **Add device**. **Connections** should say **Reachable from anywhere**.
 2. On the second computer, choose **Join a cloud** (or **Join an existing cloud** during setup) and paste the link.
 3. Back on the first computer, check that the fingerprint matches the one shown on the second, and approve.
 
@@ -165,7 +165,7 @@ Both computers can then browse each other from **Files** → device menu, from a
 
 **Your other devices pair by themselves.** Pair each new device with one computer (your main node) and that computer introduces it to every other device it is paired with, and them to it, within about a minute. An introduced device is marked **Introduced by …** and is trusted no further than the device that introduced it: its role there is the lesser of the two, it sees only the storage the introducer sees, and it never introduces others in turn. Unpairing a device on the main node removes it from the others too; a device you remove by hand is not added again. Turn this off with **Devices** → **Pair my devices with each other** (this also removes the devices it added).
 
-How it works: every connection is QUIC with TLS 1.3, authenticated with the two devices' own keys. Devices first try to connect directly. On the same network that always works; across the internet it usually works through NAT hole punching. When it doesn't (some corporate, hotel or mobile networks), traffic goes through a relay server. A relay only forwards encrypted packets and cannot read them. The free public relays are rate-limited, so large transfers over a relay are slow. If you often hit that, run your own [`iroh-relay`](https://docs.iroh.computer/relays) on a small server and start Hearthdrive with `NEXUS_RELAY=https://relay.example.com`. The first time Hearthdrive runs, Windows may ask whether to allow `nexus-service` through the firewall. Allow it on private networks; it only accepts connections from paired devices and pairing requests that carry a valid code.
+How it works: every connection is QUIC with TLS 1.3, authenticated with the two devices' own keys. Devices first try to connect directly. On the same network that always works; across the internet it usually works through NAT hole punching. When it doesn't (some corporate, hotel or mobile networks), traffic goes through a relay server. A relay only forwards encrypted packets and cannot read them. The free public relays are rate-limited, so large transfers over a relay are slow. If you often hit that, run your own [`iroh-relay`](https://docs.iroh.computer/relays) on a small server and start HearthDrive with `NEXUS_RELAY=https://relay.example.com`. The first time HearthDrive runs, Windows may ask whether to allow `nexus-service` through the firewall. Allow it on private networks; it only accepts connections from paired devices and pairing requests that carry a valid code.
 
 ## Working across devices
 
@@ -195,14 +195,14 @@ Sync keeps folders the same; a backup keeps their **history**, so you can bring 
 * **Checked.** After every backup a sample of the stored contents is read back and compared with their hashes; **Check** (the shield) reads back everything. A damaged or missing content is sent again from this computer when it still has it, and the result shows on the backup.
 * **Restore.** **Snapshots** lists every kept snapshot. Browse one, tick files or folders (or none for everything) and restore them **beside** the original (a new folder named `… (restored <date>)`) or **over** it (files that differ are replaced, each keeping its current content as a version). Every restored file is checked against its hash.
 * **Encrypted.** New backups are encrypted (you can turn it off when setting one up). Every content and snapshot list is encrypted with ChaCha20-Poly1305 in 64 KiB chunks, so damage, reordering or a cut-off file is noticed, and contents are stored under keyed names that do not reveal their hashes. The backup's 256-bit key is kept on this computer protected for your Windows account (DPAPI). Unencrypted backups store contents under their plain BLAKE3 and snapshot lists as `.json`.
-* **Recovery key.** When an encrypted backup is set up, Hearthdrive shows its recovery key once (14 groups of four letters and digits, with a checksum against typing mistakes). Keep it away from this computer. The key icon on the backup shows it again after you enter your password.
+* **Recovery key.** When an encrypted backup is set up, HearthDrive shows its recovery key once (14 groups of four letters and digits, with a checksum against typing mistakes). Keep it away from this computer. The key icon on the backup shows it again after you enter your password.
 * **Open a backup from another computer.** If the computer that made a backup is lost or set up again, open **Backups** → **Open a backup** on any computer paired with the device holding it: choose the device, the backup's folder there, a folder here to restore into, and enter the recovery key. Its snapshots appear, ready to browse and restore; it starts paused, and resuming it continues the backup from this computer into the same place.
 
 ## Extra copies
 
 Sync keeps two folders the same both ways, and a backup keeps history in its own format. An **extra copy** is the simple middle: an ordinary folder on another computer that always holds what the folder here holds, so a failed drive or a stolen laptop does not take your files with it.
 
-* **Keep a copy.** Open **Copies** → **Keep a copy**, choose a folder here, a paired computer and a place on it. Hearthdrive checks there is room, copies everything over, and from then on copies new and changed files within a minute (every five minutes while nothing changes). **Add another** keeps a further copy on another computer; the page shows how many up-to-date copies each folder has.
+* **Keep a copy.** Open **Copies** → **Keep a copy**, choose a folder here, a paired computer and a place on it. HearthDrive checks there is room, copies everything over, and from then on copies new and changed files within a minute (every five minutes while nothing changes). **Add another** keeps a further copy on another computer; the page shows how many up-to-date copies each folder has.
 * **Removed files are kept.** A file removed here is not removed from the copy straight away: it stays there for 30 days (7 days to a year, or not at all), listed under **… removed here are kept**, where you can **Bring back** any of it. After that it goes to that computer's trash. So a mistake here never wipes the copy too.
 * **The copy follows this computer.** A file changed on the other computer is replaced by the one here (its content there kept as a version). Files that only exist on the other computer are left alone.
 * **Checked.** Every copied file is checked against its BLAKE3 hash. Once a week part of the copy is read back and compared with the files here; **Check** reads all of it. A copy that no longer matches is sent again.
@@ -212,17 +212,17 @@ Sync keeps two folders the same both ways, and a backup keeps history in its own
 
 **Drive health** shows, for this computer and each paired one:
 
-* **Disks.** Windows' own verdict for every physical disk (healthy, warning, failing), read every half hour, with temperature, wear, power-on hours and uncorrected errors. Without administrator rights Hearthdrive asks the disks themselves (the NVMe health log, the drive's temperature and its own failure prediction), so most of this shows either way.
+* **Disks.** Windows' own verdict for every physical disk (healthy, warning, failing), read every half hour, with temperature, wear, power-on hours and uncorrected errors. Without administrator rights HearthDrive asks the disks themselves (the NVMe health log, the drive's temperature and its own failure prediction), so most of this shows either way.
 * **Free space.** A drive is *nearly full* under 10% free and *almost full* under 3% or 1 GB.
 * **Missing storage.** Each storage location is looked at every minute. One that disappears (a drive unplugged or failing) is shown until it is back, and both events go into the activity log.
-* **Silent damage.** Once a month (or when you press **Verify files**) Hearthdrive reads every file of a storage location and compares it with the hash taken when it was indexed. A file whose content changed while its size and date did not was damaged on the disk. It is listed with where a good copy is (an extra copy or a backup); **Repair** puts the right content back and keeps what was there as a version. If a program changed the file on purpose without changing its date, **It is fine** accepts its current content.
+* **Silent damage.** Once a month (or when you press **Verify files**) HearthDrive reads every file of a storage location and compares it with the hash taken when it was indexed. A file whose content changed while its size and date did not was damaged on the disk. It is listed with where a good copy is (an extra copy or a backup); **Repair** puts the right content back and keeps what was there as a version. If a program changed the file on purpose without changing its date, **It is fine** accepts its current content.
 * **Report.** **Copy report** puts a plain-text summary of all of it on the clipboard.
 
 Problems also show at the top of **Overview**.
 
 ## Signing in safely
 
-People sign in to a computer's Hearthdrive from a browser on that computer (the app itself signs in by itself). **Settings** → **Security** has:
+People sign in to a computer's HearthDrive from a browser on that computer (the app itself signs in by itself). **Settings** → **Security** has:
 
 * **Two-step sign-in.** **Turn on**, enter your password, scan the QR code with an authenticator app (Microsoft Authenticator, Google Authenticator, 2FAS, Aegis and others) and type the code it shows. From then on, signing in asks for a six-digit code after the password. Each code works once. You also get ten **recovery codes**, shown once: keep them away from this computer, and use one when your phone is not at hand. **New recovery codes** replaces them.
 * **Passkeys.** **Add a passkey** to sign in with Windows Hello (face, fingerprint or PIN), your phone or a security key instead of a password and code. Passkeys are made for `localhost`, so open the web interface at `http://localhost:47100` rather than `http://127.0.0.1:47100` (the sign-in page links to it). On the sign-in page, **Sign in with a passkey**.
@@ -239,10 +239,10 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 
 ## Phone backup and the share menu
 
-* **Back up photos and videos.** In the phone app, open **Backup**, choose what to back up (camera and screenshots, pictures, videos), a paired computer and a folder on it, and allow Hearthdrive to read your photos when Android asks. Photos keep their folders and dates (for example `DCIM/Camera/IMG_1234.jpg`).
-* **When it runs.** While Hearthdrive is open on the phone: when you open it, every 15 minutes, and when you press **Back up now**. Only new and changed files are sent; a photo edited on the phone replaces its copy, and the computer keeps the earlier one as a version.
+* **Back up photos and videos.** In the phone app, open **Backup**, choose what to back up (camera and screenshots, pictures, videos), a paired computer and a folder on it, and allow HearthDrive to read your photos when Android asks. Photos keep their folders and dates (for example `DCIM/Camera/IMG_1234.jpg`).
+* **When it runs.** While HearthDrive is open on the phone: when you open it, every 15 minutes, and when you press **Back up now**. Only new and changed files are sent; a photo edited on the phone replaces its copy, and the computer keeps the earlier one as a version.
 * **Nothing is removed.** Deleting a photo on the phone keeps the copy on the computer. Deleting the copy on the computer does not make the phone send it again. Files already on the computer with the same name and size (after reinstalling the app, say) are not sent twice.
-* **Share to Hearthdrive.** In any app, choose **Share** → **Hearthdrive** for files, photos or text. Hearthdrive asks which computer and folder to send them to; the transfer appears under **Transfers**. **Later** keeps them in the app until you send or discard them.
+* **Share to HearthDrive.** In any app, choose **Share** → **HearthDrive** for files, photos or text. HearthDrive asks which computer and folder to send them to; the transfer appears under **Transfers**. **Later** keeps them in the app until you send or discard them.
 
 ## Shared folders and comments
 
@@ -251,18 +251,18 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 * **Shared with you.** Folders shared with you appear next to the storage locations in **Files** (with a people icon) and under **Sharing**. Inside one, the path starts at the shared folder, and the badge says what you may do. Members can't rename, move or delete the shared folder itself; search, recent files, trash and live updates include what is inside it.
 * **Drop folders.** **Add files only** turns a folder into a drop box: members upload files and make folders but see nothing that is in it, and nothing is replaced; a file with a name already there is saved as "name (1)". Their role must allow adding files (editor or contributor).
 * **Devices.** A folder shared with a paired device is open to the people using it, as far as their own limits on their computer allow.
-* **When it follows the folder.** Renaming or moving a shared folder (or a folder above it) in Hearthdrive keeps it shared. If it is renamed or moved in Explorer, **Sharing** marks it **Folder not found**; share it again under its new name.
+* **When it follows the folder.** Renaming or moving a shared folder (or a folder above it) in HearthDrive keeps it shared. If it is renamed or moved in Explorer, **Sharing** marks it **Folder not found**; share it again under its new name.
 * **Groups and family spaces.** On **Sharing**, **New group** puts people on this computer together (your family, say); a folder shared with the group is shared with everyone in it, and with people added to it later. Someone removed from the group loses its folders at once. **New family space** makes a folder and shares it with a group (or a new group of the people you tick) in one step. Someone given a folder both directly and through a group gets whichever allows more.
-* **Upload links.** To collect files from people who have no Hearthdrive, select a folder in **Files** and choose **Ask for files** (the inbox icon). Give the link a title, a message, how long it works and how much it may take in all. Whoever opens it gets a simple page to drop files on: they see nothing already in the folder, and a file with a name that is there already is saved as "name (1)". Files are added as you, so a link never does more than you may, and stops working if you lose access. **Sharing** lists your links (everyone's, for owners and administrators) with what they received; the bin takes one down at once.
-* **Where upload links work.** Hearthdrive has no server on the internet, so the page is served on the address for programs (**Settings** → **Programs, WebDAV and S3**): on the local network when that is allowed (guests on your Wi-Fi), otherwise only on this computer. The dialog says which, and owners and administrators can open it to the local network from there. To send files to someone further away, use a share link (below).
+* **Upload links.** To collect files from people who have no HearthDrive, select a folder in **Files** and choose **Ask for files** (the inbox icon). Give the link a title, a message, how long it works and how much it may take in all. Whoever opens it gets a simple page to drop files on: they see nothing already in the folder, and a file with a name that is there already is saved as "name (1)". Files are added as you, so a link never does more than you may, and stops working if you lose access. **Sharing** lists your links (everyone's, for owners and administrators) with what they received; the bin takes one down at once.
+* **Where upload links work.** HearthDrive has no server on the internet, so the page is served on the address for programs (**Settings** → **Programs, WebDAV and S3**): on the local network when that is allowed (guests on your Wi-Fi), otherwise only on this computer. The dialog says which, and owners and administrators can open it to the local network from there. To send files to someone further away, use a share link (below).
 * **Comments.** The **Properties** panel of a file or folder has comments for everyone who can open it, including viewers (Ctrl+Enter posts). Authors delete their own comments; owners and administrators can delete any. Comments stay with the file through renames, moves and the trash, and go when it is deleted for good. They work on paired devices' files too.
 
 ## Share links
 
-* **Make a link.** In **Files**, select a file or folder and choose **Share a link**. Pick how long it works (up to 3 days on the public Send service) and how many downloads it allows, and optionally a password. Hearthdrive uploads it in the background; the link appears in the dialog and under **Sharing**, ready to copy. A folder is sent as one zip file.
-* **Encrypted with Send.** The file is encrypted on the computer that holds it, with a new random key for every link. The key is the part of the link after `#`, which browsers never send to a server, so the Send service stores only data it cannot read. The recipient's browser decrypts it. A password is never stored by Hearthdrive; it is turned into the key the service checks before a download.
-* **Which Send service.** By default the public instance at send.vis.ee (files up to 2.5 GB). An owner or administrator can point Hearthdrive at another Send instance, including one you host, under **Sharing** → **Send service**.
-* **temp.sh.** For larger files (up to 4 GB, 3 days) Hearthdrive can use temp.sh instead. It is **not encrypted**: the service can read what you upload, and the link cannot be taken down early. Use it only for files that are not private.
+* **Make a link.** In **Files**, select a file or folder and choose **Share a link**. Pick how long it works (up to 3 days on the public Send service) and how many downloads it allows, and optionally a password. HearthDrive uploads it in the background; the link appears in the dialog and under **Sharing**, ready to copy. A folder is sent as one zip file.
+* **Encrypted with Send.** The file is encrypted on the computer that holds it, with a new random key for every link. The key is the part of the link after `#`, which browsers never send to a server, so the Send service stores only data it cannot read. The recipient's browser decrypts it. A password is never stored by HearthDrive; it is turned into the key the service checks before a download.
+* **Which Send service.** By default the public instance at send.vis.ee (files up to 2.5 GB). An owner or administrator can point HearthDrive at another Send instance, including one you host, under **Sharing** → **Send service**.
+* **temp.sh.** For larger files (up to 4 GB, 3 days) HearthDrive can use temp.sh instead. It is **not encrypted**: the service can read what you upload, and the link cannot be taken down early. Use it only for files that are not private.
 * **Take a link down.** On **Sharing**, the bin deletes the file from Send at once. Links stop working by themselves when they expire or run out of downloads.
 * **On the phone.** Share files on your computers the same way; the computer holding the file does the encrypting and uploading, and the phone offers its share sheet to send the link.
 * **Who can share.** Owners, administrators and editors. Owners and administrators see every link made on a computer; everyone else sees their own. People limited to some storage can share only from it.
@@ -270,11 +270,11 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 ## Photos, music and films
 
 * **Photos.** **Photos** shows every picture and video in your storage as a timeline by month, with the camera, a map of where photos were taken, **On this day** memories from earlier years, and photos that look alike (a perceptual hash, so resized or re-saved copies are found too). Camera raw files show their built-in preview. Albums collect photos from any storage location and can be shared with people on this computer. Dates and places come from the photos' EXIF data; nothing is uploaded anywhere.
-* **Music and films.** **Media** lists music by artist and album (from the files' tags), films, series by season and episode (from their file names) and home videos, and plays them in the app. Each person's place in a video is remembered on every device, so a film started on the laptop continues on the phone. A video the browser cannot play is converted to MP4 while it plays, if `ffmpeg` is installed and on the `PATH`; Hearthdrive does not download it.
+* **Music and films.** **Media** lists music by artist and album (from the files' tags), films, series by season and episode (from their file names) and home videos, and plays them in the app. Each person's place in a video is remembered on every device, so a film started on the laptop continues on the phone. A video the browser cannot play is converted to MP4 while it plays, if `ffmpeg` is installed and on the `PATH`; HearthDrive does not download it.
 
 ## Documents
 
-* **Search inside documents.** Hearthdrive reads the text of plain text and code files, PDFs, Word, Excel, PowerPoint and OpenDocument files, so search finds them by what they say. Scanned PDFs are read with Windows' own text recognition (the languages installed in Windows); reading text in pictures too can be turned on under **Settings** → **Documents** (it is slow on large photo collections).
+* **Search inside documents.** HearthDrive reads the text of plain text and code files, PDFs, Word, Excel, PowerPoint and OpenDocument files, so search finds them by what they say. Scanned PDFs are read with Windows' own text recognition (the languages installed in Windows); reading text in pictures too can be turned on under **Settings** → **Documents** (it is slow on large photo collections).
 * **Tags.** Documents get tags from what they say (*invoice*, *receipt*, *contract*, *payslip*…). Keep, remove or add tags in a file's **Properties**; **Files** can be filtered by tag, kind, size and date.
 * **PDFs.** PDFs open in the app's own viewer, page by page, with zoom; search finds them by their text.
 * **Sorting.** To file documents away by their tags, use a rule (below).
@@ -293,8 +293,8 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 
 * **Archives.** Zip, 7z, tar and .tar.gz files open like folders in **Files**, and **Extract** unpacks one into a new folder next to it as a transfer. Paths that would land outside that folder are refused.
 * **Download from a link.** **Download from a link** (next to Upload) downloads a file from the web straight into a storage location, under **Transfers**. Addresses on this computer are refused, and so are addresses on your local network except for owners and administrators.
-* **Encrypted folders.** Select a folder in **Files** and press the lock to encrypt its files with a password (PBKDF2, then each file sealed with its own key; tampering is detected). Encrypted files are unreadable on the disk and in the virtual drive; names stay visible. Unlock decrypts them again. Without the password nobody can recover them, Hearthdrive included. The folder's `.nexus-vault` file holds what the password is checked against; Hearthdrive hides it and does not let it be changed or deleted, since the files cannot be decrypted without it.
-* **Plugins.** A plugin is a folder in Hearthdrive's `plugins` folder with a `plugin.json` that adds commands to files and folders (for example "Convert to PDF" for `.docx` files), each running one program with the file's path. The owner turns each plugin on in **Settings** → **Plugins** after seeing exactly which programs it runs; a plugin whose `plugin.json` changes is turned off again. Commands appear under the puzzle button in **Files** for owners and administrators. Programs run directly, never through a shell, with a time limit.
+* **Encrypted folders.** Select a folder in **Files** and press the lock to encrypt its files with a password (PBKDF2, then each file sealed with its own key; tampering is detected). Encrypted files are unreadable on the disk and in the virtual drive; names stay visible. Unlock decrypts them again. Without the password nobody can recover them, HearthDrive included. The folder's `.nexus-vault` file holds what the password is checked against; HearthDrive hides it and does not let it be changed or deleted, since the files cannot be decrypted without it.
+* **Plugins.** A plugin is a folder in HearthDrive's `plugins` folder with a `plugin.json` that adds commands to files and folders (for example "Convert to PDF" for `.docx` files), each running one program with the file's path. The owner turns each plugin on in **Settings** → **Plugins** after seeing exactly which programs it runs; a plugin whose `plugin.json` changes is turned off again. Commands appear under the puzzle button in **Files** for owners and administrators. Programs run directly, never through a shell, with a time limit.
 
 ## Programs, WebDAV and S3
 
@@ -303,14 +303,14 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 * **Tokens.** Make a token for each program, read-only or not, with an expiry if you like. It is shown once. A token acts as you, with your storage limits (a read-only one as a viewer) but can never change people, tokens, pairing or sign-in settings.
 * **WebDAV** at `http://<address>:47180/dav/`: map it as a network drive in Windows, or use it from any WebDAV app, with any user name and the token as the password. Each storage location is a folder.
 * **S3** at `http://<address>:47180/`: each storage location is a bucket, for rclone, the AWS CLI, Cyberduck and backup programs that speak S3. Use the access key and secret key shown with the token (path-style addressing; signed and multipart uploads work). Deleted objects go to the trash.
-* **The Hearthdrive API** at `http://<address>:47180/api/v1/` with `Authorization: Bearer <token>`, for your own scripts. It is the same API the app uses.
+* **The HearthDrive API** at `http://<address>:47180/api/v1/` with `Authorization: Bearer <token>`, for your own scripts. It is the same API the app uses.
 
 ## Power and notifications
 
 * **Wake-on-LAN.** A sleeping computer that allows it can be woken from **Devices** by another device on the same network. **Put to sleep** and a few other remote commands (look for changes, check for updates, pause or resume transfers) can be run on a paired computer from **Devices**.
-* **Transfers and power.** While Hearthdrive copies, syncs or backs up, it keeps the computer from going to sleep, and it waits while a laptop runs on battery. Both can be turned off in the transfer settings on **Transfers**.
-* **Nearby devices.** Computers and phones running Hearthdrive on the same local network find each other; **Add device** lists them to pair with one click (still approved on the other computer).
-* **Notifications.** Windows notifications for finished or failed transfers, devices asking to pair and devices going offline, while the Hearthdrive window is not in front. Choose which under **Settings**.
+* **Transfers and power.** While HearthDrive copies, syncs or backs up, it keeps the computer from going to sleep, and it waits while a laptop runs on battery. Both can be turned off in the transfer settings on **Transfers**.
+* **Nearby devices.** Computers and phones running HearthDrive on the same local network find each other; **Add device** lists them to pair with one click (still approved on the other computer).
+* **Notifications.** Windows notifications for finished or failed transfers, devices asking to pair and devices going offline, while the HearthDrive window is not in front. Choose which under **Settings**.
 
 ## Updates
 
@@ -328,7 +328,7 @@ Updates are built and published by GitHub Actions, not on anyone's computer, and
 * **Spreading.** Every device looks every 30 minutes (or at once with **Check now**). On GitHub it reads fixed download links (`releases/latest/download/nexus-update-<platform>.json`), not GitHub's API, which allows only 60 calls an hour from one internet address, and a household's devices share one. It also asks its online paired devices, and fetches anything newer from a paired device when one has it, otherwise from GitHub. Computers keep the packages for every platform so they can pass them on; phones keep only their own. **Also look for updates on GitHub** turns GitHub off for a device (`NEXUS_UPDATE_REPO=off` turns it off everywhere, or names another repository).
 * **Checking.** A package is kept, offered or installed only if its description is signed with a key built into the app and the package matches the signed size and BLAKE3 hash, checked again right before installing. Whether a release is a beta is signed too. So neither a paired device nor anyone who could change a GitHub release can change an update, pass a beta off as stable, or roll a device back.
 * **Installing on Windows.** A banner offers **Install now**. With **Install updates automatically** on (the default), the update installs by itself once the window is closed and no copy or sync is running. The installer stops the service, replaces the files and starts the service again. Development builds, and installs from the MSI package of 0.1.4 and earlier, are not updated this way: install the `.exe` once over an MSI install.
-* **Installing on Android.** Hearthdrive hands the package to Android's package installer. On Android 12 and later, with **Install updates automatically** on, it installs by itself the next time Hearthdrive is in the background, without asking: Android lets an app update itself this way. The app closes while it installs; the new version starts when it is next opened. **Install now** does the same at once. On older Android, or when Android wants to, Android asks you to confirm. Either way, the first time Android asks you to allow Hearthdrive to install apps. Updates install over the app only when they are signed with the same Android key as the installed app.
+* **Installing on Android.** HearthDrive hands the package to Android's package installer. On Android 12 and later, with **Install updates automatically** on, it installs by itself the next time HearthDrive is in the background, without asking: Android lets an app update itself this way. The app closes while it installs; the new version starts when it is next opened. **Install now** does the same at once. On older Android, or when Android wants to, Android asks you to confirm. Either way, the first time Android asks you to allow HearthDrive to install apps. Updates install over the app only when they are signed with the same Android key as the installed app.
 * **The update key** is at `~/.nexus-signing/update-key`; the release workflow uses a copy in the repository's secrets. Anyone with it can publish updates to all your devices, so keep it private.
 * **The spare key.** The app trusts a second key, `~/.nexus-signing/update-key-spare`, which has never signed anything. Move it off this computer (a USB stick in a drawer, a password manager) and delete it here. If the main key is ever lost or leaks: put the spare in the `NEXUS_UPDATE_KEY` secret, take the old key out of `TRUSTED_KEYS` (`crates/nexus-devices/src/release.rs`), add a new spare there, and release. Every device takes that release, because it trusts the spare, and from then on no longer trusts the old key. Without a spare, every device would have to be updated by hand.
 
@@ -343,13 +343,13 @@ Updates are built and published by GitHub Actions, not on anyone's computer, and
 
 The workflows publish with the repository's own token, so no other token is needed.
 
-**Without GitHub.** `scripts/release.sh 1.2.3 notes.md --local` builds both on this computer, signs them with the update key there and adds them to this computer's Hearthdrive, from where your paired devices fetch them. Nothing is committed or published.
+**Without GitHub.** `scripts/release.sh 1.2.3 notes.md --local` builds both on this computer, signs them with the update key there and adds them to this computer's HearthDrive, from where your paired devices fetch them. Nothing is committed or published.
 
 Versions before 0.1.2 cannot update themselves: install 0.1.2 by hand once on each device. Versions before 0.1.5 only update from paired devices; once a device has 0.1.5 it also looks on GitHub.
 
 ## Virtual drive
 
-On Windows, Settings → Virtual drive puts your storage in File Explorer, under **Hearthdrive** in the navigation pane (default folder `%USERPROFILE%\Hearthdrive`; a drive turned on before the rename stays in `%USERPROFILE%\NEXUS`). It is a cloud sync root using the Windows Cloud Files API, the mechanism OneDrive uses; no driver is installed. The code is in `crates/nexus-vdrive`.
+On Windows, Settings → Virtual drive puts your storage in File Explorer, under **HearthDrive** in the navigation pane (default folder `%USERPROFILE%\HearthDrive`; a drive turned on before the rename stays in `%USERPROFILE%\NEXUS`). It is a cloud sync root using the Windows Cloud Files API, the mechanism OneDrive uses; no driver is installed. The code is in `crates/nexus-vdrive`.
 
 - **Layout.** `My Files\<device>\<storage location>\...` holds this computer and every paired device; `Shared With Me\<folder> (<device>)\...` holds folders other devices shared with this one.
 - **Opening files.** Folders are listed when first opened; files download from their device when an app reads them (16 MiB read-ahead), through the node's own peer proxy.
@@ -381,7 +381,7 @@ The Android app is the same node and the same interface, packaged with Tauri. Th
 2. Install it (`adb install -r <apk>`, or copy the file to the phone and open it).
 3. Open the app, name the phone, and choose **Scan QR code**. On the computer, open **Devices** → **Add device** and approve the phone after comparing fingerprints.
 
-Tap opens a file or folder; press and hold selects. Downloads are saved to the phone's `Download/Hearthdrive` folder. The node runs while the app is open; the computers keep running on their own. Phone backup and sharing to Hearthdrive are described above.
+Tap opens a file or folder; press and hold selects. Downloads are saved to the phone's `Download/HearthDrive` folder. The node runs while the app is open; the computers keep running on their own. Phone backup and sharing to HearthDrive are described above.
 
 The script exists because the Tauri CLI links the compiled library with a symbolic link, which Windows only allows in Developer Mode. The script copies the library instead.
 
@@ -405,9 +405,9 @@ Following the product spec's phases. Each phase ships a working application.
 
 ## License
 
-Hearthdrive is released under the [Functional Source License, version 1.1, with Apache 2.0 as the future license](LICENSE.md) (FSL-1.1-ALv2). In short:
+HearthDrive is released under the [Functional Source License, version 1.1, with Apache 2.0 as the future license](LICENSE.md) (FSL-1.1-ALv2). In short:
 
-* You may use, copy, change and run it for any purpose, including at work and for your family, except to make a product or service that competes with Hearthdrive.
+* You may use, copy, change and run it for any purpose, including at work and for your family, except to make a product or service that competes with HearthDrive.
 * Two years after each version is released, that version is also available under the Apache License 2.0, with no such limit.
 
 This is a summary; the [license](LICENSE.md) itself is what counts.
