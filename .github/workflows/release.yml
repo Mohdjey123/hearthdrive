@@ -75,6 +75,11 @@ jobs:
       run:
         shell: bash
     steps:
+      # Windows machines check files out with CRLF line endings, which would
+      # change the migrations the app embeds; existing databases expect LF.
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}

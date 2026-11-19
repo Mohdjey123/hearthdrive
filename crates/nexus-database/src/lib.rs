@@ -125,3 +125,19 @@ pub(crate) fn like_escape(s: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod migration_bytes {
+    /// Every database records a checksum of each migration's exact bytes, and
+    /// the ones already out there were made from LF files. A migration checked
+    /// out with CRLF line endings would build an app that refuses to open them.
+    #[test]
+    fn migrations_use_lf_line_endings() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let bytes = std::fs::read(&path).unwrap();
+            assert!(!bytes.contains(&b'\r'), "{} has CRLF line endings", path.display());
+        }
+    }
+}

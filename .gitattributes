@@ -1,0 +1,4 @@
+# The app embeds a checksum of every migration's exact bytes, and databases
+# created by earlier builds expect the LF versions: a CRLF checkout would
+# build an app that refuses to open them.
+migrations/*.sql text eol=lf
