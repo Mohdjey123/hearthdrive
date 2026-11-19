@@ -1,8 +1,12 @@
 package app.nexuscloud.desktop
 
 import android.Manifest
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
@@ -10,12 +14,12 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import java.io.File
 
 /**
@@ -26,10 +30,16 @@ import java.io.File
  * - receives files shared to NEXUS from other apps (the share menu) and
  *   copies them into `<cache>/shared`, where the node sends them from once
  *   the person picks a computer and folder;
- * - hands an update the node received and verified to Android's installer.
+ * - hands an update the node received and verified to Android's package
+ *   installer: when the person taps Install, or by itself once the app goes
+ *   to the background (Android 12 and later lets an app update itself
+ *   without asking).
  */
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
+
+  /** The verified update to install once the app is in the background. */
+  @Volatile private var quietUpdate: String? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     // The app draws its own dark background under the system bars, so the
@@ -47,6 +57,17 @@ class MainActivity : TauriActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     receiveShare(intent)
+  }
+
+  override fun onStop() {
+    super.onStop()
+    // Out of sight: install a waiting update by itself, if the page asked
+    // for that and Android allows it without asking. The app is closed
+    // while it installs; the new version starts when it is next opened.
+    val path = quietUpdate ?: return
+    if (!canUpdateQuietly()) return
+    quietUpdate = null
+    Thread { installUpdate(path, interactive = false) }.start()
   }
 
   override fun onWebViewCreate(webView: WebView) {
@@ -91,7 +112,17 @@ class MainActivity : TauriActivity() {
      * setting is opened) or `missing`.
      */
     @JavascriptInterface
-    fun installUpdate(path: String): String = this@MainActivity.installUpdate(path)
+    fun installUpdate(path: String): String = this@MainActivity.installUpdate(path, interactive = true)
+
+    /** The update to install once the app is in the background ('' for none). */
+    @JavascriptInterface
+    fun installInBackground(path: String) {
+      quietUpdate = path.ifEmpty { null }
+    }
+
+    /** Whether updates can install without asking (Android 12 and later, once allowed). */
+    @JavascriptInterface
+    fun canUpdateQuietly(): Boolean = this@MainActivity.canUpdateQuietly()
 
     /** Opens this app's page in Android settings (when the prompt was turned off). */
     @JavascriptInterface
@@ -104,29 +135,69 @@ class MainActivity : TauriActivity() {
 
   // -- Updates -------------------------------------------------------------
 
-  private fun installUpdate(path: String): String {
-    val file = try { File(path).canonicalFile } catch (e: Exception) { return "missing" }
+  /** Android 12 and later, with NEXUS allowed to install apps. */
+  private fun canUpdateQuietly(): Boolean =
+    Build.VERSION.SDK_INT >= 31 && packageManager.canRequestPackageInstalls()
+
+  /** The node's own verified update package, if [path] is it. */
+  private fun updatePackage(path: String): File? {
+    val file = try { File(path).canonicalFile } catch (e: Exception) { return null }
     val root = File(applicationInfo.dataDir).canonicalFile
     val expected = "updates" + File.separator + "android-aarch64" + File.separator + "package.apk"
     if (!file.path.startsWith(root.path + File.separator) || !file.path.endsWith(File.separator + expected) || !file.isFile) {
-      return "missing"
+      return null
     }
+    return file
+  }
+
+  /**
+   * Hands the update at [path] to Android's package installer, in a
+   * session that asks Android not to need the person (Android 12 and
+   * later). If Android still wants them to confirm, its prompt is shown
+   * when [interactive] (the person tapped Install), and the install is
+   * dropped otherwise. Returns `started`, `permission` (NEXUS must first be
+   * allowed to install apps; the setting is opened) or `missing`.
+   */
+  private fun installUpdate(path: String, interactive: Boolean): String {
+    val file = updatePackage(path) ?: return "missing"
     if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
-      runOnUiThread {
-        startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+      if (interactive) {
+        runOnUiThread {
+          startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+        }
       }
       return "permission"
     }
-    // The installer reads it through the app's file provider, which shares
-    // only the cache folder.
-    val dir = File(cacheDir, "update").apply { mkdirs() }
-    val copy = File(dir, "NEXUS-Cloud.apk")
-    file.copyTo(copy, overwrite = true)
-    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", copy)
-    val intent = Intent(Intent.ACTION_VIEW)
-      .setDataAndType(uri, "application/vnd.android.package-archive")
-      .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-    runOnUiThread { startActivity(intent) }
+    val installer = packageManager.packageInstaller
+    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+      setAppPackageName(packageName)
+      if (Build.VERSION.SDK_INT >= 31) setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+    }
+    val id = try {
+      installer.createSession(params)
+    } catch (e: Exception) {
+      Log.w(TAG, "Could not start installing the update: $e")
+      return "missing"
+    }
+    try {
+      installer.openSession(id).use { session ->
+        session.openWrite("package.apk", 0, file.length()).use { out ->
+          file.inputStream().use { it.copyTo(out, 256 * 1024) }
+          session.fsync(out)
+        }
+        val result = Intent(this, UpdateResultReceiver::class.java)
+          .setPackage(packageName)
+          .putExtra(UpdateResultReceiver.EXTRA_INTERACTIVE, interactive)
+        // Mutable: the installer adds the outcome to it.
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+        val pending = PendingIntent.getBroadcast(this, if (interactive) 1 else 2, result, flags)
+        session.commit(pending.intentSender)
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "Could not install the update: $e")
+      try { installer.abandonSession(id) } catch (_: Exception) {}
+      return "missing"
+    }
     return "started"
   }
 
@@ -219,5 +290,39 @@ class MainActivity : TauriActivity() {
       n++
     }
     return candidate
+  }
+}
+
+private const val TAG = "NexusUpdate"
+
+/**
+ * Hears how an update install went. If Android wants the person to
+ * confirm, its prompt is shown when they tapped Install, and the install
+ * is dropped when it was started in the background (it is tried again
+ * next time, or the person taps Install).
+ */
+class UpdateResultReceiver : BroadcastReceiver() {
+  companion object {
+    const val EXTRA_INTERACTIVE = "app.nexuscloud.desktop.INTERACTIVE"
+  }
+
+  override fun onReceive(context: Context, intent: Intent) {
+    val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+    when (status) {
+      PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+        if (intent.getBooleanExtra(EXTRA_INTERACTIVE, false)) {
+          @Suppress("DEPRECATION")
+          val confirm: Intent? =
+            if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+            else intent.getParcelableExtra(Intent.EXTRA_INTENT)
+          confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let { context.startActivity(it) }
+        } else {
+          val id = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+          if (id >= 0) try { context.packageManager.packageInstaller.abandonSession(id) } catch (_: Exception) {}
+        }
+      }
+      PackageInstaller.STATUS_SUCCESS -> Log.i(TAG, "Update installed")
+      else -> Log.w(TAG, "Update not installed ($status): ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)}")
+    }
   }
 }

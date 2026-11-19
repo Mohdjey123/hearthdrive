@@ -1,0 +1,247 @@
+# Builds and publishes a NEXUS release for every platform, on GitHub's
+# computers: no one's own PC has to build, sign or upload anything.
+#
+#   v1.2.3        a stable release: every device gets it.
+#   v1.2.3-beta   a beta: only devices set to "Get beta versions" get it.
+#                 Make it stable later with the Promote workflow.
+#
+# scripts/release.sh sets the version, commits and pushes the tag; this
+# workflow starts from the tag. It can also be started by hand from the
+# Actions tab for an existing tag.
+#
+# 1. Builds the Windows installer and the Android app at the same time.
+# 2. Signs a description of each (nexus-update-<platform>.json) with the
+#    update key, and publishes the packages, their SHA-256 sums and the
+#    descriptions as the GitHub release for the tag. Devices read the
+#    latest stable release (and betas the "beta" release) through fixed
+#    download links, check the signature, and pass stable releases on to
+#    each other.
+#
+# Secrets (Settings -> Secrets and variables -> Actions):
+#   NEXUS_UPDATE_KEY           the contents of ~/.nexus-signing/update-key
+#   ANDROID_KEYSTORE_BASE64    the keystore that signs the APK, base64. Use the
+#                              key that signed the app already on your phones,
+#                              or Android refuses to install updates over it.
+#   ANDROID_KEYSTORE_PASSWORD  its password
+#   ANDROID_KEY_ALIAS          the key's alias in it
+#   ANDROID_KEY_PASSWORD       the key's password (if different)
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, like v1.2.3 or v1.2.3-beta'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  NDK_VERSION: 27.0.12077973
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      channel: ${{ steps.tag.outputs.channel }}
+    steps:
+      - id: tag
+        name: Version and channel from the tag
+        run: |
+          if [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"; echo "channel=stable" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-beta$ ]]; then
+            echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"; echo "channel=beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "The tag must look like v1.2.3 or v1.2.3-beta, not $TAG" >&2; exit 1
+          fi
+
+  windows:
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Set the version
+        run: |
+          sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"$VERSION\"/" Cargo.toml
+          sed -i -E "0,/\"version\": \"[^\"]+\"/s//\"version\": \"$VERSION\"/" apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the installer
+        run: npm run desktop:build
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp "target/release/bundle/nsis/NEXUS Cloud_${VERSION}_x64-setup.exe" "out/NEXUS-Cloud_${VERSION}_x64-setup.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  android:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Set the version
+        # Android's versionCode is worked out from it (major * 1000000 + minor * 1000 + patch).
+        run: |
+          sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"$VERSION\"/" Cargo.toml
+          sed -i -E "0,/\"version\": \"[^\"]+\"/s//\"version\": \"$VERSION\"/" apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android NDK
+        run: |
+          sdkmanager --install "ndk;$NDK_VERSION" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          [ -n "$ANDROID_KEYSTORE_BASE64" ] || { echo "The ANDROID_KEYSTORE_BASE64 secret is missing" >&2; exit 1; }
+          umask 077
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+      - name: Build the APK
+        env:
+          NEXUS_ANDROID_KEYSTORE: ${{ runner.temp }}/release.keystore
+          NEXUS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NEXUS_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NEXUS_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          bash scripts/build-android.sh aarch64 release
+          rm -f "$RUNNER_TEMP/release.keystore"
+
+      - name: Collect
+        run: |
+          APK="$(ls apps/desktop/src-tauri/gen/android/app/build/outputs/apk/arm64/release/*.apk | grep -v unsigned | head -1)"
+          mkdir -p out
+          cp "$APK" "out/NEXUS-Cloud_${VERSION}_arm64.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [prepare, windows, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      CHANNEL: ${{ needs.prepare.outputs.channel }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Release tool
+        run: cargo build --release -p nexus-core --bin nexus-release
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Sign the updates
+        env:
+          NEXUS_UPDATE_KEY_TEXT: ${{ secrets.NEXUS_UPDATE_KEY }}
+        run: |
+          [ -n "$NEXUS_UPDATE_KEY_TEXT" ] || { echo "The NEXUS_UPDATE_KEY secret is missing" >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$NEXUS_UPDATE_KEY_TEXT" > "$RUNNER_TEMP/update-key"
+          NOTES=()
+          [ -f "docs/releases/$VERSION.md" ] && NOTES=(--notes "docs/releases/$VERSION.md")
+          sign() {
+            target/release/nexus-release sign --key "$RUNNER_TEMP/update-key" --channel "$CHANNEL" \
+              --platform "$1" --version "$VERSION" --package "out/$2" --out "out/nexus-update-$1.json" "${NOTES[@]}"
+          }
+          sign windows-x86_64 "NEXUS-Cloud_${VERSION}_x64-setup.exe"
+          sign android-aarch64 "NEXUS-Cloud_${VERSION}_arm64.apk"
+          rm -f "$RUNNER_TEMP/update-key"
+          (cd out && for f in *.exe *.apk; do sha256sum "$f" > "$f.sha256"; done)
+          ls -l out
+
+      - name: Publish the release
+        run: |
+          NOTES=(--notes "NEXUS Cloud $VERSION")
+          [ -f "docs/releases/$VERSION.md" ] && NOTES=(--notes-file "docs/releases/$VERSION.md")
+          if [ "$CHANNEL" = beta ]; then
+            gh release create "$TAG" --verify-tag --prerelease --title "NEXUS Cloud $VERSION beta" "${NOTES[@]}" out/*
+            # The fixed place beta devices look: always the newest beta's
+            # signed descriptions.
+            if ! gh release view beta > /dev/null 2>&1; then
+              gh release create beta --prerelease --target "$(git rev-parse HEAD)" --title "Beta channel" \
+                --notes "Devices set to take betas look here. The packages are in each v<version>-beta release."
+            fi
+            gh release upload beta out/nexus-update-*.json --clobber
+          else
+            gh release create "$TAG" --verify-tag --latest --title "NEXUS Cloud $VERSION" "${NOTES[@]}" out/*
+          fi

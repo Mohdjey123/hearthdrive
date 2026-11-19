@@ -1,9 +1,17 @@
 //! Updates that spread between your own devices, and come from GitHub.
 //!
-//! Every node also looks at the latest release of a public GitHub
-//! repository ([`RELEASES_REPO`]), so a device that cannot reach any paired
-//! device with the update still gets it. Those packages are checked exactly
-//! like the ones from paired devices.
+//! Every node also looks at the latest release of the project's public
+//! GitHub repository ([`RELEASES_REPO`]), so a device that cannot reach any
+//! paired device with the update still gets it. It reads fixed download
+//! links (`releases/latest/download/...`), not GitHub's API, which allows
+//! only 60 calls an hour from one internet address: a household's devices
+//! share one. Those packages are checked exactly like the ones from paired
+//! devices.
+//!
+//! Beta releases (signed with the `beta` channel) are published as GitHub
+//! pre-releases, listed on a fixed `beta` release. Only devices set to take
+//! betas fetch them, and only from GitHub: a node never offers a beta to
+//! its paired devices, so a stable device never receives one.
 //!
 //! A release is published by dropping a signed package into one node's
 //! update store (`<data>/updates/<platform>/`, see the `nexus-release`
@@ -20,8 +28,10 @@
 //! Installing: on Windows this service starts the signed installer, which
 //! stops the service and the app, replaces them, and starts them again.
 //! With automatic installs on, that happens once the app's window is closed
-//! and no copy or sync is running. On Android the app opens the system
-//! installer, which always asks the person.
+//! and no copy or sync is running. On Android the app hands the package to
+//! Android's package installer: on Android 12 and later, with automatic
+//! installs on, once the app goes to the background and without asking
+//! (Android allows an app to update itself so); otherwise Android asks.
 
 use super::audit;
 use crate::auth::AuthUser;
@@ -50,8 +60,12 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tower::ServiceExt;
 
-/// Whether this node installs updates by itself (Windows). On by default.
+/// Whether this node installs updates by itself (Windows, and Android 12 or
+/// later while the app is in the background). On by default.
 pub const AUTO_INSTALL_SETTING: &str = "updates.auto_install";
+
+/// Whether this device also takes beta releases. Off by default.
+pub const BETA_SETTING: &str = "updates.beta";
 
 /// How often paired devices are asked for newer packages.
 const CHECK_EVERY: Duration = Duration::from_secs(30 * 60);
@@ -262,7 +276,8 @@ async fn fetch_newer(s: &SharedState) -> Result<()> {
         let Ok((list, _)) = reply else { continue };
         for signed in list.into_iter().take(MAX_LISTED) {
             let Some(release) = signed.verify(&s.update_keys) else { continue };
-            if !platforms.contains(&release.platform.as_str()) {
+            // Betas come only from GitHub, to devices that asked for them.
+            if !platforms.contains(&release.platform.as_str()) || release.is_beta() {
                 continue;
             }
             if have(s, &release.platform).is_some_and(|v| !is_newer(&release.version, &v)) {
@@ -318,8 +333,9 @@ async fn fetch_newer(s: &SharedState) -> Result<()> {
             };
             match result {
                 Ok(()) => {
-                    tracing::info!(platform = %release.platform, version = %release.version, from, "update received");
-                    let detail = format!("{} {} from {from}", release.platform, release.version);
+                    tracing::info!(platform = %release.platform, version = %release.version, beta = release.is_beta(), from, "update received");
+                    let beta = if release.is_beta() { " beta" } else { "" };
+                    let detail = format!("{} {}{beta} from {from}", release.platform, release.version);
                     let _ = s.db.log_activity("update.received", Some(&detail), None, device).await;
                     fetched = true;
                     break;
@@ -391,10 +407,13 @@ async fn download(s: &AppState, target: &Target, signed: &SignedRelease, release
 /// Whether this node also looks for updates on GitHub. On by default.
 pub const GITHUB_SETTING: &str = "updates.github";
 
-/// The public repository whose latest release holds the update packages,
-/// each next to a signed `nexus-update-<platform>.json`. `NEXUS_UPDATE_REPO`
-/// names another (`off` turns GitHub off).
-const RELEASES_REPO: &str = "Mohdjey123/nexus-cloud-releases";
+/// The public repository whose releases hold the update packages, each next
+/// to a signed `nexus-update-<platform>.json`. `NEXUS_UPDATE_REPO` names
+/// another (`off` turns GitHub off).
+const RELEASES_REPO: &str = "Mohdjey123/nexus-cloud";
+
+/// The release that always holds the newest beta's signed descriptions.
+const BETA_FEED_TAG: &str = "beta";
 
 /// The most a signed description may take.
 const MANIFEST_MAX: u64 = 64 * 1024;
@@ -409,6 +428,10 @@ fn releases_repo() -> Option<String> {
 
 async fn github_on(s: &AppState) -> bool {
     releases_repo().is_some() && s.db.get_setting(GITHUB_SETTING).await.ok().flatten().is_none_or(|v| v != "0")
+}
+
+async fn beta_on(s: &AppState) -> bool {
+    s.db.get_setting(BETA_SETTING).await.ok().flatten().is_some_and(|v| v == "1")
 }
 
 fn web() -> &'static reqwest::Client {
@@ -429,58 +452,68 @@ fn web_error(e: reqwest::Error) -> NexusError {
     NexusError::PeerUnreachable(format!("GitHub could not be reached ({})", e.without_url()))
 }
 
-#[derive(Deserialize)]
-struct GithubRelease {
-    #[serde(default)]
-    assets: Vec<GithubAsset>,
+/// Where a release's package is downloaded: the GitHub release it was
+/// published in, `v<version>` (betas: `v<version>-beta`).
+fn package_url(repo: &str, release: &Release) -> String {
+    let suffix = if release.is_beta() { "-beta" } else { "" };
+    format!("https://github.com/{repo}/releases/download/v{}{suffix}/{}", release.version, release.file)
 }
 
-#[derive(Deserialize)]
-struct GithubAsset {
-    name: String,
-    size: u64,
-    browser_download_url: String,
-}
-
-/// The signed releases in the repository's latest release, for the
-/// platforms this node keeps, each with where its package is downloaded.
-async fn github_releases(s: &AppState) -> Result<Vec<(SignedRelease, Release, String)>> {
-    let Some(repo) = releases_repo() else { return Ok(Vec::new()) };
-    let res = web()
-        .get(format!("https://api.github.com/repos/{repo}/releases/latest"))
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(web_error)?;
+/// One signed description from a fixed download link, if it is there and
+/// a trusted key signed it for `platform`.
+async fn github_manifest(s: &AppState, url: &str, platform: &str) -> Result<Option<(SignedRelease, Release)>> {
+    let res = web().get(url).send().await.map_err(web_error)?;
     if res.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(Vec::new()); // nothing released yet
+        return Ok(None); // nothing released (for this platform) yet
     }
     if !res.status().is_success() {
         return Err(NexusError::PeerUnreachable(format!("GitHub answered {}", res.status())));
     }
-    let latest: GithubRelease = res.json().await.map_err(web_error)?;
-    let mut found = Vec::new();
+    if res.content_length().is_some_and(|n| n > MANIFEST_MAX) {
+        return Ok(None);
+    }
+    let bytes = res.bytes().await.map_err(web_error)?;
+    if bytes.len() as u64 > MANIFEST_MAX {
+        return Ok(None);
+    }
+    let Ok(signed) = serde_json::from_slice::<SignedRelease>(&bytes) else { return Ok(None) };
+    let Some(release) = signed.verify(&s.update_keys) else {
+        tracing::warn!(platform, "a release on GitHub is not signed with a trusted key");
+        return Ok(None);
+    };
+    Ok((release.platform == platform).then_some((signed, release)))
+}
+
+/// The newest signed release on GitHub for each platform this node keeps,
+/// each with where its package is downloaded. Looks at the latest stable
+/// release, and with betas on also at the newest beta.
+async fn github_releases(s: &AppState) -> Result<Vec<(SignedRelease, Release, String)>> {
+    let Some(repo) = releases_repo() else { return Ok(Vec::new()) };
+    let beta = beta_on(s).await;
+    let mut found: Vec<(SignedRelease, Release, String)> = Vec::new();
     for platform in carried() {
         let name = format!("nexus-update-{platform}.json");
-        let Some(manifest) = latest.assets.iter().find(|a| a.name == name && a.size <= MANIFEST_MAX) else { continue };
-        let res = web().get(&manifest.browser_download_url).send().await.map_err(web_error)?;
-        if !res.status().is_success() {
-            continue;
+        let mut feeds = vec![(format!("https://github.com/{repo}/releases/latest/download/{name}"), false)];
+        // Betas only for this device's own platform: a computer passes
+        // packages on to its paired devices, which may not want betas.
+        if beta && release::this_platform() == Some(platform) {
+            feeds.push((format!("https://github.com/{repo}/releases/download/{BETA_FEED_TAG}/{name}"), true));
         }
-        let bytes = res.bytes().await.map_err(web_error)?;
-        if bytes.len() as u64 > MANIFEST_MAX {
-            continue;
+        let mut best: Option<(SignedRelease, Release)> = None;
+        for (url, beta_feed) in feeds {
+            let Some((signed, release)) = github_manifest(s, &url, platform).await? else { continue };
+            // The stable link must hold a stable release.
+            if release.is_beta() && !beta_feed {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(_, b)| is_newer(&release.version, &b.version)) {
+                best = Some((signed, release));
+            }
         }
-        let Ok(signed) = serde_json::from_slice::<SignedRelease>(&bytes) else { continue };
-        let Some(release) = signed.verify(&s.update_keys) else {
-            tracing::warn!(platform, "a release on GitHub is not signed with a trusted key");
-            continue;
-        };
-        if release.platform != platform {
-            continue;
+        if let Some((signed, release)) = best {
+            let url = package_url(&repo, &release);
+            found.push((signed, release, url));
         }
-        let Some(package) = latest.assets.iter().find(|a| a.name == release.file && a.size == release.size) else { continue };
-        found.push((signed, release, package.browser_download_url.clone()));
     }
     Ok(found)
 }
@@ -654,7 +687,12 @@ pub fn spawn(s: SharedState) {
 /// `GET /peer/updates`: the signed releases this node can pass on.
 pub async fn peer_list(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Vec<SignedRelease>>> {
     user.require_device()?;
-    let list = PLATFORMS.iter().filter_map(|p| stored(&s.data_dir, p, &s.update_keys).map(|(signed, _)| signed)).collect();
+    let list = PLATFORMS
+        .iter()
+        .filter_map(|p| stored(&s.data_dir, p, &s.update_keys))
+        .filter(|(_, release)| !release.is_beta())
+        .map(|(signed, _)| signed)
+        .collect();
     Ok(Json(list))
 }
 
@@ -666,7 +704,7 @@ pub async fn peer_package(
     req: Request,
 ) -> ApiResult<Response> {
     user.require_device()?;
-    if !PLATFORMS.contains(&platform.as_str()) || stored(&s.data_dir, &platform, &s.update_keys).is_none() {
+    if !PLATFORMS.contains(&platform.as_str()) || stored(&s.data_dir, &platform, &s.update_keys).is_none_or(|(_, r)| r.is_beta()) {
         return Err(NexusError::NotFound("That update".into()).into());
     }
     let path = package_path(&s.data_dir, &platform);
@@ -688,11 +726,13 @@ pub struct ReleaseView {
     size: u64,
     notes: String,
     published_at: i64,
+    beta: bool,
 }
 
 impl From<Release> for ReleaseView {
     fn from(r: Release) -> Self {
-        Self { platform: r.platform, version: r.version, file: r.file, size: r.size, notes: r.notes, published_at: r.published_at }
+        let beta = r.is_beta();
+        Self { platform: r.platform, version: r.version, file: r.file, size: r.size, notes: r.notes, published_at: r.published_at, beta }
     }
 }
 
@@ -712,6 +752,8 @@ pub struct UpdateStatus {
     from_github: bool,
     /// The GitHub repository it looks in.
     github_repo: Option<String>,
+    /// Also takes beta releases (from GitHub).
+    beta: bool,
     can_configure: bool,
     #[serde(flatten)]
     check: CheckStatus,
@@ -736,6 +778,7 @@ async fn status_for(s: &AppState, user: &AuthUser) -> UpdateStatus {
         auto_install: auto_install_on(s).await,
         from_github: github_on(s).await,
         github_repo: releases_repo(),
+        beta: beta_on(s).await,
         can_configure: user.require(Action::ManageStorage).is_ok(),
         check: s.updates.snapshot(),
         carried: PLATFORMS.iter().filter_map(|p| stored(&s.data_dir, p, &s.update_keys)).map(|(_, r)| r.into()).collect(),
@@ -761,6 +804,7 @@ pub async fn check_now(State(s): State<SharedState>, user: AuthUser) -> ApiResul
 pub struct Settings {
     auto_install: Option<bool>,
     from_github: Option<bool>,
+    beta: Option<bool>,
 }
 
 /// `PUT /updates/settings`
@@ -778,6 +822,13 @@ pub async fn set_settings(
     if let Some(on) = body.from_github {
         s.db.set_setting(GITHUB_SETTING, if on { "1" } else { "0" }).await?;
         audit(&s, &user, if on { "updates.github.enabled" } else { "updates.github.disabled" }, None).await;
+        if on {
+            s.updates.wake.notify_one();
+        }
+    }
+    if let Some(on) = body.beta {
+        s.db.set_setting(BETA_SETTING, if on { "1" } else { "0" }).await?;
+        audit(&s, &user, if on { "updates.beta.enabled" } else { "updates.beta.disabled" }, None).await;
         if on {
             s.updates.wake.notify_one();
         }
@@ -815,8 +866,32 @@ mod tests {
             blake3: blake3::hash(package).to_hex().to_string(),
             notes: String::new(),
             published_at: 1,
+            channel: String::new(),
         };
         SignedRelease::sign(&release, secret).unwrap()
+    }
+
+    #[test]
+    fn packages_download_from_their_own_release() {
+        let mut r = Release {
+            platform: "windows-x86_64".into(),
+            version: "1.2.3".into(),
+            file: "NEXUS-Cloud_1.2.3_x64-setup.exe".into(),
+            size: 1,
+            blake3: "0".repeat(64),
+            notes: String::new(),
+            published_at: 1,
+            channel: String::new(),
+        };
+        assert_eq!(
+            package_url("me/nexus", &r),
+            "https://github.com/me/nexus/releases/download/v1.2.3/NEXUS-Cloud_1.2.3_x64-setup.exe"
+        );
+        r.channel = release::BETA.into();
+        assert_eq!(
+            package_url("me/nexus", &r),
+            "https://github.com/me/nexus/releases/download/v1.2.3-beta/NEXUS-Cloud_1.2.3_x64-setup.exe"
+        );
     }
 
     #[test]

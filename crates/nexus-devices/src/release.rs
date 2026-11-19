@@ -13,7 +13,16 @@ use serde::{Deserialize, Serialize};
 
 /// Public keys whose releases devices accept. The newest key comes first;
 /// an old key stays listed for a while after it is replaced.
-pub const TRUSTED_KEYS: &[&str] = &["Jx9BMwt9fve5bFgowIuSFnq2k7bRWMhmsD09tidtT8c"];
+///
+/// The second is the spare: its secret half is kept offline and has never
+/// signed anything. If the first key is lost or leaks, releases are signed
+/// with the spare instead (and the first is taken out of this list), so
+/// devices keep updating without anyone reinstalling NEXUS.
+pub const TRUSTED_KEYS: &[&str] = &["Jx9BMwt9fve5bFgowIuSFnq2k7bRWMhmsD09tidtT8c", "xXlKnZ-eLFRyQU0IjV9ci3apfDnRLkFonkXyUeWkqpY"];
+
+/// The channel of a release that only devices taking beta versions get.
+/// Stable releases have no channel.
+pub const BETA: &str = "beta";
 
 /// Platforms releases are made for.
 pub const PLATFORMS: &[&str] = &["windows-x86_64", "android-aarch64"];
@@ -38,6 +47,17 @@ pub struct Release {
     #[serde(default)]
     pub notes: String,
     pub published_at: i64,
+    /// Empty for a stable release, [`BETA`] for a beta. Signed with the rest,
+    /// so a beta can never pass for a stable release. Releases signed before
+    /// channels existed have none, and stay valid.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub channel: String,
+}
+
+impl Release {
+    pub fn is_beta(&self) -> bool {
+        !self.channel.is_empty()
+    }
 }
 
 /// A release and its signature. The release is kept as the exact JSON text
@@ -75,7 +95,8 @@ impl SignedRelease {
             && release.size > 0
             && release.size <= MAX_PACKAGE_SIZE
             && release.blake3.len() == 64
-            && release.blake3.bytes().all(|b| b.is_ascii_hexdigit());
+            && release.blake3.bytes().all(|b| b.is_ascii_hexdigit())
+            && (release.channel.is_empty() || release.channel == BETA);
         valid.then_some(release)
     }
 }
@@ -146,6 +167,7 @@ mod tests {
             blake3: blake3::hash(b"0123456789").to_hex().to_string(),
             notes: "Fixes".into(),
             published_at: 1,
+            channel: String::new(),
         }
     }
 
@@ -168,6 +190,39 @@ mod tests {
         let mut odd = release();
         odd.platform = "plan9".into();
         assert_eq!(SignedRelease::sign(&odd, &secret).unwrap().verify(&[&public]), None);
+    }
+
+    #[test]
+    fn channels_are_signed_and_only_beta_is_known() {
+        let (secret, public) = generate_key();
+        // A stable release is signed without a channel, exactly as before
+        // channels existed, so older devices read it the same way.
+        let stable = SignedRelease::sign(&release(), &secret).unwrap();
+        assert!(!stable.release.contains("channel"));
+        assert!(!stable.verify(&[&public]).unwrap().is_beta());
+
+        let mut beta = release();
+        beta.channel = BETA.into();
+        let signed = SignedRelease::sign(&beta, &secret).unwrap();
+        assert!(signed.verify(&[&public]).unwrap().is_beta());
+        // Taking the channel out breaks the signature: a beta never passes
+        // for a stable release.
+        let mut stripped = signed.clone();
+        stripped.release = stripped.release.replace(",\"channel\":\"beta\"", "");
+        assert_ne!(stripped.release, signed.release);
+        assert_eq!(stripped.verify(&[&public]), None);
+
+        let mut odd = release();
+        odd.channel = "nightly".into();
+        assert_eq!(SignedRelease::sign(&odd, &secret).unwrap().verify(&[&public]), None);
+    }
+
+    #[test]
+    fn the_spare_key_is_trusted_too() {
+        assert!(TRUSTED_KEYS.len() >= 2);
+        for key in TRUSTED_KEYS {
+            assert!(crate::identity::parse_public_key(key).is_some(), "{key}");
+        }
     }
 
     #[test]

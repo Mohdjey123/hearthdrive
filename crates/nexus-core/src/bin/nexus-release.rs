@@ -6,7 +6,7 @@
 //! nexus-release publish --platform P --version V --package FILE
 //!                       [--name NAME] [--notes FILE] [--key FILE] [--data-dir DIR]
 //! nexus-release sign    --platform P --version V --package FILE --out FILE
-//!                       [--name NAME] [--notes FILE] [--key FILE]
+//!                       [--name NAME] [--notes FILE] [--key FILE] [--channel beta]
 //! ```
 //!
 //! `publish` signs the package and adds it to a node's update store (this
@@ -90,7 +90,7 @@ fn main() -> anyhow::Result<()> {
             println!("nexus-release keygen  [--key FILE]");
             println!("nexus-release pubkey  [--key FILE]");
             println!("nexus-release publish --platform P --version V --package FILE [--name NAME] [--notes FILE] [--key FILE] [--data-dir DIR]");
-            println!("nexus-release sign    --platform P --version V --package FILE --out FILE [--name NAME] [--notes FILE] [--key FILE]");
+            println!("nexus-release sign    --platform P --version V --package FILE --out FILE [--name NAME] [--notes FILE] [--key FILE] [--channel beta]");
             println!("platforms: {}", PLATFORMS.join(", "));
             Ok(())
         }
@@ -150,6 +150,11 @@ fn sign(args: &Args) -> anyhow::Result<(Release, SignedRelease, PathBuf)> {
         blake3: hasher.finalize().to_hex().to_string(),
         notes: notes.trim().to_string(),
         published_at: nexus_common::time::now_ms(),
+        channel: match args.get("channel") {
+            None | Some("" | "stable") => String::new(),
+            Some(release::BETA) => release::BETA.to_string(),
+            Some(other) => bail!("unknown channel {other}; use stable or beta"),
+        },
     };
     let signed = SignedRelease::sign(&release, &secret).context("signing failed")?;
     Ok((release, signed, package))

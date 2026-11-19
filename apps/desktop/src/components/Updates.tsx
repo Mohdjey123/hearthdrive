@@ -52,6 +52,7 @@ export async function installUpdate(status: UpdateStatus): Promise<void> {
     const result = bridge.installUpdate(status.package_path)
     if (result === 'permission') toast('Allow NEXUS to install apps, then tap Install again.')
     else if (result === 'missing') throw new Error('The update is no longer there. Check for updates again.')
+    else if (bridge.canUpdateQuietly?.()) toast(`Installing NEXUS ${status.available?.version}. The app closes for a moment; open it again after.`)
     return
   }
   await api.installUpdate()
@@ -65,6 +66,14 @@ export function UpdateBanner() {
   const [dismissed, setDismissed] = useState<string | null>(null)
   const s = updates.data
   const ready = s?.available
+
+  // Phones: with automatic installs on, the app installs a waiting update by
+  // itself the next time it goes to the background (Android 12 and later).
+  const quietPath = s?.install === 'app' && s.auto_install && s.package_path ? s.package_path : ''
+  useEffect(() => {
+    androidBridge()?.installInBackground?.(quietPath)
+  }, [quietPath])
+
   if (!s || !ready || s.install === 'none' || dismissed === ready.version) return null
 
   const install = async () => {
@@ -82,10 +91,12 @@ export function UpdateBanner() {
     <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-line bg-accent-soft px-4 py-3">
       <Download className="size-4 shrink-0 text-accent" />
       <div className="min-w-0 flex-1">
-        <div className="font-medium">NEXUS {ready.version} is ready</div>
+        <div className="font-medium">NEXUS {ready.version}{ready.beta ? ' beta' : ''} is ready</div>
         <div className="text-[12.5px] text-muted">
           {s.install === 'app'
-            ? 'Android asks you to confirm. Your files and settings stay.'
+            ? s.auto_install && androidBridge()?.canUpdateQuietly?.()
+              ? 'It installs by itself next time NEXUS is in the background, or now if you like. Your files and settings stay.'
+              : 'Android asks you to confirm. Your files and settings stay.'
             : s.auto_install
               ? 'It installs by itself once this window is closed, or now if you like.'
               : 'Installing takes a few seconds and opens NEXUS again.'}
@@ -149,7 +160,7 @@ export function UpdateSettings() {
       <div className="flex flex-wrap items-center gap-2">
         {s.available ? (
           <>
-            <Badge tone="accent">NEXUS {s.available.version} is ready</Badge>
+            <Badge tone="accent">NEXUS {s.available.version}{s.available.beta ? ' beta' : ''} is ready</Badge>
             {s.install !== 'none' && (
               <Button size="sm" variant="primary" icon={<Download className="size-3.5" />} loading={busy} onClick={() => void install()}>
                 Install now
@@ -169,7 +180,7 @@ export function UpdateSettings() {
         <div className="whitespace-pre-wrap rounded-md border border-line bg-elevated px-3 py-2 text-[12.5px]">{s.available.notes}</div>
       )}
 
-      {s.install === 'service' && (
+      {(s.install === 'service' || (s.install === 'app' && androidBridge()?.canUpdateQuietly?.())) && (
         <label className="flex items-start gap-2.5">
           <input
             type="checkbox"
@@ -181,7 +192,9 @@ export function UpdateSettings() {
           <span>
             Install updates automatically
             <span className="mt-0.5 block text-[12px] text-subtle">
-              When this window is closed and no copy or sync is running. The service restarts in a few seconds.
+              {s.install === 'app'
+                ? 'When NEXUS is in the background, without asking. Open it again to use the new version.'
+                : 'When this window is closed and no copy or sync is running. The service restarts in a few seconds.'}
             </span>
           </span>
         </label>
@@ -200,6 +213,25 @@ export function UpdateSettings() {
             Also look for updates on GitHub
             <span className="mt-0.5 block text-[12px] text-subtle">
               So this device updates even when none of your other devices is reachable. Releases from github.com/{s.github_repo}.
+            </span>
+          </span>
+        </label>
+      )}
+
+      {s.github_repo && s.from_github && (
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-[var(--nx-accent)]"
+            checked={s.beta}
+            disabled={busy || !s.can_configure}
+            onChange={(e) => void set(() => api.setBetaUpdates(e.target.checked))}
+          />
+          <span>
+            Get beta versions
+            <span className="mt-0.5 block text-[12px] text-subtle">
+              New versions reach this device before they go to everyone, so it can try them first. Betas come only from GitHub and
+              are never passed on to your other devices.
             </span>
           </span>
         </label>

@@ -630,6 +630,8 @@ export interface UpdateRelease {
   size: number
   notes: string
   published_at: number
+  /** A beta release (only devices taking betas get one). */
+  beta: boolean
 }
 
 export interface UpdateStatus {
@@ -644,6 +646,8 @@ export interface UpdateStatus {
   auto_install: boolean
   from_github: boolean
   github_repo: string | null
+  /** Also takes beta releases from GitHub. */
+  beta: boolean
   can_configure: boolean
   checking: boolean
   downloading: string | null
@@ -658,8 +662,19 @@ interface AndroidBridge {
   hasMediaAccess(): boolean
   requestMediaAccess(): void
   openAppSettings(): void
-  /** Opens Android's installer for the node's verified update package. */
+  /**
+   * Hands the node's verified update package to Android's installer. On
+   * Android 12 and later it installs without asking (NEXUS closes while it
+   * does); otherwise, or when Android wants to, Android asks.
+   */
   installUpdate?(path: string): 'started' | 'permission' | 'missing'
+  /**
+   * The package to install by itself the next time the app goes to the
+   * background (Android 12 and later), or '' for none.
+   */
+  installInBackground?(path: string): void
+  /** Whether Android lets NEXUS install updates without asking (Android 12 and later). */
+  canUpdateQuietly?(): boolean
 }
 
 export function androidBridge(): AndroidBridge | null {
@@ -1075,6 +1090,7 @@ export const api = {
   checkUpdates: () => request<UpdateStatus>('POST', '/updates/check'),
   setAutoUpdate: (auto_install: boolean) => request<UpdateStatus>('PUT', '/updates/settings', { auto_install }),
   setGithubUpdates: (from_github: boolean) => request<UpdateStatus>('PUT', '/updates/settings', { from_github }),
+  setBetaUpdates: (beta: boolean) => request<UpdateStatus>('PUT', '/updates/settings', { beta }),
   installUpdate: () => request<UpdateRelease>('POST', '/updates/install'),
   introductions: () => request<{ enabled: boolean }>('GET', '/devices/introductions'),
   setIntroductions: (enabled: boolean) => request<{ enabled: boolean }>('PUT', '/devices/introductions', { enabled }),

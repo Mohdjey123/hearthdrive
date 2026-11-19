@@ -312,23 +312,35 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 
 ## Updates
 
-Updates are published once and reach every device two ways: from your own paired devices, over the encrypted connections they already use, and from the public [nexus-cloud-releases](https://github.com/Mohdjey123/nexus-cloud-releases) repository on GitHub, so a phone or laptop that cannot reach any of your other devices still updates.
+Updates are built and published by GitHub Actions, not on anyone's computer, and reach every device two ways: from GitHub, and from your own paired devices over the encrypted connections they already use. A device that cannot reach any of your other devices still updates, and one with no internet gets the update from a device that has it.
 
-* **Publishing.** `scripts/release.sh 0.1.5 notes.md --github` (from a clean working tree) sets the version, builds the Windows installers, signs them with the update key, adds them to this computer's NEXUS and creates the GitHub release with them. It then commits the version change, tags it `v0.1.5` and pushes the tag, which starts the **Android release** workflow on GitHub Actions: it builds and signs the APK (its Android `versionCode` follows the version) and adds it, with its signed update description and a `.sha256`, to the same release. Push the release commit yourself afterwards. Without `--github`, the script builds the APK locally and publishes only to your own devices. The first time, make the update key with `target/release/nexus-release keygen` and put its public key in `TRUSTED_KEYS` (`crates/nexus-devices/src/release.rs`).
-* **Spreading.** Every device asks its online paired devices and GitHub what is newest every 30 minutes (or at once with **Settings** → **Updates** → **Check now**) and fetches anything newer, from a paired device when one has it, otherwise from GitHub. Computers keep the packages for every platform so they can pass them on; phones keep only their own. **Also look for updates on GitHub** in the same place turns GitHub off for a device (`NEXUS_UPDATE_REPO=off` turns it off everywhere, or names another repository).
-* **Checking.** A package is kept, offered or installed only if it is signed with a key built into the app and matches the signed size and BLAKE3 hash, checked again right before installing. That holds for packages from GitHub too: each comes with a `nexus-update-<platform>.json` signed with the update key, so neither a paired device nor anyone who could change the GitHub release can change an update or roll a device back to an older version.
-* **Installing on Windows.** A banner offers **Install now**. With **Install updates automatically** on (the default), the update installs by itself once the window is closed and no copy or sync is running. The installer stops the service, replaces the files and starts the service again. MSI installs and development builds are not updated this way.
-* **Installing on Android.** The app shows the same banner; **Install now** opens Android's installer, which asks you to confirm (the first time, Android asks you to allow NEXUS to install apps). Updates install over the existing app only when they are signed with the same Android key as the installed app.
-* **The update key** is at `~/.nexus-signing/update-key` (or `NEXUS_UPDATE_KEY`). Anyone with that file can publish updates to all your devices, so keep it private. Keep a copy somewhere safe too: without it no further updates can be made, and devices would have to be updated by hand with a build that trusts a new key.
+* **Releasing.** From a clean working tree on the branch to release:
 
-**Setting up the Android workflow.** In the source repository's **Settings** → **Secrets and variables** → **Actions**, add:
+  ```bash
+  scripts/release.sh 1.2.3 notes.md          # everyone gets it
+  scripts/release.sh 1.2.3 notes.md --beta   # only devices taking betas
+  ```
+
+  The script sets the version everywhere (Android's `versionCode` follows it), keeps the notes as `docs/releases/1.2.3.md`, commits "Release 1.2.3", tags it `v1.2.3` (a beta: `v1.2.3-beta`) and pushes the branch and the tag. The tag starts the **Release** workflow, which builds the Windows installer and the Android app at the same time, signs a description of each with the update key, and publishes the GitHub release: the packages, a `.sha256` of each, and `nexus-update-<platform>.json`. You can also push a tag yourself, or start the workflow from the Actions tab for an existing tag.
+* **Betas.** A beta is published as a GitHub pre-release, and its signed descriptions are also put on the fixed `beta` release. Only devices with **Settings** → **Updates** → **Get beta versions** on look there, and they never pass a beta on to their paired devices, so the rest of your devices keep the stable version. When the beta is good, run the **Promote a beta** workflow (`gh workflow run promote.yml -f version=1.2.3`): it signs the very same packages as stable and publishes them as `v1.2.3`, the latest release, which every device then gets.
+* **Spreading.** Every device looks every 30 minutes (or at once with **Check now**). On GitHub it reads fixed download links (`releases/latest/download/nexus-update-<platform>.json`), not GitHub's API, which allows only 60 calls an hour from one internet address, and a household's devices share one. It also asks its online paired devices, and fetches anything newer from a paired device when one has it, otherwise from GitHub. Computers keep the packages for every platform so they can pass them on; phones keep only their own. **Also look for updates on GitHub** turns GitHub off for a device (`NEXUS_UPDATE_REPO=off` turns it off everywhere, or names another repository).
+* **Checking.** A package is kept, offered or installed only if its description is signed with a key built into the app and the package matches the signed size and BLAKE3 hash, checked again right before installing. Whether a release is a beta is signed too. So neither a paired device nor anyone who could change a GitHub release can change an update, pass a beta off as stable, or roll a device back.
+* **Installing on Windows.** A banner offers **Install now**. With **Install updates automatically** on (the default), the update installs by itself once the window is closed and no copy or sync is running. The installer stops the service, replaces the files and starts the service again. Development builds, and installs from the MSI package of 0.1.4 and earlier, are not updated this way: install the `.exe` once over an MSI install.
+* **Installing on Android.** NEXUS hands the package to Android's package installer. On Android 12 and later, with **Install updates automatically** on, it installs by itself the next time NEXUS is in the background, without asking: Android lets an app update itself this way. The app closes while it installs; the new version starts when it is next opened. **Install now** does the same at once. On older Android, or when Android wants to, Android asks you to confirm. Either way, the first time Android asks you to allow NEXUS to install apps. Updates install over the app only when they are signed with the same Android key as the installed app.
+* **The update key** is at `~/.nexus-signing/update-key`; the release workflow uses a copy in the repository's secrets. Anyone with it can publish updates to all your devices, so keep it private.
+* **The spare key.** The app trusts a second key, `~/.nexus-signing/update-key-spare`, which has never signed anything. Move it off this computer (a USB stick in a drawer, a password manager) and delete it here. If the main key is ever lost or leaks: put the spare in the `NEXUS_UPDATE_KEY` secret, take the old key out of `TRUSTED_KEYS` (`crates/nexus-devices/src/release.rs`), add a new spare there, and release. Every device takes that release, because it trusts the spare, and from then on no longer trusts the old key. Without a spare, every device would have to be updated by hand.
+
+**Setting up the release workflow.** In the repository's **Settings** → **Secrets and variables** → **Actions**, add:
 
 | Secret | What |
 |---|---|
+| `NEXUS_UPDATE_KEY` | The contents of `~/.nexus-signing/update-key`. |
 | `ANDROID_KEYSTORE_BASE64` | The keystore that signs the APK, base64-encoded. To keep updating the app already on your phones, use the key that signed it (builds from `build-android.sh` so far: `~/.android/debug.keystore`). |
 | `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Its password, the key's alias and the key's password (for the debug keystore: `android`, `androiddebugkey`, `android`). |
-| `NEXUS_UPDATE_KEY` | The contents of `~/.nexus-signing/update-key`. |
-| `RELEASES_TOKEN` | A fine-grained personal access token with **Contents: read and write** on `nexus-cloud-releases` only. |
+
+The workflows publish with the repository's own token, so no other token is needed.
+
+**Without GitHub.** `scripts/release.sh 1.2.3 notes.md --local` builds both on this computer, signs them with the update key there and adds them to this computer's NEXUS, from where your paired devices fetch them. Nothing is committed or published.
 
 Versions before 0.1.2 cannot update themselves: install 0.1.2 by hand once on each device. Versions before 0.1.5 only update from paired devices; once a device has 0.1.5 it also looks on GitHub.
 
@@ -350,7 +362,7 @@ On Windows, Settings → Virtual drive puts your storage in File Explorer, under
 npm run desktop:build
 ```
 
-builds the service and the app in release mode and produces an NSIS installer (`.exe`) under `target/release/bundle/nsis/` and an MSI under `target/release/bundle/msi/`. Ready-made builds are attached to the [GitHub releases](../../releases). The installer puts `nexus-service.exe` and the web interface next to the app. It is not code-signed, so Windows SmartScreen will warn on first run.
+builds the service and the app in release mode and produces the installer (`.exe`) under `target/release/bundle/nsis/`. There is no MSI package any more: an MSI install cannot update itself. Ready-made builds are attached to the [GitHub releases](../../releases). The installer puts `nexus-service.exe` and the web interface next to the app. It is not code-signed, so Windows SmartScreen will warn on first run.
 
 ## Android app
 
@@ -362,7 +374,7 @@ The Android app is the same node and the same interface, packaged with Tauri. Th
    scripts/build-android.sh aarch64 release
    ```
 
-   `x86_64 debug` builds for the emulator. The script prints the APK's path. Release builds are signed with the local Android debug key so they install directly; sign with your own key before publishing.
+   `x86_64 debug` builds for the emulator. The script prints the APK's path. Release builds are signed with the key in `NEXUS_ANDROID_KEYSTORE` (see Updates), or else with the local Android debug key so they install directly. Ready-made APKs are attached to the [GitHub releases](../../releases).
 2. Install it (`adb install -r <apk>`, or copy the file to the phone and open it).
 3. Open the app, name the phone, and choose **Scan QR code**. On the computer, open **Devices** → **Add device** and approve the phone after comparing fingerprints.
 
@@ -390,4 +402,9 @@ Following the product spec's phases. Each phase ships a working application.
 
 ## License
 
-FSL-1.1-ALv2: the Functional Source License, version 1.1, with Apache 2.0 as the future license. See [LICENSE.md](LICENSE.md).
+NEXUS Cloud is released under the [Functional Source License, version 1.1, with Apache 2.0 as the future license](LICENSE.md) (FSL-1.1-ALv2). In short:
+
+* You may use, copy, change and run it for any purpose, including at work and for your family, except to make a product or service that competes with NEXUS Cloud.
+* Two years after each version is released, that version is also available under the Apache License 2.0, with no such limit.
+
+This is a summary; the [license](LICENSE.md) itself is what counts.

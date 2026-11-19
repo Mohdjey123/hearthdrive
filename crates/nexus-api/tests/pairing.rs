@@ -905,6 +905,7 @@ fn publish(node: &Node, platform: &str, version: &str, package: &[u8]) {
         blake3: blake3::hash(package).to_hex().to_string(),
         notes: "Better things".into(),
         published_at: 1,
+        channel: String::new(),
     };
     let signed = SignedRelease::sign(&release, &update_key().0).unwrap();
     let file = node.storage.path().join(format!("{platform}-{version}"));

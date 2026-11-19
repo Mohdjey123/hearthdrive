@@ -1,0 +1,80 @@
+# Makes a beta the stable release: every device then gets it.
+#
+# Takes the packages of the v<version>-beta release as they are (the very
+# files beta devices have been running), signs them again as a stable
+# release, and publishes them as v<version>, marked as the latest release.
+#
+# Start it from the Actions tab (Promote a beta -> Run workflow), or:
+#   gh workflow run promote.yml -f version=1.2.3
+#
+# Secret: NEXUS_UPDATE_KEY (see release.yml).
+name: Promote a beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The beta to make stable, like 1.2.3'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-v${{ github.event.inputs.version }}
+
+env:
+  VERSION: ${{ github.event.inputs.version }}
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check the version
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "The version must look like 1.2.3, not $VERSION" >&2; exit 1; }
+          gh release view "v$VERSION-beta" > /dev/null || { echo "There is no release v$VERSION-beta" >&2; exit 1; }
+          if gh release view "v$VERSION" > /dev/null 2>&1; then echo "v$VERSION is already released" >&2; exit 1; fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ env.VERSION }}-beta
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Release tool
+        run: cargo build --release -p nexus-core --bin nexus-release
+
+      - name: The beta's packages
+        run: |
+          mkdir -p out
+          gh release download "v$VERSION-beta" --dir out --pattern '*.exe' --pattern '*.apk' --pattern '*.sha256'
+          (cd out && sha256sum --check --strict *.sha256)
+
+      - name: Sign them as stable
+        env:
+          NEXUS_UPDATE_KEY_TEXT: ${{ secrets.NEXUS_UPDATE_KEY }}
+        run: |
+          [ -n "$NEXUS_UPDATE_KEY_TEXT" ] || { echo "The NEXUS_UPDATE_KEY secret is missing" >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$NEXUS_UPDATE_KEY_TEXT" > "$RUNNER_TEMP/update-key"
+          NOTES=()
+          [ -f "docs/releases/$VERSION.md" ] && NOTES=(--notes "docs/releases/$VERSION.md")
+          sign() {
+            target/release/nexus-release sign --key "$RUNNER_TEMP/update-key" \
+              --platform "$1" --version "$VERSION" --package "out/$2" --out "out/nexus-update-$1.json" "${NOTES[@]}"
+          }
+          sign windows-x86_64 "NEXUS-Cloud_${VERSION}_x64-setup.exe"
+          sign android-aarch64 "NEXUS-Cloud_${VERSION}_arm64.apk"
+          rm -f "$RUNNER_TEMP/update-key"
+
+      - name: Publish v${{ env.VERSION }}
+        run: |
+          NOTES=(--notes "NEXUS Cloud $VERSION")
+          [ -f "docs/releases/$VERSION.md" ] && NOTES=(--notes-file "docs/releases/$VERSION.md")
+          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" --latest --title "NEXUS Cloud $VERSION" "${NOTES[@]}" out/*
