@@ -306,7 +306,7 @@ function DeviceCard({ d, introducer, onRemove, onBlock }: {
           <div className="mt-0.5 text-subtle">Unreachable since {formatRelative(d.unreachable.since)}</div>
         </div>
       )}
-      <dl className="mt-4 grid grid-cols-2 gap-3 text-[12px]">
+      <dl className="mt-4 grid flex-1 grid-cols-2 content-start gap-3 text-[12px]">
         {d.is_local ? (
           <>
             <div><dt className="text-subtle">Storage locations</dt><dd className="mt-0.5">{d.roots}</dd></div>
@@ -354,33 +354,41 @@ function DeviceCard({ d, introducer, onRemove, onBlock }: {
           (d.route ?? d.network_address) && (
             <div className="col-span-2">
               <dt className="text-subtle">{d.route ? 'Connection' : 'Last connection'}</dt>
-              <dd className="mt-0.5 truncate text-[12px]">
-                {(() => {
-                  const r = routeParts((d.route ?? d.network_address)!)
-                  return <><span className="font-medium">{r.kind}</span> <span className="font-mono text-[11.5px] text-muted">· {r.where}</span></>
-                })()}
-              </dd>
+              {(() => {
+                const r = routeParts((d.route ?? d.network_address)!)
+                return (
+                  <dd className="mt-0.5 truncate text-[12px]" title={`${r.kind} · ${r.where}`}>
+                    <span className="font-medium">{r.kind}</span> <span className="font-mono text-[11.5px] text-muted">· {r.where}</span>
+                  </dd>
+                )
+              })()}
             </div>
           )
         )}
       </dl>
       {!d.is_local && (
-        <div className="mt-4 flex gap-2 border-t border-line pt-3">
+        // Wraps onto a second line in a narrow card instead of spilling out;
+        // the actions that cut the device off stay together on the right.
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3">
           {d.blocked_at === null ? (
             <>
               <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => navigate('files', { device: d.id })}>Browse files</Button>
               {d.online && <CommandsButton d={d} />}
-              <Button size="sm" variant="ghost" className="ml-auto hover:text-danger" icon={<Ban className="size-3.5" />} onClick={() => onBlock(d, true)}>
-                Block
-              </Button>
+              {!d.online && d.can_wake && <WakeButton d={d} />}
             </>
           ) : (
             <Button size="sm" icon={<Ban className="size-3.5" />} onClick={() => onBlock(d, false)}>Unblock</Button>
           )}
-          {d.blocked_at === null && !d.online && d.can_wake && <WakeButton d={d} />}
-          <Button size="sm" variant="ghost" className={d.blocked_at === null ? 'hover:text-danger' : 'ml-auto hover:text-danger'} icon={<Trash2 className="size-3.5" />} onClick={() => onRemove(d)}>
-            Remove
-          </Button>
+          <div className="ml-auto flex items-center gap-1">
+            {d.blocked_at === null && (
+              <Button size="sm" variant="ghost" className="hover:text-danger" icon={<Ban className="size-3.5" />} onClick={() => onBlock(d, true)}>
+                Block
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" className="hover:text-danger" icon={<Trash2 className="size-3.5" />} onClick={() => onRemove(d)}>
+              Remove
+            </Button>
+          </div>
         </div>
       )}
       {editingAccess && <AccessModal device={d} onClose={() => setEditingAccess(false)} />}
@@ -580,7 +588,7 @@ export function Devices() {
       {devices.loading && !devices.data ? (
         <Spinner />
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,360px),1fr))] gap-4">
           {list.map((d) => <DeviceCard key={`${d.id}-${d.role}-${d.allowed_roots?.join(',') ?? 'all'}`} d={d} introducer={list.find((x) => x.id === d.introduced_by)?.name ?? null} onRemove={setRemoving} onBlock={(d, blocked) => (blocked ? setBlocking(d) : void setBlocked(d, false))} />)}
           {peers.length === 0 && (
             <button
