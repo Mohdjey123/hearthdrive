@@ -283,3 +283,51 @@ pub fn remove_contents(dir: &Path) -> std::io::Result<bool> {
     }
     Ok(!kept)
 }
+
+/// Turns a file or folder made here into one of the drive's placeholders,
+/// in sync (it was just uploaded). A folder counts as listed: what is in it
+/// is here already.
+pub fn convert(path: &Path, identity: &Identity) -> Result<(), String> {
+    let bytes = identity.encode().ok_or("path too long")?;
+    let handle = open(path, WRITE_DAC | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES).map_err(|e| e.message().to_string())?;
+    unsafe {
+        CfConvertToPlaceholder(
+            handle.0,
+            Some(bytes.as_ptr().cast()),
+            bytes.len() as u32,
+            CF_CONVERT_FLAG_MARK_IN_SYNC,
+            None,
+            None,
+        )
+    }
+    .map_err(|e| e.message().to_string())
+}
+
+/// Records that a file changed here was uploaded: its new identity, and in
+/// sync again. Its content stays.
+pub fn set_synced(path: &Path, identity: &Identity) -> Result<(), String> {
+    let bytes = identity.encode().ok_or("path too long")?;
+    let handle = open(path, WRITE_DAC | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES).map_err(|e| e.message().to_string())?;
+    unsafe {
+        CfUpdatePlaceholder(
+            handle.0,
+            None,
+            Some(bytes.as_ptr().cast()),
+            bytes.len() as u32,
+            None,
+            CF_UPDATE_FLAG_MARK_IN_SYNC,
+            None,
+            None,
+        )
+    }
+    .map_err(|e| e.message().to_string())
+}
+
+/// Gives a placeholder a new identity (it was renamed or moved), keeping
+/// its state.
+pub fn set_identity(path: &Path, identity: &Identity) -> Result<(), String> {
+    let bytes = identity.encode().ok_or("path too long")?;
+    let handle = open(path, WRITE_DAC | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES).map_err(|e| e.message().to_string())?;
+    unsafe { CfUpdatePlaceholder(handle.0, None, Some(bytes.as_ptr().cast()), bytes.len() as u32, None, CF_UPDATE_FLAG_NONE, None, None) }
+        .map_err(|e| e.message().to_string())
+}

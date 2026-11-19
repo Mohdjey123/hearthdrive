@@ -338,7 +338,7 @@ impl Database {
     pub async fn release_held(&self, pair_id: &str, rel_paths: &[String]) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         for rel in rel_paths {
-            sqlx::query("DELETE FROM copy_held WHERE pair_id = ? AND (rel_path = ? OR rel_path LIKE ? ESCAPE '\')")
+            sqlx::query("DELETE FROM copy_held WHERE pair_id = ? AND (rel_path = ? OR rel_path LIKE ? ESCAPE '\\')")
                 .bind(pair_id)
                 .bind(rel)
                 .bind(format!("{}/%", like_escape(rel)))

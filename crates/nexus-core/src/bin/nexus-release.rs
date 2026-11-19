@@ -5,11 +5,15 @@
 //! nexus-release pubkey  [--key FILE]
 //! nexus-release publish --platform P --version V --package FILE
 //!                       [--name NAME] [--notes FILE] [--key FILE] [--data-dir DIR]
+//! nexus-release sign    --platform P --version V --package FILE --out FILE
+//!                       [--name NAME] [--notes FILE] [--key FILE]
 //! ```
 //!
 //! `publish` signs the package and adds it to a node's update store (this
 //! computer's NEXUS by default). From there it spreads to every paired
-//! device. The key defaults to `NEXUS_UPDATE_KEY`, or
+//! device. `sign` only writes the signed description to `--out`, to upload
+//! next to the package on GitHub (named `nexus-update-<platform>.json`),
+//! where every device also looks for updates. The key defaults to `NEXUS_UPDATE_KEY`, or
 //! `~/.nexus-signing/update-key`. Anyone holding that file can publish
 //! updates to every NEXUS device that trusts it: keep it private and keep a
 //! copy somewhere safe, because without it no further updates can be made.
@@ -75,10 +79,18 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "publish" => publish(&args),
+        "sign" => {
+            let out = PathBuf::from(args.need("out")?);
+            let (release, signed, _) = sign(&args)?;
+            std::fs::write(&out, serde_json::to_string_pretty(&signed)?).with_context(|| format!("writing {}", out.display()))?;
+            println!("Signed {} {} ({} bytes) into {}", release.platform, release.version, release.size, out.display());
+            Ok(())
+        }
         _ => {
             println!("nexus-release keygen  [--key FILE]");
             println!("nexus-release pubkey  [--key FILE]");
             println!("nexus-release publish --platform P --version V --package FILE [--name NAME] [--notes FILE] [--key FILE] [--data-dir DIR]");
+            println!("nexus-release sign    --platform P --version V --package FILE --out FILE [--name NAME] [--notes FILE] [--key FILE]");
             println!("platforms: {}", PLATFORMS.join(", "));
             Ok(())
         }
@@ -104,7 +116,8 @@ fn keygen(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn publish(args: &Args) -> anyhow::Result<()> {
+/// Hashes and signs the package the arguments name.
+fn sign(args: &Args) -> anyhow::Result<(Release, SignedRelease, PathBuf)> {
     let platform = args.need("platform")?;
     if !PLATFORMS.contains(&platform) {
         bail!("unknown platform {platform}; use one of {}", PLATFORMS.join(", "));
@@ -139,7 +152,12 @@ fn publish(args: &Args) -> anyhow::Result<()> {
         published_at: nexus_common::time::now_ms(),
     };
     let signed = SignedRelease::sign(&release, &secret).context("signing failed")?;
+    Ok((release, signed, package))
+}
 
+fn publish(args: &Args) -> anyhow::Result<()> {
+    let (release, signed, package) = sign(args)?;
+    let (platform, version) = (&release.platform, &release.version);
     let data_dir = args.get("data-dir").map(PathBuf::from).unwrap_or_else(default_data_dir);
     let keys: Vec<String> = TRUSTED_KEYS.iter().map(|k| k.to_string()).collect();
     nexus_api::update_store::import(&data_dir, &signed, &package, &keys)

@@ -3,7 +3,7 @@ use sqlx::AssertSqlSafe;
 use nexus_common::types::{Device, Role};
 use nexus_common::{NexusError, Result, new_id, time::now_ms};
 
-const COLUMNS: &str = "id, name, device_type, public_key, network_address, is_local, last_seen, status, created_at, \n                       role, addresses, latency_ms, paired_at, version, allowed_roots, introduced_by, blocked_at";
+const COLUMNS: &str = "id, name, device_type, public_key, network_address, is_local, last_seen, status, created_at, \n                       role, addresses, latency_ms, paired_at, version, allowed_roots, introduced_by, blocked_at, \n                       mac_addresses, broadcast";
 const LOCAL_DEVICE_KEY: &str = "local_device_id";
 
 impl Database {
@@ -31,6 +31,8 @@ impl Database {
             allowed_roots: None,
             introduced_by: None,
             blocked_at: None,
+            mac_addresses: None,
+            broadcast: None,
         };
         sqlx::query(
             "INSERT INTO devices (id, name, device_type, network_address, is_local, last_seen, status, created_at) \
@@ -158,6 +160,17 @@ impl Database {
     }
 
     /// Records a successful contact with a peer.
+    /// What waking a device over the network needs (JSON arrays).
+    pub async fn set_device_wake(&self, id: &str, macs: &str, broadcast: &str) -> Result<()> {
+        sqlx::query("UPDATE devices SET mac_addresses = ?, broadcast = ? WHERE id = ?")
+            .bind(macs)
+            .bind(broadcast)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn mark_peer_online(
         &self,
         id: &str,

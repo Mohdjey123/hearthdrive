@@ -161,6 +161,8 @@ function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void 
         limit_kbps: limited ? Math.max(1, Math.round(form.limit_kbps || 1024)) : 0,
         hours_start: scheduled ? form.hours_start || '22:00' : null,
         hours_end: scheduled ? form.hours_end || '07:00' : null,
+        pause_on_battery: form.pause_on_battery,
+        keep_awake: form.keep_awake,
       })
       onClose()
     } catch (e) {
@@ -228,6 +230,20 @@ function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void 
               </div>
             )}
           </div>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" className="mt-0.5 accent-[var(--nx-accent)]" checked={form.pause_on_battery} onChange={(e) => setForm({ ...form, pause_on_battery: e.target.checked })} />
+            <span>
+              Pause on battery
+              <span className="block text-[12px] text-subtle">Transfers wait while this laptop is unplugged and continue once it is plugged in.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" className="mt-0.5 accent-[var(--nx-accent)]" checked={form.keep_awake} onChange={(e) => setForm({ ...form, keep_awake: e.target.checked })} />
+            <span>
+              Keep this computer awake while transferring
+              <span className="block text-[12px] text-subtle">It does not go to sleep until running transfers finish. The screen can still turn off.</span>
+            </span>
+          </label>
         </fieldset>
       )}
     </Modal>

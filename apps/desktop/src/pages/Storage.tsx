@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FolderOpen, HardDrive, Plus, RefreshCw, Trash2, Usb } from 'lucide-react'
+import { Copy, FolderOpen, HardDrive, Plus, RefreshCw, Trash2, Usb } from 'lucide-react'
 import { api, type StorageRoot } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { navigate, type Route } from '../hooks/useRoute'
@@ -47,9 +47,12 @@ export function Storage({ route }: { route: Route }) {
         title="Storage"
         subtitle="Folders and drives this computer contributes to your cloud"
         actions={
-          <Button variant="primary" icon={<Plus className="size-3.5" />} onClick={() => navigate('storage', { add: '1' })}>
-            Add storage
-          </Button>
+          <>
+            <Button icon={<Copy className="size-3.5" />} onClick={() => navigate('duplicates')}>Find duplicates</Button>
+            <Button variant="primary" icon={<Plus className="size-3.5" />} onClick={() => navigate('storage', { add: '1' })}>
+              Add storage
+            </Button>
+          </>
         }
       />
       <div className="rounded-lg border border-line bg-panel">

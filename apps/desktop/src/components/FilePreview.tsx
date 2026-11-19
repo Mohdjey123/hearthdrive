@@ -1,10 +1,47 @@
-import { useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, Download } from 'lucide-react'
-import { contentUrl, fileApi, isMobile, type FileEntry } from '../services/api'
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { ChevronLeft, ChevronRight, Download, Tag } from 'lucide-react'
+import { contentUrl, fileApi, isMobile, libraryApi, type ArchiveListing, type DocText, type FileEntry, type FileTag } from '../services/api'
 import { toast, toastError } from './Toasts'
 import { formatBytes, formatDate, previewKind } from '../lib/format'
 import { FileIcon } from './FileIcon'
-import { Button, IconButton, Modal, Spinner } from './ui'
+import { Button, IconButton, Modal, Spinner, cx } from './ui'
+
+const PdfViewer = lazy(() => import('./PdfViewer').then((m) => ({ default: m.PdfViewer })))
+
+/** What is inside a .zip, .7z or .tar file. */
+function ArchivePreview({ file, prefix }: { file: FileEntry; prefix: string }) {
+  const [listing, setListing] = useState<ArchiveListing | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    setListing(null)
+    setError(null)
+    fileApi(prefix).archive(file.id).then((l) => live && setListing(l)).catch((e) => live && setError(e.message))
+    return () => { live = false }
+  }, [file.id, prefix])
+  if (error) return <div className="text-center text-muted">{error}</div>
+  if (!listing) return <Spinner />
+  return (
+    <div className="w-full">
+      <div className="mb-2 text-[12.5px] text-muted">
+        {listing.total_entries.toLocaleString()} item{listing.total_entries === 1 ? '' : 's'} · {formatBytes(listing.total_size)} unpacked ·{' '}
+        {listing.format}{listing.truncated && ` · showing the first ${listing.entries.length.toLocaleString()}`}
+      </div>
+      <div className="max-h-[60vh] overflow-auto rounded-md border border-line">
+        <table className="w-full text-left text-[12.5px]">
+          <tbody>
+            {listing.entries.map((e, i) => (
+              <tr key={i} className="border-b border-line last:border-0">
+                <td className="truncate px-3 py-1 font-mono">{e.path}{e.is_dir ? '/' : ''}</td>
+                <td className="w-24 px-3 py-1 text-right text-muted">{e.is_dir ? '' : formatBytes(e.size)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
 
 const urlCache = new Map<string, { url: string; at: number }>()
 
@@ -74,6 +111,60 @@ function TextPreview({ url }: { url: string }) {
   )
 }
 
+/** Tags on a file, and what NEXUS read from it. */
+export function TagBar({ file, prefix = '' }: { file: FileEntry; prefix?: string }) {
+  const lib = libraryApi(prefix)
+  const [tags, setTags] = useState<FileTag[] | null>(null)
+  const [text, setText] = useState<DocText | null>(null)
+  const [adding, setAdding] = useState('')
+  useEffect(() => {
+    setTags(null)
+    setText(null)
+    lib.fileTags(file.id).then((r) => { setTags(r.tags); setText(r.text) }).catch(() => setTags([]))
+  }, [file.id, prefix])
+  const save = async (next: FileTag[]) => {
+    try {
+      const r = await lib.setFileTags(file.id, next.filter((t) => !t.auto).map((t) => t.tag), next.filter((t) => t.auto).map((t) => t.tag))
+      setTags(r.tags)
+    } catch (e) {
+      toastError(e)
+    }
+  }
+  if (!tags) return null
+  const add = () => {
+    const t = adding.trim()
+    setAdding('')
+    if (t && !tags.some((x) => x.tag.toLowerCase() === t.toLowerCase())) void save([...tags, { tag: t, auto: false, added_by: '', added_at: 0 }])
+  }
+  const how: Record<string, string> = { text: 'text', pdf: 'PDF text', office: 'document text', ocr: 'text recognised on the pages' }
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+      <Tag className="size-3.5 text-subtle" />
+      {tags.map((t) => (
+        <span key={t.tag} className={cx('flex items-center gap-1 rounded-full border px-2 py-0.5', t.auto ? 'border-dashed border-line text-muted' : 'border-line bg-elevated')} title={t.auto ? 'Given by NEXUS from what the document says' : `Added by ${t.added_by}`}>
+          {t.tag}
+          <button aria-label={`Remove ${t.tag}`} className="text-subtle hover:text-danger" onClick={() => void save(tags.filter((x) => x.tag !== t.tag))}>×</button>
+        </span>
+      ))}
+      <input
+        value={adding}
+        onChange={(e) => setAdding(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') add() }}
+        onBlur={add}
+        placeholder="Add a tag"
+        className="h-6 w-24 rounded border border-transparent bg-transparent px-1 outline-none hover:border-line focus:border-accent"
+      />
+      {text && text.chars > 0 && <span className="ml-auto text-subtle">Searchable: {text.chars.toLocaleString()} characters of {how[text.method ?? ''] ?? 'text'}</span>}
+    </div>
+  )
+}
+
+/** Photos browsers cannot show (camera raw, HEIC): their preview is shown. */
+export function needsConversion(file: { extension: string | null }) {
+  return CONVERTED.has((file.extension ?? '').toLowerCase())
+}
+const CONVERTED = new Set(['dng', 'cr2', 'cr3', 'crw', 'nef', 'nrw', 'arw', 'srf', 'sr2', 'orf', 'rw2', 'raf', 'srw', 'pef', 'x3f', '3fr', 'erf', 'kdc', 'mrw', 'iiq', 'rwl', 'heic', 'heif', 'tif', 'tiff'])
+
 export function FilePreview({ file, siblings, onNavigate, onClose, prefix = '' }: {
   file: FileEntry | null
   siblings: FileEntry[]
@@ -82,7 +173,7 @@ export function FilePreview({ file, siblings, onNavigate, onClose, prefix = '' }
   prefix?: string
 }) {
   const kind = file ? previewKind(file) : null
-  const url = useContentUrl(file, kind !== null, prefix)
+  const url = useContentUrl(file, kind !== null && kind !== 'archive', prefix)
   const previewable = siblings.filter((s) => previewKind(s) !== null)
   const index = file ? previewable.findIndex((s) => s.id === file.id) : -1
   const prev = index > 0 ? previewable[index - 1] : null
@@ -115,6 +206,8 @@ export function FilePreview({ file, siblings, onNavigate, onClose, prefix = '' }
       }
       footer={
         file && (
+          <div className="flex w-full flex-col gap-2">
+          <TagBar file={file} prefix={prefix} />
           <div className="flex w-full items-center justify-between">
             <div className="flex gap-1">
               <IconButton label="Previous" disabled={!prev} onClick={() => prev && onNavigate(prev)}>
@@ -128,6 +221,7 @@ export function FilePreview({ file, siblings, onNavigate, onClose, prefix = '' }
               Download
             </Button>
           </div>
+          </div>
         )
       }
     >
@@ -138,10 +232,14 @@ export function FilePreview({ file, siblings, onNavigate, onClose, prefix = '' }
               <FileIcon entry={file} className="mx-auto mb-3 size-10" />
               No preview for this file type.
             </div>
+          ) : kind === 'archive' ? (
+            <ArchivePreview file={file} prefix={prefix} />
           ) : !url ? (
             <Spinner />
+          ) : kind === 'pdf' ? (
+            <Suspense fallback={<Spinner />}><PdfViewer url={url} /></Suspense>
           ) : kind === 'image' ? (
-            <img src={url} alt={file.filename} className="max-h-[68vh] max-w-full rounded object-contain" />
+            <img src={needsConversion(file) ? url.replace('/content?', '/thumbnail?size=1024&') : url} alt={file.filename} className="max-h-[68vh] max-w-full rounded object-contain" />
           ) : kind === 'video' ? (
             <video src={url} controls autoPlay className="max-h-[68vh] max-w-full rounded bg-black" />
           ) : kind === 'audio' ? (

@@ -5,24 +5,30 @@
 //! is not on this computer yet (`FETCH_DATA`). Callbacks only copy what they
 //! need and hand the work to the node's async runtime, which answers Windows
 //! with `CfExecute` when the device has replied.
+//!
+//! Changes made here go back: deletes and renames are carried out on the
+//! device before Windows is told they may happen, and edited or new files
+//! and folders are uploaded once they are closed.
 
 mod ops;
 mod register;
 
 use crate::Context;
-use crate::client::ClientError;
+use crate::client::{ClientError, EntryInfo};
 use crate::tree::{self, Change, Child, Identity, Local, transfer_range};
 use futures_util::StreamExt;
 use nexus_common::events::Event;
 use ops::Attrs;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use windows::Storage::Provider::StorageProviderSyncRootManager;
 use windows::Win32::Foundation::{
-    NTSTATUS, STATUS_CLOUD_FILE_INVALID_REQUEST, STATUS_CLOUD_FILE_NETWORK_UNAVAILABLE, STATUS_CLOUD_FILE_NOT_IN_SYNC,
-    STATUS_CLOUD_FILE_READ_ONLY_VOLUME, STATUS_CLOUD_FILE_UNSUCCESSFUL, STATUS_SUCCESS,
+    NTSTATUS, STATUS_CLOUD_FILE_ACCESS_DENIED, STATUS_CLOUD_FILE_INVALID_REQUEST, STATUS_CLOUD_FILE_NETWORK_UNAVAILABLE,
+    STATUS_CLOUD_FILE_NOT_IN_SYNC, STATUS_CLOUD_FILE_NOT_SUPPORTED, STATUS_CLOUD_FILE_READ_ONLY_VOLUME,
+    STATUS_CLOUD_FILE_UNSUCCESSFUL, STATUS_SUCCESS,
 };
 use windows::Win32::Storage::CloudFilters::*;
 use windows::core::PCWSTR;
@@ -36,6 +42,28 @@ const CHUNK: usize = 1024 * 1024;
 const CHECK_EVERY: Duration = Duration::from_secs(60);
 /// Pin changes arriving together are handled together.
 const PIN_SETTLE: Duration = Duration::from_millis(400);
+/// A file still being written is tried again after this long.
+const RETRY_UPLOAD: Duration = Duration::from_secs(10);
+/// How long a device's change feed waits for a change, in seconds.
+const FEED_WAIT: u64 = 15;
+/// How often the offline cache is looked at.
+const CACHE_EVERY: Duration = Duration::from_secs(10 * 60);
+/// Opened this often, a file counts as often used.
+const FREQUENT_USES: u32 = 3;
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// How often and when a downloaded file was last opened.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+struct Usage {
+    count: u32,
+    last: i64,
+}
+
+impl Usage {
+    fn frequent(&self, now: i64) -> bool {
+        self.count >= FREQUENT_USES && now - self.last < 60 * DAY_MS
+    }
+}
 
 pub fn supported() -> bool {
     StorageProviderSyncRootManager::IsSupported().unwrap_or(true)
@@ -56,6 +84,16 @@ struct Shared {
     checked: Mutex<HashMap<String, Instant>>,
     /// Devices last shown as offline (true) or online (false).
     offline: Mutex<HashMap<String, bool>>,
+    /// Uses of downloaded files (the offline cache keeps often used ones).
+    usage: Mutex<HashMap<PathBuf, Usage>>,
+    cache: Arc<crate::Cache>,
+    cleared: AtomicU64,
+    /// How far each device's change feed was read.
+    cursors: Mutex<HashMap<String, String>>,
+    /// Devices whose change feed is followed, with the task doing it.
+    following: Mutex<HashMap<String, tokio::task::AbortHandle>>,
+    /// Paths to look at again for changes made here (busy files).
+    local: tokio::sync::mpsc::UnboundedSender<PathBuf>,
 }
 
 /// The drive serving Explorer right now (callbacks have no other way in).
@@ -123,7 +161,7 @@ impl Provider {
     }
 
     /// Registers `path` as the drive and starts serving it.
-    pub fn start(ctx: Arc<Context>, path: &Path) -> Result<Self, String> {
+    pub fn start(ctx: Arc<Context>, path: &Path, cache: Arc<crate::Cache>) -> Result<Self, String> {
         if !supported() {
             return Err("This version of Windows does not support cloud files (Windows 10 1809 or later is needed)".into());
         }
@@ -145,6 +183,7 @@ impl Provider {
         }
         register::register(&id, &root, &ctx.data_dir)?;
 
+        let (local_tx, local_rx) = tokio::sync::mpsc::unbounded_channel();
         let shared = Arc::new(Shared {
             ctx: ctx.clone(),
             root: root.clone(),
@@ -154,6 +193,12 @@ impl Provider {
             fingerprints: Mutex::new(HashMap::new()),
             checked: Mutex::new(HashMap::new()),
             offline: Mutex::new(HashMap::new()),
+            usage: Mutex::new(load_usage(&ctx.data_dir)),
+            cache,
+            cleared: AtomicU64::new(0),
+            cursors: Mutex::new(HashMap::new()),
+            following: Mutex::new(HashMap::new()),
+            local: local_tx.clone(),
         });
         *ACTIVE.write().unwrap_or_else(|e| e.into_inner()) = Some(shared.clone());
 
@@ -175,19 +220,18 @@ impl Provider {
         };
         tracing::info!(path = %root.display(), "virtual drive running");
 
-        let (watcher, pins) = match watch_pins(&root) {
-            Ok((w, rx)) => (Some(w), Some(rx)),
+        let watcher = match watch_pins(&root, local_tx) {
+            Ok(w) => Some(w),
             Err(e) => {
-                tracing::warn!(error = %e, "cannot watch the virtual drive; Always keep / Free up space will not act");
-                (None, None)
+                tracing::warn!(error = %e, "cannot watch the virtual drive; changes made in it and Always keep / Free up space will not act");
+                None
             }
         };
         let mut tasks = Vec::new();
         let rt = &ctx.runtime;
         tasks.push(rt.spawn(follow_events(shared.clone())));
-        if let Some(rx) = pins {
-            tasks.push(rt.spawn(handle_pins(shared.clone(), rx)));
-        }
+        tasks.push(rt.spawn(handle_pins(shared.clone(), local_rx)));
+        tasks.push(rt.spawn(keep_cache(shared.clone())));
         Ok(Self { shared, id, key, _watcher: watcher, tasks })
     }
 
@@ -198,6 +242,10 @@ impl Provider {
         for task in &self.tasks {
             task.abort();
         }
+        for (_, task) in self.shared.following.lock().unwrap_or_else(|e| e.into_inner()).drain() {
+            task.abort();
+        }
+        save_usage(&self.shared);
         if remove {
             match ops::remove_contents(&self.shared.root) {
                 Ok(true) => {}
@@ -390,6 +438,12 @@ unsafe extern "system" fn on_fetch_data(info: *const CF_CALLBACK_INFO, params: *
         let _ = transfer_data(&r, offset, &[], len, STATUS_CLOUD_FILE_UNSUCCESSFUL);
         return;
     };
+    if offset == 0 {
+        let mut usage = shared.usage.lock().unwrap_or_else(|e| e.into_inner());
+        let u = usage.entry(r.path.clone()).or_default();
+        u.count = u.count.saturating_add(1);
+        u.last = nexus_common::time::now_ms();
+    }
     let rt = shared.ctx.runtime.clone();
     let transfer = r.transfer;
     let me = shared.next_transfer.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -419,24 +473,147 @@ unsafe extern "system" fn on_cancel_fetch_data(info: *const CF_CALLBACK_INFO, _p
     }
 }
 
-/// Phase 1 is read-only: only this process (bringing the drive up to date)
-/// may delete or rename placeholders.
-unsafe extern "system" fn on_delete(info: *const CF_CALLBACK_INFO, _params: *const CF_CALLBACK_PARAMETERS) {
-    let r = unsafe { request_of(info) };
-    let allowed = r.pid == std::process::id();
-    if !allowed {
-        tracing::info!(path = %r.path.display(), "refused deleting in the read-only virtual drive");
+/// The answer for a change the device refused or could not make.
+fn write_status(e: &ClientError) -> NTSTATUS {
+    match e {
+        ClientError::Offline(_) => STATUS_CLOUD_FILE_NETWORK_UNAVAILABLE,
+        ClientError::NotFound(_) => STATUS_CLOUD_FILE_NOT_IN_SYNC,
+        ClientError::Other(_) => STATUS_CLOUD_FILE_ACCESS_DENIED,
     }
-    ack(&r, CF_OPERATION_TYPE_ACK_DELETE, if allowed { STATUS_SUCCESS } else { STATUS_CLOUD_FILE_READ_ONLY_VOLUME });
 }
 
-unsafe extern "system" fn on_rename(info: *const CF_CALLBACK_INFO, _params: *const CF_CALLBACK_PARAMETERS) {
+/// Deleting a file or folder moves it to its device's trash first. Devices,
+/// storage locations and the drive's sections cannot be deleted here.
+unsafe extern "system" fn on_delete(info: *const CF_CALLBACK_INFO, _params: *const CF_CALLBACK_PARAMETERS) {
     let r = unsafe { request_of(info) };
-    let allowed = r.pid == std::process::id();
-    if !allowed {
-        tracing::info!(path = %r.path.display(), "refused renaming in the read-only virtual drive");
+    if r.pid == std::process::id() {
+        ack(&r, CF_OPERATION_TYPE_ACK_DELETE, STATUS_SUCCESS);
+        return;
     }
-    ack(&r, CF_OPERATION_TYPE_ACK_RENAME, if allowed { STATUS_SUCCESS } else { STATUS_CLOUD_FILE_READ_ONLY_VOLUME });
+    let Some(shared) = active() else {
+        ack(&r, CF_OPERATION_TYPE_ACK_DELETE, STATUS_CLOUD_FILE_UNSUCCESSFUL);
+        return;
+    };
+    let Some(Identity::Entry { dev, id, .. }) = Identity::decode(&r.identity) else {
+        tracing::info!(path = %r.path.display(), "refused deleting a device, storage location or section");
+        ack(&r, CF_OPERATION_TYPE_ACK_DELETE, STATUS_CLOUD_FILE_READ_ONLY_VOLUME);
+        return;
+    };
+    let rt = shared.ctx.runtime.clone();
+    rt.spawn(async move {
+        let status = delete_on_device(&shared, &dev, &id, &r.path).await;
+        ack(&r, CF_OPERATION_TYPE_ACK_DELETE, status);
+    });
+}
+
+async fn delete_on_device(shared: &Arc<Shared>, dev: &str, id: &str, path: &Path) -> NTSTATUS {
+    match shared.ctx.client.delete(dev, id).await {
+        Ok(()) | Err(ClientError::NotFound(_)) => {
+            tracing::info!(path = %path.display(), "moved to its device's trash");
+            forget(shared, path);
+            STATUS_SUCCESS
+        }
+        Err(e) => {
+            tracing::info!(path = %path.display(), error = %e, "the device did not delete it");
+            write_status(&e)
+        }
+    }
+}
+
+/// Renaming or moving inside one storage location is done on the device
+/// first. Moving out of the drive (to the Recycle Bin) deletes it there.
+/// Moving to another location or device is refused: copy instead.
+unsafe extern "system" fn on_rename(info: *const CF_CALLBACK_INFO, params: *const CF_CALLBACK_PARAMETERS) {
+    let r = unsafe { request_of(info) };
+    if r.pid == std::process::id() {
+        ack(&r, CF_OPERATION_TYPE_ACK_RENAME, STATUS_SUCCESS);
+        return;
+    }
+    let rename = unsafe { (*params).Anonymous.Rename };
+    let target_inside = rename.Flags.0 & CF_CALLBACK_RENAME_FLAG_TARGET_IN_SCOPE.0 != 0;
+    let target = unsafe { PathBuf::from(format!("{}{}", text((*info).VolumeDosName), text(rename.TargetPath))) };
+    let Some(shared) = active() else {
+        ack(&r, CF_OPERATION_TYPE_ACK_RENAME, STATUS_CLOUD_FILE_UNSUCCESSFUL);
+        return;
+    };
+    let Some(Identity::Entry { dev, root, id, .. }) = Identity::decode(&r.identity) else {
+        tracing::info!(path = %r.path.display(), "refused renaming a device, storage location or section");
+        ack(&r, CF_OPERATION_TYPE_ACK_RENAME, STATUS_CLOUD_FILE_READ_ONLY_VOLUME);
+        return;
+    };
+    let rt = shared.ctx.runtime.clone();
+    rt.spawn(async move {
+        if !target_inside {
+            let status = delete_on_device(&shared, &dev, &id, &r.path).await;
+            ack(&r, CF_OPERATION_TYPE_ACK_RENAME, status);
+            return;
+        }
+        let parent = target.parent().map(Path::to_path_buf).unwrap_or_default();
+        let parent_identity = tokio::task::spawn_blocking(move || ops::identity(&parent)).await.ok().flatten();
+        let parent_path = match parent_identity {
+            Some(Identity::Root { dev: d, root: rt }) if d == dev && rt == root => String::new(),
+            Some(Identity::Entry { dev: d, root: rt, path, dir: true, .. }) if d == dev && rt == root => path,
+            _ => {
+                tracing::info!(to = %target.display(), "refused moving to another storage location or device");
+                ack(&r, CF_OPERATION_TYPE_ACK_RENAME, STATUS_CLOUD_FILE_NOT_SUPPORTED);
+                return;
+            }
+        };
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match shared.ctx.client.rename(&dev, &id, &name, &parent_path).await {
+            Ok(entry) => {
+                ack(&r, CF_OPERATION_TYPE_ACK_RENAME, STATUS_SUCCESS);
+                tracing::info!(from = %r.path.display(), to = %target.display(), "renamed on its device");
+                moved(&shared, &r.path, &target);
+                // Windows finishes the rename after the answer.
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let task_shared = shared.clone();
+                let _ = tokio::task::spawn_blocking(move || fix_identities(&task_shared, &target, &entry.relative_path)).await;
+            }
+            Err(e) => {
+                tracing::info!(path = %r.path.display(), error = %e, "the device did not rename it");
+                ack(&r, CF_OPERATION_TYPE_ACK_RENAME, write_status(&e));
+            }
+        }
+    });
+}
+
+/// After a rename or move, gives the item (and what is in it) identities
+/// with their new paths, so the next refresh keeps them.
+fn fix_identities(shared: &Shared, path: &Path, new_rel: &str) {
+    let Some(old) = ops::identity(path) else { return };
+    let Identity::Entry { path: old_rel, .. } = &old else { return };
+    let old_rel = old_rel.clone();
+    let renamed = old.moved_to(new_rel);
+    if let Err(e) = ops::set_identity(path, &renamed) {
+        tracing::debug!(path = %path.display(), error = %e, "identity not updated");
+    }
+    if old.is_dir() {
+        if let Some(entry) = shared.listed.lock().unwrap_or_else(|e| e.into_inner()).get_mut(path) {
+            *entry = Some(renamed);
+        }
+        fn walk(shared: &Shared, dir: &Path, old: &str, new: &str, depth: usize) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for entry in entries.flatten() {
+                let child = entry.path();
+                let Some(identity) = ops::identity(&child) else { continue };
+                let Identity::Entry { path: rel, .. } = &identity else { continue };
+                let Some(rest) = rel.strip_prefix(old) else { continue };
+                let updated = identity.moved_to(&format!("{new}{rest}"));
+                let _ = ops::set_identity(&child, &updated);
+                if updated.is_dir() {
+                    if let Some(entry) = shared.listed.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&child) {
+                        *entry = Some(updated);
+                    }
+                    let unlisted = std::fs::metadata(&child).map(|m| Attrs::of(&m).unlisted()).unwrap_or(true);
+                    if !unlisted && depth < 64 {
+                        walk(shared, &child, old, new, depth + 1);
+                    }
+                }
+            }
+        }
+        walk(shared, path, &old_rel, new_rel, 0);
+    }
 }
 
 /// Streams the requested part of a file from its device into the
@@ -588,7 +765,14 @@ fn apply_changes(shared: &Shared, dir: &Path, desired: &[Child]) -> bool {
                         if let Some(entry) = shared.listed.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&path) {
                             *entry = Some(child.identity.clone());
                         }
-                        if content && pinned {
+                        let frequent = shared.cache.settings.lock().unwrap_or_else(|e| e.into_inner()).keep_frequent
+                            && shared
+                                .usage
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .get(&path)
+                                .is_some_and(|u| u.frequent(nexus_common::time::now_ms()));
+                        if content && (pinned || frequent) {
                             rehydrate.push(path);
                         }
                     }
@@ -730,9 +914,67 @@ async fn check_device(shared: &Arc<Shared>, dev: &str, force: bool) {
 async fn refresh_top(shared: &Arc<Shared>) {
     let root = shared.root.clone();
     refresh_folder(shared, root, None).await;
-    if let Ok(devices) = shared.ctx.client.devices().await {
+    for (path, identity) in listed_where(shared, |id| matches!(id, Some(Identity::Section { .. }))) {
+        refresh_folder(shared, path, identity).await;
+    }
+    if let Ok(devices) = shared.ctx.client.all_devices().await {
         for device in devices {
-            show_presence(shared, &device.id, !device.online).await;
+            if device.id != tree::LOCAL {
+                show_presence(shared, &device.id, !device.online).await;
+            }
+            follow(shared, &device.id);
+        }
+    }
+}
+
+/// Follows a device's change feed, so its changes show within seconds.
+fn follow(shared: &Arc<Shared>, dev: &str) {
+    let mut following = shared.following.lock().unwrap_or_else(|e| e.into_inner());
+    if following.contains_key(dev) {
+        return;
+    }
+    let task = shared.ctx.runtime.spawn(follow_changes(shared.clone(), dev.to_string()));
+    following.insert(dev.to_string(), task.abort_handle());
+}
+
+async fn follow_changes(shared: Arc<Shared>, dev: String) {
+    loop {
+        let listed = listed_where(&shared, |id| id.as_ref().is_some_and(|i| i.device() == dev && i.root().is_some()));
+        if listed.is_empty() {
+            // Nothing of this device was opened here yet.
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            continue;
+        }
+        let cursor = shared.cursors.lock().unwrap_or_else(|e| e.into_inner()).get(&dev).cloned();
+        match shared.ctx.client.changes(&dev, cursor.as_deref(), if cursor.is_some() { FEED_WAIT } else { 0 }).await {
+            Ok(changes) => {
+                shared.cursors.lock().unwrap_or_else(|e| e.into_inner()).insert(dev.clone(), changes.cursor);
+                if cursor.is_none() || changes.reset {
+                    // Starting (or starting over): catch up with everything.
+                    for (path, identity) in listed {
+                        refresh_folder(&shared, path, identity).await;
+                    }
+                    continue;
+                }
+                for root in changes.roots {
+                    let folders = listed_where(&shared, |id| {
+                        id.as_ref().is_some_and(|i| i.device() == dev && i.root() == Some(root.as_str()))
+                    });
+                    for (path, identity) in folders {
+                        refresh_folder(&shared, path, identity).await;
+                    }
+                }
+            }
+            Err(ClientError::Offline(_)) => {
+                shared.cursors.lock().unwrap_or_else(|e| e.into_inner()).remove(&dev);
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+            Err(e) => {
+                // A device without the feed (an older version): the regular
+                // checks keep it up to date.
+                tracing::debug!(error = %e, "change feed not available");
+                tokio::time::sleep(Duration::from_secs(120)).await;
+            }
         }
     }
 }
@@ -746,7 +988,10 @@ async fn show_presence(shared: &Arc<Shared>, dev: &str, offline: bool) {
     let root = shared.root.clone();
     let dev_id = dev.to_string();
     let done = tokio::task::spawn_blocking(move || {
-        let folder = std::fs::read_dir(&root).ok()?.flatten().map(|e| e.path()).find(|p| {
+        let mine = std::fs::read_dir(&root).ok()?.flatten().map(|e| e.path()).find(|p| {
+            matches!(ops::identity(p), Some(Identity::Section { s }) if s == "mine")
+        })?;
+        let folder = std::fs::read_dir(&mine).ok()?.flatten().map(|e| e.path()).find(|p| {
             matches!(ops::identity(p), Some(Identity::Device { dev }) if dev == dev_id)
         })?;
         // Setting the state counts as a change here: the folder is still in sync.
@@ -779,6 +1024,7 @@ async fn follow_events(shared: Arc<Shared>) {
             Ok(Event::DeviceOnline { device_id, .. }) => {
                 show_presence(&shared, &device_id, false).await;
                 check_device(&shared, &device_id, false).await;
+                follow(&shared, &device_id);
             }
             Ok(Event::DeviceOffline { device_id }) => show_presence(&shared, &device_id, true).await,
             Ok(Event::DeviceChanged { device_id }) => {
@@ -798,9 +1044,8 @@ async fn follow_events(shared: Arc<Shared>) {
 
 type PinEvents = tokio::sync::mpsc::UnboundedReceiver<PathBuf>;
 
-fn watch_pins(root: &Path) -> notify::Result<(notify::RecommendedWatcher, PinEvents)> {
+fn watch_pins(root: &Path, tx: tokio::sync::mpsc::UnboundedSender<PathBuf>) -> notify::Result<notify::RecommendedWatcher> {
     use notify::Watcher;
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res
             && matches!(event.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_))
@@ -811,7 +1056,7 @@ fn watch_pins(root: &Path) -> notify::Result<(notify::RecommendedWatcher, PinEve
         }
     })?;
     watcher.watch(root, notify::RecursiveMode::Recursive)?;
-    Ok((watcher, rx))
+    Ok(watcher)
 }
 
 async fn handle_pins(shared: Arc<Shared>, mut rx: PinEvents) {
@@ -829,12 +1074,14 @@ async fn handle_pins(shared: Arc<Shared>, mut rx: PinEvents) {
             }
         }
         let root = shared.root.clone();
+        let mut paths: Vec<_> = paths.into_iter().filter(|p| p.starts_with(&root) && *p != root).collect();
+        // Parents first: a pinned folder covers what is in it, and a new
+        // folder is made on its device before what is in it.
+        paths.sort_by_key(|p| p.components().count());
+        let pins = paths.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            // Parents first: a pinned folder covers what is in it.
-            let mut paths: Vec<_> = paths.into_iter().filter(|p| p.starts_with(&root) && *p != root).collect();
-            paths.sort_by_key(|p| p.components().count());
             let mut done: Vec<PathBuf> = Vec::new();
-            for path in paths {
+            for path in pins {
                 if done.iter().any(|d| path.starts_with(d)) {
                     continue;
                 }
@@ -844,7 +1091,371 @@ async fn handle_pins(shared: Arc<Shared>, mut rx: PinEvents) {
             }
         })
         .await;
+        for path in paths {
+            send_back(&shared, path).await;
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Changes made here
+
+/// Files programs write while saving, which are not worth sending.
+fn is_temporary(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.starts_with("~$")
+        || n.starts_with(".~")
+        || n.starts_with("~wr")
+        || n.ends_with(".tmp")
+        || n.ends_with(".crdownload")
+        || n.ends_with(".partial")
+        || n.ends_with(".part")
+        || n == "desktop.ini"
+        || n == "thumbs.db"
+}
+
+/// What changed here, if anything is to be sent to a device.
+enum LocalChange {
+    /// A file made here, in a folder of a device.
+    NewFile { parent: Identity },
+    NewFolder { parent: Identity },
+    /// A downloaded file changed here.
+    Edited { identity: Identity },
+}
+
+fn local_change(root: &Path, path: &Path) -> Option<LocalChange> {
+    if !path.starts_with(root) || path == root {
+        return None;
+    }
+    if is_temporary(&path.file_name()?.to_string_lossy()) {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if meta.file_type().is_symlink() {
+        return None;
+    }
+    match ops::identity(path) {
+        Some(identity) => {
+            let attrs = Attrs::of(&meta);
+            if meta.is_dir() || attrs.online_only() || ops::in_sync(path) {
+                return None;
+            }
+            matches!(identity, Identity::Entry { dir: false, .. }).then_some(LocalChange::Edited { identity })
+        }
+        None => {
+            let parent = ops::identity(path.parent()?)?;
+            if !matches!(parent, Identity::Root { .. } | Identity::Entry { dir: true, .. }) {
+                // Devices and sections only hold what NEXUS puts there.
+                return None;
+            }
+            Some(if meta.is_dir() { LocalChange::NewFolder { parent } } else { LocalChange::NewFile { parent } })
+        }
+    }
+}
+
+/// The device, storage location and folder something in `parent` goes to.
+fn place_of(parent: &Identity) -> Option<(String, String, String)> {
+    match parent {
+        Identity::Root { dev, root } => Some((dev.clone(), root.clone(), String::new())),
+        Identity::Entry { dev, root, path, dir: true, .. } => Some((dev.clone(), root.clone(), path.clone())),
+        _ => None,
+    }
+}
+
+fn identity_of(dev: &str, root: &str, e: &EntryInfo) -> Identity {
+    Identity::Entry {
+        dev: dev.to_string(),
+        root: root.to_string(),
+        path: e.relative_path.clone(),
+        id: e.id.clone(),
+        dir: e.is_dir,
+        size: if e.is_dir { 0 } else { e.size.max(0) as u64 },
+        mtime: e.modified_at.unwrap_or_default(),
+    }
+}
+
+/// Size and last change of a file, to notice it changing during an upload.
+fn stamp(path: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
+/// Whether no program is writing the file (it can be opened without
+/// letting others write).
+fn closed(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().read(true).share_mode(1 /* FILE_SHARE_READ */).open(path).is_ok()
+}
+
+fn file_body(file: tokio::fs::File) -> axum::body::Body {
+    let stream = futures_util::stream::unfold(file, |mut file| async move {
+        use tokio::io::AsyncReadExt;
+        let mut buf = vec![0u8; 1024 * 1024];
+        match file.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok::<_, std::io::Error>(buf), file))
+            }
+            Err(e) => Some((Err(e), file)),
+        }
+    });
+    axum::body::Body::from_stream(stream)
+}
+
+/// Sends a change made here to its device; a busy file or an unreachable
+/// device is tried again later.
+async fn send_back(shared: &Arc<Shared>, path: PathBuf) {
+    let root = shared.root.clone();
+    let look = path.clone();
+    let Ok(Some(change)) = tokio::task::spawn_blocking(move || local_change(&root, &look)).await else { return };
+    match send_change(shared, &path, change).await {
+        Ok(()) => {}
+        Err(retry) => {
+            if retry {
+                let tx = shared.local.clone();
+                shared.ctx.runtime.spawn(async move {
+                    tokio::time::sleep(RETRY_UPLOAD).await;
+                    let _ = tx.send(path);
+                });
+            }
+        }
+    }
+}
+
+/// `Err(true)` to try again later.
+fn send_change<'a>(
+    shared: &'a Arc<Shared>,
+    path: &'a Path,
+    change: LocalChange,
+) -> futures_util::future::BoxFuture<'a, Result<(), bool>> {
+    Box::pin(async move {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let client = &shared.ctx.client;
+        let failed = |e: ClientError| {
+            tracing::info!(path = %path.display(), error = %e, "could not send a change to its device");
+            Err(matches!(e, ClientError::Offline(_)))
+        };
+        match change {
+            LocalChange::NewFolder { parent } => {
+                let Some((dev, root, parent_path)) = place_of(&parent) else { return Ok(()) };
+                let entry = match client.create_folder(&dev, &root, &parent_path, &name).await {
+                    Ok(e) => e,
+                    Err(e) => return failed(e),
+                };
+                let identity = identity_of(&dev, &root, &entry);
+                let (p, id) = (path.to_path_buf(), identity.clone());
+                let converted = tokio::task::spawn_blocking(move || ops::convert(&p, &id)).await.unwrap_or(Err("stopped".into()));
+                if let Err(e) = converted {
+                    tracing::info!(path = %path.display(), error = %e, "folder made on its device, but not here");
+                    return Ok(());
+                }
+                shared.listed.lock().unwrap_or_else(|e| e.into_inner()).insert(path.to_path_buf(), Some(identity));
+                tracing::info!(path = %path.display(), "folder made on its device");
+                // What was put in it.
+                let children: Vec<PathBuf> = std::fs::read_dir(path).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+                for child in children {
+                    let root = shared.root.clone();
+                    let look = child.clone();
+                    if let Ok(Some(change)) = tokio::task::spawn_blocking(move || local_change(&root, &look)).await
+                        && let Err(true) = send_change(shared, &child, change).await
+                    {
+                        let _ = shared.local.send(child);
+                    }
+                }
+                Ok(())
+            }
+            LocalChange::NewFile { parent } => {
+                let Some((dev, root, parent_path)) = place_of(&parent) else { return Ok(()) };
+                if !closed(path) {
+                    return Err(true);
+                }
+                let Some(before) = stamp(path) else { return Ok(()) };
+                let Ok(file) = tokio::fs::File::open(path).await else { return Err(true) };
+                let entry = match client.upload(&dev, &root, &parent_path, &name, before.0, file_body(file), false).await {
+                    Ok(e) => e,
+                    Err(e) => return failed(e),
+                };
+                let identity = identity_of(&dev, &root, &entry);
+                let unchanged = stamp(path) == Some(before);
+                let p = path.to_path_buf();
+                let done = tokio::task::spawn_blocking(move || {
+                    ops::convert(&p, &identity)?;
+                    if !unchanged {
+                        // Changed while it was sent: send it again.
+                        ops::set_identity(&p, &identity)?;
+                    }
+                    Ok::<_, String>(())
+                })
+                .await
+                .unwrap_or(Err("stopped".into()));
+                match done {
+                    Ok(()) => tracing::info!(path = %path.display(), "new file sent to its device"),
+                    Err(e) => tracing::info!(path = %path.display(), error = %e, "file sent, but not marked here"),
+                }
+                if unchanged { Ok(()) } else { Err(true) }
+            }
+            LocalChange::Edited { identity } => {
+                let Identity::Entry { dev, root, path: rel, .. } = &identity else { return Ok(()) };
+                if !closed(path) {
+                    return Err(true);
+                }
+                let Some(before) = stamp(path) else { return Ok(()) };
+                let (parent_path, file_name) = match rel.rsplit_once('/') {
+                    Some((p, n)) => (p.to_string(), n.to_string()),
+                    None => (String::new(), rel.clone()),
+                };
+                let Ok(file) = tokio::fs::File::open(path).await else { return Err(true) };
+                let entry = match client.upload(dev, root, &parent_path, &file_name, before.0, file_body(file), true).await {
+                    Ok(e) => e,
+                    Err(e) => return failed(e),
+                };
+                let updated = identity_of(dev, root, &entry);
+                let unchanged = stamp(path) == Some(before);
+                let p = path.to_path_buf();
+                let _ = tokio::task::spawn_blocking(move || {
+                    if unchanged { ops::set_synced(&p, &updated) } else { ops::set_identity(&p, &updated) }
+                })
+                .await;
+                tracing::info!(path = %path.display(), "changes sent to its device");
+                if unchanged { Ok(()) } else { Err(true) }
+            }
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// The offline cache
+
+fn usage_file(data_dir: &Path) -> PathBuf {
+    data_dir.join("vdrive-usage.json")
+}
+
+fn load_usage(data_dir: &Path) -> HashMap<PathBuf, Usage> {
+    std::fs::read(usage_file(data_dir))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Vec<(PathBuf, Usage)>>(&b).ok())
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default()
+}
+
+fn save_usage(shared: &Shared) {
+    let mut list: Vec<(PathBuf, Usage)> =
+        shared.usage.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(p, u)| (p.clone(), *u)).collect();
+    list.sort_by_key(|(_, u)| std::cmp::Reverse(u.last));
+    list.truncate(50_000);
+    if let Ok(bytes) = serde_json::to_vec(&list) {
+        let _ = std::fs::write(usage_file(&shared.ctx.data_dir), bytes);
+    }
+}
+
+async fn keep_cache(shared: Arc<Shared>) {
+    // Let the drive settle first.
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    loop {
+        let task_shared = shared.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            sweep(&task_shared);
+            save_usage(&task_shared);
+        })
+        .await;
+        tokio::select! {
+            _ = tokio::time::sleep(CACHE_EVERY) => {}
+            _ = shared.cache.wake.notified() => {}
+        }
+    }
+}
+
+/// Clears downloaded files not used for a while, then the least recently
+/// used ones while the cache is over its limit. Files kept on purpose,
+/// often used files and files changed here are never cleared.
+fn sweep(shared: &Shared) {
+    let settings = shared.cache.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let now = nexus_common::time::now_ms();
+    let usage = shared.usage.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let folders: Vec<PathBuf> = shared.listed.lock().unwrap_or_else(|e| e.into_inner()).keys().cloned().collect();
+    // (path, size, last use, often used)
+    let mut files: Vec<(PathBuf, u64, i64, bool)> = Vec::new();
+    let mut status = crate::CacheStatus::default();
+    for dir in folders {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                continue;
+            }
+            let attrs = Attrs::of(&meta);
+            if attrs.online_only() {
+                continue;
+            }
+            let path = entry.path();
+            if ops::identity(&path).is_none() {
+                continue;
+            }
+            if attrs.pinned() {
+                status.kept_bytes += meta.len();
+                continue;
+            }
+            if !ops::in_sync(&path) {
+                continue;
+            }
+            let used = usage.get(&path);
+            let last = used.map(|u| u.last).unwrap_or_else(|| {
+                meta.accessed()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(now)
+            });
+            let frequent = settings.keep_frequent && used.is_some_and(|u| u.frequent(now));
+            if frequent {
+                status.frequent += 1;
+            }
+            files.push((path, meta.len(), last, frequent));
+        }
+    }
+    let mut cleared = 0u64;
+    let mut clear = |path: &Path| match ops::dehydrate(path) {
+        Ok(()) => {
+            cleared += 1;
+            true
+        }
+        Err(e) => {
+            tracing::debug!(path = %path.display(), error = %e, "not cleared");
+            false
+        }
+    };
+    if settings.clear_after_days > 0 {
+        let cutoff = now - settings.clear_after_days as i64 * DAY_MS;
+        files.retain(|(path, _, last, frequent)| !(!*frequent && *last < cutoff && clear(path)));
+    }
+    let mut used: u64 = files.iter().map(|f| f.1).sum();
+    let limit = settings.limit_bytes();
+    if limit > 0 && used > limit {
+        // Often used files go last; otherwise the least recently used first.
+        files.sort_by_key(|(_, _, last, frequent)| (*frequent, *last));
+        let target = limit / 10 * 9;
+        let mut kept = Vec::new();
+        for f in files {
+            if used > target && clear(&f.0) {
+                used -= f.1;
+            } else {
+                kept.push(f);
+            }
+        }
+        files = kept;
+    }
+    if cleared > 0 {
+        tracing::info!(files = cleared, "offline cache cleared files");
+    }
+    shared.cleared.fetch_add(cleared, Ordering::Relaxed);
+    status.used_bytes = files.iter().map(|f| f.1).sum();
+    status.files = files.len() as u64;
+    status.cleared = shared.cleared.load(Ordering::Relaxed);
+    status.checked_at = Some(now);
+    *shared.cache.status.lock().unwrap_or_else(|e| e.into_inner()) = status;
+    // Forget files that are gone.
+    shared.usage.lock().unwrap_or_else(|e| e.into_inner()).retain(|p, _| p.exists());
 }
 
 /// Acts on a pin state change. Returns true when a whole folder was handled.

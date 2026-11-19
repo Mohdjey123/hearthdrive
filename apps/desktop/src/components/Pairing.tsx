@@ -228,8 +228,8 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
 }
 
 /** Paste a link from another computer and wait for its owner to approve. */
-export function JoinForm({ onJoined, onCancel }: { onJoined: (join: JoinState) => void; onCancel?: () => void }) {
-  const [link, setLink] = useState('')
+export function JoinForm({ onJoined, onCancel, initialLink }: { onJoined: (join: JoinState) => void; onCancel?: () => void; initialLink?: string }) {
+  const [link, setLink] = useState(initialLink ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [join, setJoin] = useState<JoinState | null>(null)
@@ -267,6 +267,11 @@ export function JoinForm({ onJoined, onCancel }: { onJoined: (join: JoinState) =
     e.preventDefault()
     void send(link)
   }
+
+  // Pairing with a device found on the local network: ask straight away.
+  useEffect(() => {
+    if (initialLink) void send(initialLink)
+  }, [])
 
   // Phones: read the pairing QR code shown on the computer.
   const scan = async () => {
@@ -366,7 +371,7 @@ export function JoinForm({ onJoined, onCancel }: { onJoined: (join: JoinState) =
   )
 }
 
-export function JoinModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function JoinModal({ open, onClose, link }: { open: boolean; onClose: () => void; link?: string }) {
   const [done, setDone] = useState<JoinState | null>(null)
   useEffect(() => {
     if (open) setDone(null)
@@ -381,7 +386,7 @@ export function JoinModal({ open, onClose }: { open: boolean; onClose: () => voi
           <Badge tone="accent">Each computer keeps its own files</Badge>
         </div>
       ) : (
-        <JoinForm onJoined={setDone} onCancel={onClose} />
+        <JoinForm key={link ?? ''} onJoined={setDone} onCancel={onClose} initialLink={link} />
       )}
     </Modal>
   )

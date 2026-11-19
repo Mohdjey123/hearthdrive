@@ -15,7 +15,9 @@
     "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-barcode-scanner": "^2.5.3",
     "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-notification": "^2.8.1",
     "lucide-react": "^1.73.0",
+    "pdfjs-dist": "^5.7.284",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

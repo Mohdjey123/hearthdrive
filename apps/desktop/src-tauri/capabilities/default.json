@@ -7,7 +7,8 @@
   ],
   "permissions": [
     "core:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "notification:default"
   ],
   "platforms": [
     "windows",

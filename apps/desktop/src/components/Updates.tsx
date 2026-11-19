@@ -112,10 +112,10 @@ export function UpdateSettings() {
       toastError(e)
     }
   }
-  const setAuto = async (on: boolean) => {
+  const set = async (change: () => Promise<unknown>) => {
     setBusy(true)
     try {
-      await api.setAutoUpdate(on)
+      await change()
       updates.reload()
     } catch (e) {
       toastError(e)
@@ -137,7 +137,7 @@ export function UpdateSettings() {
   const state = s.downloading
     ? `Receiving ${s.downloading.replace(/^\S+/, (p) => platformName(p))}…`
     : s.checking
-      ? 'Asking your other devices…'
+      ? s.from_github ? 'Asking your other devices and GitHub…' : 'Asking your other devices…'
       : s.error
         ? `Last check failed: ${s.error}`
         : s.last_checked
@@ -176,7 +176,7 @@ export function UpdateSettings() {
             className="mt-0.5 accent-[var(--nx-accent)]"
             checked={s.auto_install}
             disabled={busy || !s.can_configure}
-            onChange={(e) => void setAuto(e.target.checked)}
+            onChange={(e) => void set(() => api.setAutoUpdate(e.target.checked))}
           />
           <span>
             Install updates automatically
@@ -187,9 +187,27 @@ export function UpdateSettings() {
         </label>
       )}
 
+      {s.github_repo && (
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-[var(--nx-accent)]"
+            checked={s.from_github}
+            disabled={busy || !s.can_configure}
+            onChange={(e) => void set(() => api.setGithubUpdates(e.target.checked))}
+          />
+          <span>
+            Also look for updates on GitHub
+            <span className="mt-0.5 block text-[12px] text-subtle">
+              So this device updates even when none of your other devices is reachable. Releases from github.com/{s.github_repo}.
+            </span>
+          </span>
+        </label>
+      )}
+
       <p className="text-[12px] text-subtle">
-        Updates come from your own devices: each passes signed packages on to the others, and NEXUS checks the signature before keeping or
-        installing one.
+        Updates come from your own devices{s.from_github ? ' and GitHub' : ''}: devices pass signed packages on to each other, and NEXUS
+        checks the signature before keeping or installing one.
         {!isMobile() && s.carried.length > 0 && (
           <> Passing on: {s.carried.map((r) => `${platformName(r.platform)} ${r.version} (${formatBytes(r.size)})`).join(', ')}.</>
         )}

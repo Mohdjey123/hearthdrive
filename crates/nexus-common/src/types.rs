@@ -95,6 +95,12 @@ pub struct Device {
     /// When the device was blocked: its requests are refused and nothing is
     /// sent to it.
     pub blocked_at: Option<i64>,
+    /// JSON array of its network cards' MAC addresses (Wake-on-LAN).
+    #[serde(skip)]
+    pub mac_addresses: Option<String>,
+    /// JSON array of the broadcast addresses of its local networks.
+    #[serde(skip)]
+    pub broadcast: Option<String>,
 }
 
 impl Device {

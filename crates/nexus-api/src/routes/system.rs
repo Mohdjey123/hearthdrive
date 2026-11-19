@@ -86,6 +86,7 @@ pub async fn setup(
         device_id: None,
         allowed_roots: None,
         shared: Vec::new(),
+        via_token: false,
     };
     audit(&s, &caller, "setup.completed", Some(node_name)).await;
     Ok(Json(issue_session(&s, user, &headers, "setup").await?))

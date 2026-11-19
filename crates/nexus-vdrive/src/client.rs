@@ -3,7 +3,7 @@
 //! devices are reached through the node's peer proxy, so the drive shows
 //! exactly what the app shows.
 
-use crate::tree::{Child, Identity, assign_names};
+use crate::tree::{Child, Identity, LOCAL, assign_names};
 use axum::body::Body;
 use axum::http::{HeaderValue, Request, Response, StatusCode, header};
 use futures_util::future::BoxFuture;
@@ -171,8 +171,48 @@ pub(crate) fn encode(s: &str) -> String {
     out
 }
 
+/// Where a device's API is reached: this computer's own, or a paired
+/// device's through the node's proxy.
 fn peer(dev: &str) -> String {
-    format!("/api/v1/peers/{}/proxy", encode(dev))
+    if dev == LOCAL { "/api/v1".to_string() } else { format!("/api/v1/peers/{}/proxy", encode(dev)) }
+}
+
+/// The section folders at the top of the drive.
+pub const MY_FILES: &str = "My Files";
+pub const SHARED_WITH_ME: &str = "Shared With Me";
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SharedRoot {
+    pub id: String,
+}
+
+/// A folder another device shared with this one.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SharedFolderInfo {
+    pub id: String,
+    pub name: String,
+    pub root: SharedRoot,
+    pub path: String,
+    #[serde(default)]
+    pub sees_all: bool,
+    #[serde(default)]
+    pub access: String,
+}
+
+/// What a device answers when asked what changed.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Changes {
+    pub cursor: String,
+    #[serde(default)]
+    pub roots: Vec<String>,
+    #[serde(default)]
+    pub reset: bool,
+}
+
+#[derive(Deserialize)]
+struct DetailsReply {
+    #[serde(flatten)]
+    entry: EntryInfo,
 }
 
 /// Turns an error reply into the matching error.
@@ -204,13 +244,29 @@ impl NodeClient {
     }
 
     async fn send_request(&self, method: axum::http::Method, path: &str, range: Option<(u64, u64)>) -> Result<Response<Body>> {
-        let mut req = Request::builder()
+        self.send_body(method, path, range, None, Body::empty()).await
+    }
+
+    async fn send_body(
+        &self,
+        method: axum::http::Method,
+        path: &str,
+        range: Option<(u64, u64)>,
+        content: Option<(&str, Option<u64>)>,
+        body: Body,
+    ) -> Result<Response<Body>> {
+        let mut builder = Request::builder()
             .method(method)
             .uri(path)
             .header(header::HOST, "127.0.0.1")
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
-            .body(Body::empty())
-            .map_err(|e| ClientError::Other(format!("invalid request: {e}")))?;
+            .header(header::AUTHORIZATION, format!("Bearer {}", self.token));
+        if let Some((kind, len)) = content {
+            builder = builder.header(header::CONTENT_TYPE, kind);
+            if let Some(len) = len {
+                builder = builder.header(header::CONTENT_LENGTH, len);
+            }
+        }
+        let mut req = builder.body(body).map_err(|e| ClientError::Other(format!("invalid request: {e}")))?;
         if let Some((start, len)) = range {
             let end = start + len.max(1) - 1;
             let value = HeaderValue::from_str(&format!("bytes={start}-{end}")).expect("a valid range header");
@@ -234,6 +290,100 @@ impl NodeClient {
     pub async fn devices(&self) -> Result<Vec<DeviceInfo>> {
         let all: Vec<DeviceInfo> = self.get_json("/api/v1/devices").await?;
         Ok(all.into_iter().filter(|d| !d.is_local && d.public_key.is_some()).collect())
+    }
+
+    /// This computer (as [`LOCAL`]) and the paired devices.
+    pub async fn all_devices(&self) -> Result<Vec<DeviceInfo>> {
+        let all: Vec<DeviceInfo> = self.get_json("/api/v1/devices").await?;
+        Ok(all
+            .into_iter()
+            .filter(|d| d.is_local || d.public_key.is_some())
+            .map(|mut d| {
+                if d.is_local {
+                    d.id = LOCAL.to_string();
+                    d.online = true;
+                    d.created_at = Some(0);
+                }
+                d
+            })
+            .collect())
+    }
+
+    /// Folders a device shared with this one (not those in storage this
+    /// device sees whole anyway).
+    pub async fn shared_with_me(&self, dev: &str) -> Result<Vec<SharedFolderInfo>> {
+        let all: Vec<SharedFolderInfo> = self.get_json(&format!("{}/shared-folders/mine", peer(dev))).await?;
+        Ok(all.into_iter().filter(|f| !f.sees_all).collect())
+    }
+
+    /// Waits up to `wait` seconds for a device's storage to change.
+    pub async fn changes(&self, dev: &str, since: Option<&str>, wait: u64) -> Result<Changes> {
+        let since = since.map(|s| format!("&since={}", encode(s))).unwrap_or_default();
+        self.get_json(&format!("{}/storage/changes?wait={wait}{since}", peer(dev))).await
+    }
+
+    async fn details(res: Response<Body>) -> Result<EntryInfo> {
+        let body = Limited::new(res.into_body(), 1024 * 1024)
+            .collect()
+            .await
+            .map_err(|e| ClientError::Offline(format!("The reply was cut off: {e}")))?
+            .to_bytes();
+        serde_json::from_slice::<DetailsReply>(&body)
+            .map(|d| d.entry)
+            .map_err(|e| ClientError::Other(format!("Unexpected reply from the device: {e}")))
+    }
+
+    /// Moves a file or folder to the device's trash.
+    pub async fn delete(&self, dev: &str, file_id: &str) -> Result<()> {
+        self.send_request(axum::http::Method::DELETE, &format!("{}/files/{}", peer(dev), encode(file_id)), None).await?;
+        Ok(())
+    }
+
+    /// Renames or moves a file or folder inside its storage location.
+    pub async fn rename(&self, dev: &str, file_id: &str, name: &str, parent_path: &str) -> Result<EntryInfo> {
+        let body = serde_json::json!({ "name": name, "parent_path": parent_path }).to_string();
+        let res = self
+            .send_body(
+                axum::http::Method::PATCH,
+                &format!("{}/files/{}", peer(dev), encode(file_id)),
+                None,
+                Some(("application/json", Some(body.len() as u64))),
+                Body::from(body),
+            )
+            .await?;
+        Self::details(res).await
+    }
+
+    /// Makes a folder.
+    pub async fn create_folder(&self, dev: &str, root: &str, parent: &str, name: &str) -> Result<EntryInfo> {
+        let body = serde_json::json!({ "root_id": root, "path": parent, "name": name }).to_string();
+        let res = self
+            .send_body(
+                axum::http::Method::POST,
+                &format!("{}/files/folder", peer(dev)),
+                None,
+                Some(("application/json", Some(body.len() as u64))),
+                Body::from(body),
+            )
+            .await?;
+        Self::details(res).await
+    }
+
+    /// Uploads a file's content, replacing what is there (the device keeps
+    /// the old content as a version) or, with `replace` false, as a new file.
+    pub async fn upload(&self, dev: &str, root: &str, parent: &str, name: &str, len: u64, body: Body, replace: bool) -> Result<EntryInfo> {
+        let path = format!(
+            "{}/files/upload?root_id={}&path={}&name={}&on_conflict={}",
+            peer(dev),
+            encode(root),
+            encode(parent),
+            encode(name),
+            if replace { "replace" } else { "rename" }
+        );
+        let res = self
+            .send_body(axum::http::Method::POST, &path, None, Some(("application/octet-stream", Some(len))), body)
+            .await?;
+        Self::details(res).await
     }
 
     /// A paired device's storage locations.
@@ -323,17 +473,42 @@ impl NodeClient {
         Ok((total, res.into_body()))
     }
 
-    /// What a folder of the drive contains: paired devices at the top, then
-    /// their storage locations, then their files.
+    /// What a folder of the drive contains: the two sections at the top,
+    /// devices (or shared folders) in them, then storage locations, then files.
     pub async fn children(&self, of: Option<&Identity>) -> Result<Vec<Child>> {
         let items = match of {
-            None => {
-                let mut devices = self.devices().await?;
+            None => vec![
+                (MY_FILES.to_string(), Identity::Section { s: "mine".into() }, Some(0)),
+                (SHARED_WITH_ME.to_string(), Identity::Section { s: "shared".into() }, Some(0)),
+            ],
+            Some(Identity::Section { s }) if s == "mine" => {
+                let mut devices = self.all_devices().await?;
                 devices.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
                 devices
                     .into_iter()
                     .map(|d| (d.name, Identity::Device { dev: d.id }, d.created_at))
                     .collect()
+            }
+            Some(Identity::Section { .. }) => {
+                let mut out = Vec::new();
+                for device in self.devices().await?.into_iter().filter(|d| d.online) {
+                    // A device that cannot be asked now keeps nothing here
+                    // until it can; its folders come back with it.
+                    let Ok(folders) = self.shared_with_me(&device.id).await else { continue };
+                    for f in folders {
+                        let identity = Identity::Entry {
+                            dev: device.id.clone(),
+                            root: f.root.id,
+                            path: f.path,
+                            id: f.id,
+                            dir: true,
+                            size: 0,
+                            mtime: 0,
+                        };
+                        out.push((format!("{} ({})", f.name, device.name), identity, device.created_at));
+                    }
+                }
+                out
             }
             Some(Identity::Device { dev }) => {
                 let mut roots = self.roots(dev).await?;
@@ -398,7 +573,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lists_paired_devices_only() {
+    async fn the_top_holds_two_sections() {
+        let (client, seen) = fake(vec![]);
+        let children = client.children(None).await.unwrap();
+        let names: Vec<_> = children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, [MY_FILES, SHARED_WITH_ME]);
+        assert!(seen.lock().unwrap().is_empty(), "nothing to ask for the top");
+    }
+
+    #[tokio::test]
+    async fn my_files_lists_this_computer_and_paired_devices() {
         let (client, _) = fake(vec![(
             "/api/v1/devices",
             StatusCode::OK,
@@ -407,10 +591,11 @@ mod tests {
                 {"id":"a","name":"Laptop","public_key":"k1","created_at":1},
                 {"id":"x","name":"Half-paired"}]"#,
         )]);
-        let children = client.children(None).await.unwrap();
+        let children = client.children(Some(&Identity::Section { s: "mine".into() })).await.unwrap();
         let names: Vec<_> = children.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["Laptop", "Phone"]);
-        assert_eq!(children[0].identity, Identity::Device { dev: "a".into() });
+        assert_eq!(names, ["This PC", "Laptop", "Phone"]);
+        assert_eq!(children[0].identity, Identity::Device { dev: LOCAL.into() });
+        assert_eq!(children[1].identity, Identity::Device { dev: "a".into() });
     }
 
     #[tokio::test]
@@ -458,6 +643,31 @@ mod tests {
         assert_eq!(children[0].size(), 0, "folders have no size");
         assert_eq!(children[1].size(), 5);
         assert_eq!(children[1].modified(), Some(7));
+    }
+
+    #[tokio::test]
+    async fn this_computer_is_asked_directly() {
+        let (client, seen) = fake(vec![("/api/v1/storage/roots", StatusCode::OK, r#"[{"id":"r1","name":"D"}]"#)]);
+        let children = client.children(Some(&Identity::Device { dev: LOCAL.into() })).await.unwrap();
+        assert_eq!(children[0].name, "D");
+        assert_eq!(seen.lock().unwrap()[0], "/api/v1/storage/roots");
+    }
+
+    #[tokio::test]
+    async fn shared_with_me_lists_folders_of_online_devices() {
+        let (client, _) = fake(vec![
+            ("/api/v1/devices", StatusCode::OK, r#"[{"id":"a","name":"Laptop","public_key":"k","online":true},{"id":"b","name":"Old","public_key":"k","online":false}]"#),
+            (
+                "/api/v1/peers/a/proxy/shared-folders/mine",
+                StatusCode::OK,
+                r#"[{"id":"s1","name":"Family","root":{"id":"r"},"path":"Family","sees_all":false},
+                    {"id":"s2","name":"All","root":{"id":"r"},"path":"x","sees_all":true}]"#,
+            ),
+        ]);
+        let children = client.children(Some(&Identity::Section { s: "shared".into() })).await.unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "Family (Laptop)");
+        assert_eq!(children[0].identity.folder_path(), Some("Family"));
     }
 
     #[tokio::test]

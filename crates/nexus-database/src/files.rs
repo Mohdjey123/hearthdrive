@@ -1,5 +1,5 @@
 use crate::{Database, like_escape};
-use sqlx::AssertSqlSafe;
+use sqlx::{AssertSqlSafe, QueryBuilder, Sqlite};
 use nexus_common::types::{FileEntry, NewEntry};
 use nexus_common::{NexusError, Result};
 use serde::Serialize;
@@ -72,6 +72,35 @@ pub struct UnhashedFile {
     pub relative_path: String,
     pub size: i64,
     pub modified_at: Option<i64>,
+}
+
+/// What a search looks for. Every filter is optional.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFilter {
+    pub query: String,
+    /// Also match text inside documents and tags.
+    pub content: bool,
+    pub root_id: Option<String>,
+    /// Only these storage locations (the ones that are connected).
+    pub roots: Option<Vec<String>>,
+    /// `image`, `video`, `audio`, `document`, `archive`, `code`, `other` or `folder`.
+    pub kind: Option<String>,
+    pub modified_after: Option<i64>,
+    pub modified_before: Option<i64>,
+    pub min_size: Option<i64>,
+    pub max_size: Option<i64>,
+    pub tag: Option<String>,
+    /// Only files that can be opened now.
+    pub available: bool,
+}
+
+/// Words typed in a search box as an FTS5 query: every word must appear,
+/// each as a prefix. Quotes keep FTS syntax characters harmless.
+pub fn fts_query(text: &str) -> String {
+    text.split_whitespace()
+        .map(|w| format!("\"{}\"*", w.replace('"', "")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub(crate) fn subtree_pattern(rel: &str) -> String {
@@ -195,19 +224,117 @@ impl Database {
         .await?)
     }
 
-    /// Case-insensitive filename search. Returns up to `limit` items.
-    pub async fn search(&self, query: &str, root_id: Option<&str>, offset: i64, limit: i64) -> Result<Vec<FileEntry>> {
-        let pattern = format!("%{}%", like_escape(query.trim()));
-        let root_clause = if root_id.is_some() { "AND root_id = ?" } else { "" };
-        let sql = format!(
-            "SELECT {FILE_COLUMNS} FROM files WHERE filename LIKE ? ESCAPE '\\' {root_clause} \
-             ORDER BY is_dir DESC, filename COLLATE NOCASE LIMIT ? OFFSET ?"
-        );
-        let mut q = sqlx::query_as::<_, FileEntry>(AssertSqlSafe(sql)).bind(pattern);
-        if let Some(root) = root_id {
-            q = q.bind(root);
+    /// Case-insensitive filename search with filters. Returns up to `limit` items.
+    pub async fn search(&self, f: &SearchFilter, offset: i64, limit: i64) -> Result<Vec<FileEntry>> {
+        let mut q: QueryBuilder<Sqlite> = QueryBuilder::new(format!("SELECT {FILE_COLUMNS} FROM files WHERE 1 = 1"));
+        let text = f.query.trim();
+        if !text.is_empty() {
+            q.push(" AND (filename LIKE ").push_bind(format!("%{}%", like_escape(text))).push(" ESCAPE '\\'");
+            if f.content {
+                q.push(" OR id IN (SELECT file_id FROM doc_text WHERE doc_text MATCH ")
+                    .push_bind(fts_query(text))
+                    .push(")");
+                q.push(" OR id IN (SELECT file_id FROM file_tags WHERE tag LIKE ")
+                    .push_bind(format!("%{}%", like_escape(text)))
+                    .push(" ESCAPE '\\')");
+            }
+            q.push(")");
         }
-        Ok(q.bind(limit).bind(offset).fetch_all(&self.pool).await?)
+        if let Some(root) = &f.root_id {
+            q.push(" AND root_id = ").push_bind(root.clone());
+        }
+        if let Some(roots) = &f.roots {
+            if roots.is_empty() {
+                return Ok(Vec::new());
+            }
+            q.push(" AND root_id IN (");
+            let mut sep = q.separated(", ");
+            for r in roots {
+                sep.push_bind(r.clone());
+            }
+            q.push(")");
+        }
+        if let Some(kind) = &f.kind {
+            let (list, negate) = match nexus_common::kinds::extensions(kind) {
+                Some(list) => (list, false),
+                None if kind == "folder" => {
+                    q.push(" AND is_dir = 1");
+                    (Vec::new(), false)
+                }
+                None => (nexus_common::kinds::known(), true),
+            };
+            if !list.is_empty() {
+                q.push(if negate { " AND is_dir = 0 AND (extension IS NULL OR extension NOT IN (" } else { " AND is_dir = 0 AND extension IN (" });
+                let mut sep = q.separated(", ");
+                for e in list {
+                    sep.push_bind(e);
+                }
+                q.push(if negate { "))" } else { ")" });
+            }
+        }
+        if let Some(t) = f.modified_after {
+            q.push(" AND modified_at >= ").push_bind(t);
+        }
+        if let Some(t) = f.modified_before {
+            q.push(" AND modified_at < ").push_bind(t);
+        }
+        if let Some(n) = f.min_size {
+            q.push(" AND is_dir = 0 AND size >= ").push_bind(n);
+        }
+        if let Some(n) = f.max_size {
+            q.push(" AND is_dir = 0 AND size <= ").push_bind(n);
+        }
+        if let Some(tag) = &f.tag {
+            q.push(" AND id IN (SELECT file_id FROM file_tags WHERE tag = ").push_bind(tag.clone()).push(")");
+        }
+        if f.available {
+            q.push(" AND availability = 'online'");
+        }
+        if text.is_empty() {
+            q.push(" ORDER BY is_dir DESC, modified_at DESC");
+        } else {
+            q.push(" ORDER BY is_dir DESC, filename COLLATE NOCASE");
+        }
+        q.push(" LIMIT ").push_bind(limit).push(" OFFSET ").push_bind(offset);
+        Ok(q.build_query_as::<FileEntry>().fetch_all(&self.pool).await?)
+    }
+
+    /// Files with this content (BLAKE3 hash and size).
+    pub async fn files_with_hash(&self, hash: &str, size: i64, limit: i64) -> Result<Vec<FileEntry>> {
+        Ok(sqlx::query_as::<_, FileEntry>(AssertSqlSafe(format!(
+            "SELECT {FILE_COLUMNS} FROM files WHERE is_dir = 0 AND content_hash = ? AND size = ? LIMIT ?"
+        )))
+        .bind(hash)
+        .bind(size)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// Files with the same content (same hash), biggest savings first.
+    pub async fn duplicate_groups(&self, root_id: Option<&str>, min_size: i64, limit: i64) -> Result<Vec<Vec<FileEntry>>> {
+        let mut q: QueryBuilder<Sqlite> = QueryBuilder::new(
+            "SELECT content_hash FROM files WHERE is_dir = 0 AND content_hash IS NOT NULL AND size >= ",
+        );
+        q.push_bind(min_size.max(1));
+        if let Some(root) = root_id {
+            q.push(" AND root_id = ").push_bind(root.to_string());
+        }
+        q.push(" GROUP BY content_hash HAVING COUNT(*) > 1 ORDER BY MAX(size) * (COUNT(*) - 1) DESC LIMIT ")
+            .push_bind(limit);
+        let hashes: Vec<String> = q.build_query_scalar().fetch_all(&self.pool).await?;
+        let mut groups = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            let mut q: QueryBuilder<Sqlite> =
+                QueryBuilder::new(format!("SELECT {FILE_COLUMNS} FROM files WHERE is_dir = 0 AND content_hash = "));
+            q.push_bind(hash);
+            if let Some(root) = root_id {
+                q.push(" AND root_id = ").push_bind(root.to_string());
+            }
+            q.push(" ORDER BY modified_at ASC");
+            groups.push(q.build_query_as::<FileEntry>().fetch_all(&self.pool).await?);
+        }
+        Ok(groups)
     }
 
     pub async fn recent_files(&self, limit: i64) -> Result<Vec<FileEntry>> {

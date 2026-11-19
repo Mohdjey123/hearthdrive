@@ -68,6 +68,14 @@ pub struct AppState {
     pub introductions: tokio::sync::Notify,
     /// Paired devices in File Explorer (Windows).
     pub vdrive: nexus_vdrive::VirtualDrive,
+    /// Which storage locations changed, for devices following them.
+    pub changes: crate::routes::changes::ChangeLog,
+    /// Traffic rates and connection problems per paired device.
+    pub peer_health: crate::peers::PeerHealth,
+    /// NEXUS devices heard on the local network.
+    pub nearby: crate::nearby::Nearby,
+    /// The address for programs (API, WebDAV, S3), when turned on.
+    pub programs: crate::programs::Programs,
 }
 
 impl AppState {
@@ -114,6 +122,10 @@ impl AppState {
             update_keys: nexus_devices::release::TRUSTED_KEYS.iter().map(|k| k.to_string()).collect(),
             introductions: tokio::sync::Notify::new(),
             vdrive: nexus_vdrive::VirtualDrive::new(),
+            changes: Default::default(),
+            peer_health: Default::default(),
+            nearby: Default::default(),
+            programs: Default::default(),
         }
     }
 

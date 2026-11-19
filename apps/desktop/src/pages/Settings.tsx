@@ -1,13 +1,16 @@
 import { useCallback, useState } from 'react'
 import { FolderOpen, HardDrive, Lock, LockOpen, LogOut, Monitor, Moon, Sun, Trash2, UserPlus } from 'lucide-react'
-import { api, connection, fileApi, isMobile, isTauri, peerPrefix, thisDevice, type Device, type Person, type Role, type StorageRoot, type User } from '../services/api'
+import { api, connection, fileApi, isMobile, libraryApi, isTauri, peerPrefix, thisDevice, type Device, type Person, type Role, type StorageRoot, type User, type VirtualDriveStatus } from '../services/api'
 import { SecurityPanel } from '../components/Security'
+import { ProgramsPanel } from '../components/Programs'
+import { PluginsPanel } from '../components/FolderTools'
 import { toast, toastError } from '../components/Toasts'
 import { useResource } from '../hooks/useResource'
 import { useSession } from '../stores/session'
 import { useTheme, type ThemePref } from '../stores/theme'
-import { formatDuration } from '../lib/format'
+import { formatBytes, formatDuration } from '../lib/format'
 import { UpdateSettings } from '../components/Updates'
+import { notifyLevel, setNotifyLevel, type NotifyLevel } from '../services/notify'
 import { Badge, Button, ErrorNote, Field, Input, Modal, PageHeader, Panel, Spinner, cx } from '../components/ui'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -380,6 +383,92 @@ function People({ meId }: { meId: string | null }) {
 }
 
 /** Registers the background service to start when you sign in to Windows. */
+function NotificationsRow() {
+  const [level, setLevel] = useState<NotifyLevel>(notifyLevel())
+  const choose = (l: NotifyLevel) => {
+    setLevel(l)
+    setNotifyLevel(l)
+  }
+  const options: { value: NotifyLevel; label: string }[] = [
+    { value: 'important', label: 'Important' },
+    { value: 'all', label: 'Everything' },
+    { value: 'off', label: 'Off' },
+  ]
+  return (
+    <Row label="Notifications">
+      <div className="inline-flex rounded-md border border-line bg-elevated p-0.5">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => choose(o.value)}
+            className={cx('h-7 rounded px-3 text-[12.5px]', level === o.value ? 'bg-panel text-fg shadow-sm' : 'text-muted hover:text-fg')}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-1 text-[12px] text-subtle">
+        {level === 'off'
+          ? 'No notifications.'
+          : level === 'all'
+            ? 'Every finished transfer, devices going offline and coming back, and pairing requests.'
+            : 'Failed transfers, finished backups and big transfers, and devices asking to pair.'}
+        {' '}Shown while the NEXUS window is not in front.
+      </div>
+    </Row>
+  )
+}
+
+/** Reading text in documents and pictures, and what this computer can do. */
+function DocumentsPanel() {
+  const caps = useResource(() => libraryApi('').capabilities(), [])
+  const [busy, setBusy] = useState(false)
+  if (!caps.data) return null
+  const c = caps.data
+  const toggle = async (on: boolean) => {
+    setBusy(true)
+    try {
+      await libraryApi('').setDocumentSettings(on)
+      caps.reload()
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Panel title="Documents and media" className="mb-4">
+      <div className="divide-y divide-line">
+        <Row label="Search inside">
+          <div className="text-[13px]">
+            Search finds documents by what they say: text files, PDFs, Word, Excel, PowerPoint and OpenDocument files.
+            {c.ocr ? ' Scanned PDFs are read with the text recognition built into Windows.' : ' Scanned PDFs need Windows, which reads them with its built-in text recognition.'}
+          </div>
+          <label className="mt-2 flex items-start gap-2 text-[13px]">
+            <input type="checkbox" className="mt-0.5 accent-[var(--nx-accent)]" checked={c.ocr_images} disabled={busy || !c.ocr} onChange={(e) => void toggle(e.target.checked)} />
+            <span>
+              Read text in pictures too
+              <span className="block text-[12px] text-subtle">Photos of receipts, screenshots and scans become searchable. Reading every picture takes a while.</span>
+            </span>
+          </label>
+        </Row>
+        <Row label="Photos">
+          <div className="text-[13px]">
+            {c.faces ? 'Photos with people in them are found with the face finder built into Windows; nothing is downloaded and faces are not told apart.' : 'Finding people in photos needs Windows.'}
+          </div>
+        </Row>
+        <Row label="Videos">
+          <div className="text-[13px]">
+            {c.transcode
+              ? 'Videos browsers cannot play (MKV, AVI, WMV…) are converted while they play, with the ffmpeg found on this computer.'
+              : 'Videos browsers cannot play (MKV, AVI, WMV…) can be converted while they play once ffmpeg is installed on this computer and on its PATH. NEXUS does not download it.'}
+          </div>
+        </Row>
+      </div>
+    </Panel>
+  )
+}
+
 function AutostartRow() {
   const state = useResource(() => api.autostart(), [])
   const [busy, setBusy] = useState(false)
@@ -422,6 +511,56 @@ async function pickFolder(): Promise<string | null> {
   const { open } = await import('@tauri-apps/plugin-dialog')
   const picked = await open({ directory: true, multiple: false, title: 'Choose an empty folder for the virtual drive' })
   return typeof picked === 'string' ? picked : null
+}
+
+/** The virtual drive's offline cache: size limit and clearing. */
+function CacheRow({ data, onSaved }: { data: VirtualDriveStatus; onSaved: () => void }) {
+  const [limit, setLimit] = useState(String(data.cache.limit_gb))
+  const [days, setDays] = useState(String(data.cache.clear_after_days))
+  const [frequent, setFrequent] = useState(data.cache.keep_frequent)
+  const [busy, setBusy] = useState(false)
+  const changed =
+    Number(limit) !== data.cache.limit_gb || Number(days) !== data.cache.clear_after_days || frequent !== data.cache.keep_frequent
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.setVirtualDriveCache({ limit_gb: Number(limit) || 0, clear_after_days: Math.round(Number(days) || 0), keep_frequent: frequent })
+      toast('Offline cache settings saved')
+      onSaved()
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const s = data.cache_status
+  return (
+    <Row label="Offline cache">
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
+        Keep up to
+        <Input className="w-20" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} />
+        GB of downloaded files; clear files not opened for
+        <Input className="w-16" inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} />
+        days
+      </div>
+      <label className="mt-2 flex items-center gap-2 text-[13px]">
+        <input type="checkbox" className="accent-[var(--nx-accent)]" checked={frequent} onChange={(e) => setFrequent(e.target.checked)} />
+        Keep often used files downloaded, and download them again when they change
+      </label>
+      <div className="mt-1 text-[12px] text-subtle">
+        {data.running && s.checked_at
+          ? `${formatBytes(s.used_bytes)} in ${s.files.toLocaleString()} downloaded file${s.files === 1 ? '' : 's'}` +
+            (s.kept_bytes ? `, plus ${formatBytes(s.kept_bytes)} kept on this device` : '') +
+            (s.frequent ? ` · ${s.frequent} often used` : '') +
+            (s.cleared ? ` · ${s.cleared} cleared so far` : '')
+          : 'The least recently used files are cleared first. 0 means no limit, or never.'}
+        {' '}Files kept with Always keep on this device and files changed here are never cleared.
+      </div>
+      {changed && (
+        <Button className="mt-2" size="sm" variant="primary" loading={busy} onClick={save}>Save</Button>
+      )}
+    </Row>
+  )
 }
 
 /** Paired devices' storage in File Explorer, as a cloud drive (Windows). */
@@ -469,9 +608,11 @@ function VirtualDrivePanel() {
             <span>
               Show my devices in File Explorer
               <span className="mt-0.5 block text-[12px] text-subtle">
-                Every paired device's storage appears under NEXUS in File Explorer. Files download when you open them;
-                right-click a file or folder and choose Always keep on this device, or Free up space. Read-only for now:
-                changes made there are not sent back to the device.
+                NEXUS in File Explorer has My Files (this computer and every paired device) and Shared With Me (folders
+                other devices shared with this one). Files download when you open them; right-click and choose Always
+                keep on this device, or Free up space. What you change there goes back to the device: edits and new
+                files are uploaded once saved, and renames, moves and deletes happen on the device (deleted items go to
+                its trash). Changes on other devices show up within seconds.
               </span>
             </span>
           </label>
@@ -488,6 +629,7 @@ function VirtualDrivePanel() {
           )}
           {data.error && <div className="mt-2"><ErrorNote>{data.error}</ErrorNote></div>}
         </Row>
+        <CacheRow data={data} onSaved={() => state.reload()} />
         <Row label="Folder">
           <div className="flex gap-2">
             <Input
@@ -557,6 +699,7 @@ export function Settings() {
               ))}
             </div>
           </Row>
+          <NotificationsRow />
         </div>
       </Panel>
 
@@ -605,6 +748,9 @@ export function Settings() {
       </Panel>
 
       {!isMobile() && me && (me.role === 'owner' || me.role === 'administrator') && <VirtualDrivePanel />}
+      {me && (me.role === 'owner' || me.role === 'administrator') && <DocumentsPanel />}
+      {!isMobile() && me && me.user_id && <ProgramsPanel manage={me.role === 'owner' || me.role === 'administrator'} />}
+      {!isMobile() && me && (me.role === 'owner' || me.role === 'administrator') && <PluginsPanel owner={me.role === 'owner'} />}
 
       <Panel title="Updates" className="mb-4">
         <UpdateSettings />

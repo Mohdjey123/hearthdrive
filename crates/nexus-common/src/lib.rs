@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod events;
+pub mod kinds;
 pub mod runtime;
 pub mod time;
 pub mod types;

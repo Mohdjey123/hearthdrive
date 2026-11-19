@@ -18,7 +18,7 @@ Free and open source. No subscription, no third-party storage, nothing exposed t
 
 Every computer you install NEXUS on becomes a storage node: it indexes the folders and drives you choose (in place, nothing is moved or uploaded anywhere) and serves them to your other devices. Devices pair with a link or a QR code and talk over end-to-end encrypted peer-to-peer connections, from any network, with nothing else to install.
 
-> **Status:** Phases 0–6 are done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, encrypted share links, the Android app with photo backup, and updates that spread between your own devices. A store-signed Android build is next (see [Roadmap](#roadmap)).
+> **Status:** Phases 0–6 are done: storage nodes, pairing, browsing and search across devices, copies, folder sync with versions, per-device and per-person access, encrypted share links, the Android app with photo backup, and updates that spread between your own devices. On top of that: photos, music and films, searchable documents, rules, WebDAV and S3 access, encrypted folders and plugins. A store-signed Android build is next (see [Roadmap](#roadmap)).
 
 ## Contents
 
@@ -36,6 +36,12 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - [Phone backup and the share menu](#phone-backup-and-the-share-menu)
 - [Shared folders and comments](#shared-folders-and-comments)
 - [Share links](#share-links)
+- [Photos, music and films](#photos-music-and-films)
+- [Documents](#documents)
+- [Rules and suggestions](#rules-and-suggestions)
+- [File tools](#file-tools)
+- [Programs, WebDAV and S3](#programs-webdav-and-s3)
+- [Power and notifications](#power-and-notifications)
 - [Updates](#updates)
 - [Virtual drive](#virtual-drive)
 - [Windows installer](#windows-installer)
@@ -54,6 +60,8 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 - **Share links.** Send anyone a link to a file or folder. With Send it is encrypted on your computer first, so the host never sees what it holds; links expire and can be limited to a number of downloads and protected with a password.
 - **You decide who sees what.** Accounts with roles, per-device and per-person limits to chosen storage locations, and folders shared with chosen people and devices (to view, to edit, or only to add files), enforced on every device.
 - **Comments.** Leave a note on any file for the others who can open it.
+- **Photos, media and documents.** A photo timeline with a map, memories and look-alikes; music and films with resume on any device; search inside PDFs and Office files, scanned ones too, with automatic tags.
+- **Rules, tools and other programs.** Rules that tag, sort, copy or clean up files by themselves; duplicates, archives, downloads from a link, encrypted folders and plugins; WebDAV, S3 and the API for other programs with their own tokens.
 - **Updates from your own devices.** Publish a signed update on one computer and every paired computer and phone picks it up. Computers install it by themselves once their window is closed; phones ask first.
 - **Built to be safe.** Loopback-only API, signed requests between devices, Argon2id passwords, two-step sign-in and passkeys, locking accounts and blocking lost devices, path validation against traversal and link escapes, and a security log.
 
@@ -72,13 +80,13 @@ Every computer you install NEXUS on becomes a storage node: it indexes the folde
 | Sync | One-way and two-way folder sync between devices; conflict copies; removals go to the trash; a safety stop for mass removals; the last ten versions of every replaced file |
 | Backups | Scheduled snapshots of a folder on a paired computer, each content stored once by BLAKE3; keep rules (latest, daily, weekly, monthly) with cleanup; stored contents read back and repaired; browse and restore any snapshot, beside or over the original; encrypted with a recovery key, and openable from another computer |
 | Copies | A one-way, checked copy of a folder on one or more paired computers ("2 copies", "3 copies"); files removed here kept on the copy for a chosen time and brought back on request; copies read back weekly and repaired; a check for room before starting |
-| Drive health | Windows' health verdict for every disk (temperature, wear and error counts where Windows allows); free-space warnings; storage that goes missing or comes back; a monthly read of every file against its BLAKE3 hash to find silent damage, repaired from an extra copy or a backup; the same view of your other devices; a text report |
-| Shared folders | A folder shared with people on a computer or with paired devices, on top of the storage they may see: view, edit, or add files only (a drop folder that shows nothing and never replaces a file); never beyond someone's role; follows the folder when NEXUS renames or moves it; "Shared with you" in Files and on Sharing; comments on files for everyone who can open them |
+| Drive health | Windows' health verdict for every disk, with temperature, wear and error counts (asked of the disks directly when not running as administrator); free-space warnings; storage that goes missing or comes back; a monthly read of every file against its BLAKE3 hash to find silent damage, repaired from an extra copy or a backup; the same view of your other devices; a text report |
+| Shared folders | A folder shared with people on a computer or with paired devices, on top of the storage they may see: view, edit, or add files only (a drop folder that shows nothing and never replaces a file); never beyond someone's role; follows the folder when NEXUS renames or moves it; "Shared with you" in Files and on Sharing; groups of people (a family) to share with, and family spaces made in one step; upload links that let people without NEXUS add files to a folder from your local network; comments on files for everyone who can open them |
 | Share links | Links to a file or folder (sent as a zip) that anyone can open: end-to-end encrypted through [Send](https://github.com/timvisee/send) (AES-GCM, key only in the link) with expiry, a download limit and an optional password, or unencrypted through temp.sh for larger files; take a link down at any time; uploads appear under Transfers |
 | Updates | Signed packages (Ed25519 over the version, size and BLAKE3 hash) passed between paired devices; computers keep packages for every platform to pass on; Windows installs by itself when its window is closed and nothing is copying, Android opens the system installer |
 | People | Accounts with roles (owner, administrator, editor, viewer); per-person storage limits that also apply on paired devices; locked accounts; two-step sign-in turned off for someone who lost their phone |
 | Sign-in | Two-step sign-in with an authenticator app (TOTP, RFC 6238; each code works once) and ten one-time recovery codes; passkeys (WebAuthn: Windows Hello, a phone or a security key; ES256, EdDSA and RS256 checked on the node); sessions listed with browser, sign-in method and last use, signed out one by one or all at once; the password and a code asked again before sensitive changes; wrong codes slowed down per account; a security log with refused sign-ins |
-| Virtual drive | Paired devices' storage in File Explorer through the Windows Cloud Files API (no driver): folders listed on first open, files downloaded on read, Always keep on this device / Free up space, offline devices marked; read-only for now |
+| Virtual drive | Paired devices' storage in File Explorer through the Windows Cloud Files API (no driver): folders listed on first open, files downloaded on read, Always keep on this device / Free up space, offline devices marked; edits, new files, renames, moves and deletes carried back to their device; this computer's own storage and folders shared with you; changes pushed within seconds; an offline cache with a size limit |
 | Android | The same node inside the app; QR pairing; photo and video backup to a computer; NEXUS in the system share menu |
 | Security | Loopback-only API by default; per-run local token for the desktop app; sessions stored as token hashes; short-lived signed URLs for media; all paths validated against their root (traversal, reserved names, ADS, symlink and junction escapes); DNS-rebinding Host check; a strict Content Security Policy on the web interface; user content and everything shown from a paired device served with `CSP: sandbox`; origin check on the live event stream; per-person limits enforced on downloads too; blocked devices refused and sent nothing; phones accept first-run setup only from the app itself and keep their data out of Android backups; audit log |
 
@@ -202,7 +210,7 @@ Sync keeps two folders the same both ways, and a backup keeps history in its own
 
 **Drive health** shows, for this computer and each paired one:
 
-* **Disks.** Windows' own verdict for every physical disk (healthy, warning, failing), read every half hour, with temperature, wear and uncorrected errors when Windows shares them (it only does with programs running as administrator).
+* **Disks.** Windows' own verdict for every physical disk (healthy, warning, failing), read every half hour, with temperature, wear, power-on hours and uncorrected errors. Without administrator rights NEXUS asks the disks themselves (the NVMe health log, the drive's temperature and its own failure prediction), so most of this shows either way.
 * **Free space.** A drive is *nearly full* under 10% free and *almost full* under 3% or 1 GB.
 * **Missing storage.** Each storage location is looked at every minute. One that disappears (a drive unplugged or failing) is shown until it is back, and both events go into the activity log.
 * **Silent damage.** Once a month (or when you press **Verify files**) NEXUS reads every file of a storage location and compares it with the hash taken when it was indexed. A file whose content changed while its size and date did not was damaged on the disk. It is listed with where a good copy is (an extra copy or a backup); **Repair** puts the right content back and keeps what was there as a version. If a program changed the file on purpose without changing its date, **It is fine** accepts its current content.
@@ -242,7 +250,9 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 * **Drop folders.** **Add files only** turns a folder into a drop box: members upload files and make folders but see nothing that is in it, and nothing is replaced; a file with a name already there is saved as "name (1)". Their role must allow adding files (editor or contributor).
 * **Devices.** A folder shared with a paired device is open to the people using it, as far as their own limits on their computer allow.
 * **When it follows the folder.** Renaming or moving a shared folder (or a folder above it) in NEXUS keeps it shared. If it is renamed or moved in Explorer, **Sharing** marks it **Folder not found**; share it again under its new name.
-* **People outside your devices.** NEXUS keeps its API off the internet, so it has no upload links for strangers. To send files to someone outside, use a share link (below); to collect files from people, give them an account limited to a drop folder.
+* **Groups and family spaces.** On **Sharing**, **New group** puts people on this computer together (your family, say); a folder shared with the group is shared with everyone in it, and with people added to it later. Someone removed from the group loses its folders at once. **New family space** makes a folder and shares it with a group (or a new group of the people you tick) in one step. Someone given a folder both directly and through a group gets whichever allows more.
+* **Upload links.** To collect files from people who have no NEXUS, select a folder in **Files** and choose **Ask for files** (the inbox icon). Give the link a title, a message, how long it works and how much it may take in all. Whoever opens it gets a simple page to drop files on: they see nothing already in the folder, and a file with a name that is there already is saved as "name (1)". Files are added as you, so a link never does more than you may, and stops working if you lose access. **Sharing** lists your links (everyone's, for owners and administrators) with what they received; the bin takes one down at once.
+* **Where upload links work.** NEXUS has no server on the internet, so the page is served on the address for programs (**Settings** → **Programs, WebDAV and S3**): on the local network when that is allowed (guests on your Wi-Fi), otherwise only on this computer. The dialog says which, and owners and administrators can open it to the local network from there. To send files to someone further away, use a share link (below).
 * **Comments.** The **Properties** panel of a file or folder has comments for everyone who can open it, including viewers (Ctrl+Enter posts). Authors delete their own comments; owners and administrators can delete any. Comments stay with the file through renames, moves and the trash, and go when it is deleted for good. They work on paired devices' files too.
 
 ## Share links
@@ -255,29 +265,84 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 * **On the phone.** Share files on your computers the same way; the computer holding the file does the encrypting and uploading, and the phone offers its share sheet to send the link.
 * **Who can share.** Owners, administrators and editors. Owners and administrators see every link made on a computer; everyone else sees their own. People limited to some storage can share only from it.
 
+## Photos, music and films
+
+* **Photos.** **Photos** shows every picture and video in your storage as a timeline by month, with the camera, a map of where photos were taken, **On this day** memories from earlier years, and photos that look alike (a perceptual hash, so resized or re-saved copies are found too). Camera raw files show their built-in preview. Albums collect photos from any storage location and can be shared with people on this computer. Dates and places come from the photos' EXIF data; nothing is uploaded anywhere.
+* **Music and films.** **Media** lists music by artist and album (from the files' tags), films, series by season and episode (from their file names) and home videos, and plays them in the app. Each person's place in a video is remembered on every device, so a film started on the laptop continues on the phone. A video the browser cannot play is converted to MP4 while it plays, if `ffmpeg` is installed and on the `PATH`; NEXUS does not download it.
+
+## Documents
+
+* **Search inside documents.** NEXUS reads the text of plain text and code files, PDFs, Word, Excel, PowerPoint and OpenDocument files, so search finds them by what they say. Scanned PDFs are read with Windows' own text recognition (the languages installed in Windows); reading text in pictures too can be turned on under **Settings** → **Documents** (it is slow on large photo collections).
+* **Tags.** Documents get tags from what they say (*invoice*, *receipt*, *contract*, *payslip*…). Keep, remove or add tags in a file's **Properties**; **Files** can be filtered by tag, kind, size and date.
+* **PDFs.** PDFs open in the app's own viewer, page by page, with zoom; search finds them by their text.
+* **Sorting.** To file documents away by their tags, use a rule (below).
+
+## Rules and suggestions
+
+**Automation** has rules that look after a storage location by themselves. A rule says which files it is for (a folder and its subfolders, kinds, extensions, words in the name or the text, a tag, older than, larger or smaller than) and what to do:
+
+* **Tag** them, **Move** them to a folder (with `{year}`, `{month}`, `{kind}` and `{ext}` in the name, using the date a photo was taken when known), **Copy** them to a paired computer (removing the originals once the copy is checked, if you choose), or send them to the **Trash** (only with at least one condition).
+* A rule runs when files arrive, every hour or every day, or when you press **Run now**; **Preview** lists what it would do first. Each file is handled once per rule, so moving a file back is not undone again.
+* **Suggestions** at the top of the page point out storage that is nearly full (with where there is room on this computer or a paired one), duplicates worth removing and documents that could be sorted by tag, each with a rule ready to make.
+
+**Duplicates** lists files with exactly the same content (by BLAKE3 hash), biggest savings first, to keep one and send the rest to the trash.
+
+## File tools
+
+* **Archives.** Zip, 7z, tar and .tar.gz files open like folders in **Files**, and **Extract** unpacks one into a new folder next to it as a transfer. Paths that would land outside that folder are refused.
+* **Download from a link.** **Download from a link** (next to Upload) downloads a file from the web straight into a storage location, under **Transfers**. Addresses on this computer are refused, and so are addresses on your local network except for owners and administrators.
+* **Encrypted folders.** Select a folder in **Files** and press the lock to encrypt its files with a password (PBKDF2, then each file sealed with its own key; tampering is detected). Encrypted files are unreadable on the disk and in the virtual drive; names stay visible. Unlock decrypts them again. Without the password nobody can recover them, NEXUS included. The folder's `.nexus-vault` file holds what the password is checked against; NEXUS hides it and does not let it be changed or deleted, since the files cannot be decrypted without it.
+* **Plugins.** A plugin is a folder in NEXUS's `plugins` folder with a `plugin.json` that adds commands to files and folders (for example "Convert to PDF" for `.docx` files), each running one program with the file's path. The owner turns each plugin on in **Settings** → **Plugins** after seeing exactly which programs it runs; a plugin whose `plugin.json` changes is turned off again. Commands appear under the puzzle button in **Files** for owners and administrators. Programs run directly, never through a shell, with a time limit.
+
+## Programs, WebDAV and S3
+
+**Settings** → **Programs, WebDAV and S3** opens a second address (port 47180, on this computer only unless you allow your local network) for other programs:
+
+* **Tokens.** Make a token for each program, read-only or not, with an expiry if you like. It is shown once. A token acts as you, with your storage limits (a read-only one as a viewer) but can never change people, tokens, pairing or sign-in settings.
+* **WebDAV** at `http://<address>:47180/dav/`: map it as a network drive in Windows, or use it from any WebDAV app, with any user name and the token as the password. Each storage location is a folder.
+* **S3** at `http://<address>:47180/`: each storage location is a bucket, for rclone, the AWS CLI, Cyberduck and backup programs that speak S3. Use the access key and secret key shown with the token (path-style addressing; signed and multipart uploads work). Deleted objects go to the trash.
+* **The NEXUS API** at `http://<address>:47180/api/v1/` with `Authorization: Bearer <token>`, for your own scripts. It is the same API the app uses.
+
+## Power and notifications
+
+* **Wake-on-LAN.** A sleeping computer that allows it can be woken from **Devices** by another device on the same network. **Put to sleep** and a few other remote commands (look for changes, check for updates, pause or resume transfers) can be run on a paired computer from **Devices**.
+* **Transfers and power.** While NEXUS copies, syncs or backs up, it keeps the computer from going to sleep, and it waits while a laptop runs on battery. Both can be turned off in the transfer settings on **Transfers**.
+* **Nearby devices.** Computers and phones running NEXUS on the same local network find each other; **Add device** lists them to pair with one click (still approved on the other computer).
+* **Notifications.** Windows notifications for finished or failed transfers, devices asking to pair and devices going offline, while the NEXUS window is not in front. Choose which under **Settings**.
+
 ## Updates
 
-Updates do not come from a download server. They are published on one of your computers and spread between your own devices over the same encrypted connections they already use.
+Updates are published once and reach every device two ways: from your own paired devices, over the encrypted connections they already use, and from the public [nexus-cloud-releases](https://github.com/Mohdjey123/nexus-cloud-releases) repository on GitHub, so a phone or laptop that cannot reach any of your other devices still updates.
 
-* **Publishing.** `scripts/release.sh 0.1.3 notes.md` sets the version, builds the Windows installer and the Android APK, signs both with the update key and adds them to this computer's NEXUS. `--github` also creates a GitHub release. The first time, make the key with `target/release/nexus-release keygen` and put its public key in `TRUSTED_KEYS` (`crates/nexus-devices/src/release.rs`).
-* **Spreading.** Every device asks its online paired devices what they hold every 30 minutes (or at once with **Settings** → **Updates** → **Check now**) and fetches anything newer. Computers keep the packages for every platform so they can pass them on; phones keep only their own.
-* **Checking.** A package is kept, offered or installed only if it is signed with a key built into the app and matches the signed size and BLAKE3 hash, checked again right before installing. A paired device can hold an update back, but it cannot change one or roll a device back to an older version.
+* **Publishing.** `scripts/release.sh 0.1.5 notes.md --github` (from a clean working tree) sets the version, builds the Windows installers, signs them with the update key, adds them to this computer's NEXUS and creates the GitHub release with them. It then commits the version change, tags it `v0.1.5` and pushes the tag, which starts the **Android release** workflow on GitHub Actions: it builds and signs the APK (its Android `versionCode` follows the version) and adds it, with its signed update description and a `.sha256`, to the same release. Push the release commit yourself afterwards. Without `--github`, the script builds the APK locally and publishes only to your own devices. The first time, make the update key with `target/release/nexus-release keygen` and put its public key in `TRUSTED_KEYS` (`crates/nexus-devices/src/release.rs`).
+* **Spreading.** Every device asks its online paired devices and GitHub what is newest every 30 minutes (or at once with **Settings** → **Updates** → **Check now**) and fetches anything newer, from a paired device when one has it, otherwise from GitHub. Computers keep the packages for every platform so they can pass them on; phones keep only their own. **Also look for updates on GitHub** in the same place turns GitHub off for a device (`NEXUS_UPDATE_REPO=off` turns it off everywhere, or names another repository).
+* **Checking.** A package is kept, offered or installed only if it is signed with a key built into the app and matches the signed size and BLAKE3 hash, checked again right before installing. That holds for packages from GitHub too: each comes with a `nexus-update-<platform>.json` signed with the update key, so neither a paired device nor anyone who could change the GitHub release can change an update or roll a device back to an older version.
 * **Installing on Windows.** A banner offers **Install now**. With **Install updates automatically** on (the default), the update installs by itself once the window is closed and no copy or sync is running. The installer stops the service, replaces the files and starts the service again. MSI installs and development builds are not updated this way.
-* **Installing on Android.** The app shows the same banner; **Install now** opens Android's installer, which asks you to confirm (the first time, Android asks you to allow NEXUS to install apps). Updates install over the existing app only when they are signed with the same Android key, so build releases on the same computer.
+* **Installing on Android.** The app shows the same banner; **Install now** opens Android's installer, which asks you to confirm (the first time, Android asks you to allow NEXUS to install apps). Updates install over the existing app only when they are signed with the same Android key as the installed app.
 * **The update key** is at `~/.nexus-signing/update-key` (or `NEXUS_UPDATE_KEY`). Anyone with that file can publish updates to all your devices, so keep it private. Keep a copy somewhere safe too: without it no further updates can be made, and devices would have to be updated by hand with a build that trusts a new key.
 
-Versions before 0.1.2 cannot update themselves: install 0.1.2 by hand once on each device.
+**Setting up the Android workflow.** In the source repository's **Settings** → **Secrets and variables** → **Actions**, add:
+
+| Secret | What |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | The keystore that signs the APK, base64-encoded. To keep updating the app already on your phones, use the key that signed it (builds from `build-android.sh` so far: `~/.android/debug.keystore`). |
+| `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Its password, the key's alias and the key's password (for the debug keystore: `android`, `androiddebugkey`, `android`). |
+| `NEXUS_UPDATE_KEY` | The contents of `~/.nexus-signing/update-key`. |
+| `RELEASES_TOKEN` | A fine-grained personal access token with **Contents: read and write** on `nexus-cloud-releases` only. |
+
+Versions before 0.1.2 cannot update themselves: install 0.1.2 by hand once on each device. Versions before 0.1.5 only update from paired devices; once a device has 0.1.5 it also looks on GitHub.
 
 ## Virtual drive
 
-On Windows, Settings → Virtual drive puts every paired device's storage in File Explorer, under **NEXUS** in the navigation pane (default folder `%USERPROFILE%\NEXUS`, laid out as `<device>\<storage location>\...`). It is a cloud sync root using the Windows Cloud Files API, the mechanism OneDrive uses; no driver is installed. The code is in `crates/nexus-vdrive`.
+On Windows, Settings → Virtual drive puts your storage in File Explorer, under **NEXUS** in the navigation pane (default folder `%USERPROFILE%\NEXUS`). It is a cloud sync root using the Windows Cloud Files API, the mechanism OneDrive uses; no driver is installed. The code is in `crates/nexus-vdrive`.
 
-- Folders are listed when first opened; files download from their device when an app reads them (16 MiB read-ahead), through the node's own peer proxy.
-- Right-click → **Always keep on this device** downloads and keeps files; **Free up space** makes them cloud-only again. Explorer's Status column shows cloud / available / always available / syncing.
-- Changes on a device appear within about a minute (checked on the device's presence heartbeat). A device that cannot be reached is marked "Device offline"; its cloud-only files fail to open with a "network unavailable" error, never as empty files.
-- **Read-only for now.** Deleting, renaming or moving items is refused. Files you edit or add inside the drive stay on this computer (shown "Sync pending"), are never sent back, and are never overwritten.
-- Turning the drive off (or moving it) unregisters it and deletes its placeholders and downloaded copies, keeping anything you changed or added there.
-- Not yet: this computer's own storage locations (already on disk), writing back, and pushed change notifications from devices (they are polled).
+- **Layout.** `My Files\<device>\<storage location>\...` holds this computer and every paired device; `Shared With Me\<folder> (<device>)\...` holds folders other devices shared with this one.
+- **Opening files.** Folders are listed when first opened; files download from their device when an app reads them (16 MiB read-ahead), through the node's own peer proxy.
+- **Changing files.** Edited and new files are sent back to their device once the program that wrote them closes them (the device keeps the earlier content as a version); new folders, renames, moves and deletes are carried out there too, deletes going to that device's trash. What a device does not allow (a read-only location, a viewer's access) is refused in Explorer.
+- **Keeping files.** Right-click → **Always keep on this device** downloads and keeps files; **Free up space** makes them cloud-only again. Explorer's Status column shows cloud / available / always available / syncing.
+- **Offline cache.** Other downloaded files form a cache: up to 20 GB by default, files not opened for 30 days are cleared, and files opened often stay downloaded and are fetched again when they change. All three can be changed under Settings → Virtual drive.
+- **Changes from devices** arrive within seconds (each device is asked for its changes and answers as soon as something changes). A device that cannot be reached is marked "Device offline"; its cloud-only files fail to open with a "network unavailable" error, never as empty files.
+- Turning the drive off (or moving it) unregisters it and deletes its placeholders and downloaded copies, keeping anything you changed there that was not sent back yet.
 
 ## Windows installer
 
@@ -316,6 +381,7 @@ Following the product spec's phases. Each phase ships a working application.
 - [x] **Phase 4 — Multi-node storage:** search across all devices, copying files and folders between devices, resumable uploads and copies
 - [x] **Phase 5 — Synchronization:** one-way and two-way folder sync, conflict copies, version history (no real-time change journal yet: devices are checked every five minutes)
 - [x] **Phase 6 — Sharing and security:** accounts with roles, per-device and per-person storage access, shared folders and drop folders, comments, end-to-end encrypted share links, two-step sign-in, passkeys, locked accounts and blocked devices
+- [x] **Beyond the spec's phases:** photos, music and films; document text and tags; rules and suggestions; WebDAV, S3 and tokens for programs; encrypted folders; plugins; Wake-on-LAN and remote commands
 - [ ] **Phase 7 — Release:** Windows installer, start-with-Windows and updates between your devices are done; a store-signed Android release is not
 
 ## Documentation

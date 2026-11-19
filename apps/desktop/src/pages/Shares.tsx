@@ -4,6 +4,8 @@ import { api, fileApi, isMobile, peerPrefix, thisDevice, type SharedFolder, type
 import { navigate } from '../hooks/useRoute'
 import { useSession } from '../stores/session'
 import { AccessBadge, ACCESS, ShareFolderDialog } from '../components/FolderSharing'
+import { GroupsSection } from '../components/Groups'
+import { UploadLinksSection } from '../components/UploadLinks'
 import { useResource } from '../hooks/useResource'
 import { formatBytes, formatRelative } from '../lib/format'
 import { copyText } from '../components/Pairing'
@@ -191,8 +193,8 @@ function SharedWithYou() {
 }
 
 /** Every shared folder on this computer, for owners and administrators. */
-function SharedFolders() {
-  const folders = useResource(() => api.sharedFolders(), [])
+function SharedFolders({ version }: { version: number }) {
+  const folders = useResource(() => api.sharedFolders(), [version])
   const [editing, setEditing] = useState<SharedFolder | null>(null)
   const list = folders.data ?? []
   return (
@@ -239,9 +241,11 @@ function SharedFolders() {
                       title={m.note ?? ACCESS[m.access].hint}
                       className="flex items-center gap-1.5 rounded-md border border-line bg-elevated px-2 py-0.5 text-[12px]"
                     >
-                      {m.kind === 'device' ? <Monitor className="size-3 text-subtle" /> : <User className="size-3 text-subtle" />}
+                      {m.kind === 'device' ? <Monitor className="size-3 text-subtle" />
+                        : m.kind === 'group' ? <Users className="size-3 text-subtle" />
+                        : <User className="size-3 text-subtle" />}
                       {m.name}
-                      <span className={m.note ? 'text-warn' : 'text-subtle'}>· {ACCESS[m.access].label.toLowerCase()}</span>
+                      <span className={m.note && m.kind !== 'group' ? 'text-warn' : 'text-subtle'}>· {ACCESS[m.access].label.toLowerCase()}</span>
                     </li>
                   ))}
                 </ul>
@@ -315,6 +319,7 @@ export function Shares() {
   const manager = phase.kind === 'ready' && (phase.me.role === 'owner' || phase.me.role === 'administrator')
   const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'))
   const peers = (devices.data ?? []).filter((d) => !d.is_local && d.online)
+  const [version, setVersion] = useState(0)
   const sources: Source[] = [
     ...(isMobile() ? [] : [{ id: '', name: `This ${thisDevice()}` }]),
     ...peers.map((d) => ({ id: d.id, name: d.name })),
@@ -329,7 +334,9 @@ export function Shares() {
       {!isMobile() && (
         <div className="mb-8 space-y-8">
           <SharedWithYou />
-          {manager && <SharedFolders />}
+          {manager && <SharedFolders version={version} />}
+          {manager && <GroupsSection onChanged={() => setVersion((v) => v + 1)} />}
+          <UploadLinksSection />
         </div>
       )}
       {!isMobile() && <h2 className={heading}>Links</h2>}

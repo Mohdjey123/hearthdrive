@@ -93,6 +93,12 @@ pub fn spawn_server(state: SharedState, app: Router) {
 }
 
 async fn serve_connection(state: SharedState, app: Router, conn: Connection) {
+    state.net.p2p.track(&conn);
+    serve_streams(&state, app, &conn).await;
+    state.net.p2p.untrack(&conn);
+}
+
+async fn serve_streams(state: &SharedState, app: Router, conn: &Connection) {
     let remote = key_string(&conn.remote_id());
     let mut enabled = state.net.watch_enabled();
     loop {

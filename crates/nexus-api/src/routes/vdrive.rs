@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::{ConnectInfo, State};
 use nexus_common::NexusError;
 use nexus_security::Action;
-use nexus_vdrive::{ENABLED_SETTING, PATH_SETTING, Status, check_path};
+use nexus_vdrive::{CACHE_SETTING, CacheSettings, ENABLED_SETTING, PATH_SETTING, Status, check_path};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -18,6 +18,31 @@ pub async fn saved(s: &AppState) -> nexus_common::Result<(bool, Option<PathBuf>)
     let enabled = s.db.get_setting(ENABLED_SETTING).await?.is_some_and(|v| v == "1");
     let path = s.db.get_setting(PATH_SETTING).await?.filter(|p| !p.trim().is_empty()).map(PathBuf::from);
     Ok((enabled, path))
+}
+
+/// The saved offline cache settings.
+pub async fn saved_cache(s: &AppState) -> CacheSettings {
+    s.db.get_setting(CACHE_SETTING)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_str(&v).ok())
+        .unwrap_or_default()
+}
+
+/// `PUT /vdrive/cache`: the offline cache's size limit and clearing.
+pub async fn set_cache(
+    State(s): State<SharedState>,
+    user: AuthUser,
+    Json(body): Json<CacheSettings>,
+) -> ApiResult<Json<Status>> {
+    user.require_person()?;
+    user.require(Action::ManageStorage)?;
+    let settings = body.validate().map_err(NexusError::invalid)?;
+    s.db.set_setting(CACHE_SETTING, &serde_json::to_string(&settings).map_err(|e| NexusError::internal(e.to_string()))?).await?;
+    s.vdrive.set_cache(settings);
+    audit(&s, &user, "vdrive.cache", None).await;
+    Ok(Json(s.vdrive.status()))
 }
 
 /// `GET /vdrive`: whether the drive is on, where, and whether it runs.

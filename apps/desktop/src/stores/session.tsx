@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { clearCache, setCacheScope } from '../lib/cache'
 import { api, ApiError, initConnection, onUnauthorized, setSessionToken, type Me } from '../services/api'
 import { startEvents, stopEvents } from '../services/events'
+import { startNotifications } from '../services/notify'
 
 type Phase =
   | { kind: 'loading' }
@@ -41,6 +42,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setCacheScope(me.username)
         setPhase({ kind: 'ready', me, nodeName: status.node_name })
         startEvents()
+        startNotifications()
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
           setSessionToken(null)

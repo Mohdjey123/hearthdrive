@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  Ban, FolderOpen, Laptop, Link2, Monitor, Network, QrCode, RefreshCw, ShieldCheck, Smartphone, Trash2,
+  ArrowDown, ArrowUp, Ban, FolderOpen, Laptop, Link2, Monitor, Network, Power, QrCode, TerminalSquare, RefreshCw, ShieldCheck, Smartphone, Trash2, Wifi,
 } from 'lucide-react'
-import { api, isMobile, thisDevice, type Device, type NetworkInfo, type Role, type StorageRoot } from '../services/api'
+import { api, isMobile, thisDevice, type Device, type NearbyDevice, type NetworkInfo, type Role, type StorageRoot } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { navigate } from '../hooks/useRoute'
 import { formatBytes, formatRelative } from '../lib/format'
@@ -292,8 +292,20 @@ function DeviceCard({ d, introducer, onRemove, onBlock }: {
             <StatusDot tone={d.blocked_at !== null ? 'error' : d.online ? 'online' : 'offline'} />
             {d.blocked_at !== null ? `Blocked ${formatRelative(d.blocked_at)}: nothing goes to or from it` : d.is_local ? 'Online' : d.online ? `Online${d.latency_ms != null ? ` · ${d.latency_ms} ms` : ''}` : d.last_seen ? `Offline · seen ${formatRelative(d.last_seen)}` : 'Offline · not seen yet'}
           </div>
+          {!d.is_local && d.online && (d.rx_bps > 0 || d.tx_bps > 0) && (
+            <div className="mt-0.5 flex items-center gap-2 text-[12px] tabular text-muted" title="Traffic with this device right now">
+              <span className="flex items-center gap-0.5"><ArrowDown className="size-3" />{formatBytes(d.rx_bps)}/s</span>
+              <span className="flex items-center gap-0.5"><ArrowUp className="size-3" />{formatBytes(d.tx_bps)}/s</span>
+            </div>
+          )}
         </div>
       </div>
+      {!d.is_local && !d.online && d.blocked_at === null && d.unreachable && (
+        <div className="mt-3 rounded-md bg-elevated px-3 py-2 text-[12px] text-muted" title={d.unreachable.detail}>
+          {d.unreachable.reason}
+          <div className="mt-0.5 text-subtle">Unreachable since {formatRelative(d.unreachable.since)}</div>
+        </div>
+      )}
       <dl className="mt-4 grid grid-cols-2 gap-3 text-[12px]">
         {d.is_local ? (
           <>
@@ -357,6 +369,7 @@ function DeviceCard({ d, introducer, onRemove, onBlock }: {
           {d.blocked_at === null ? (
             <>
               <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => navigate('files', { device: d.id })}>Browse files</Button>
+              {d.online && <CommandsButton d={d} />}
               <Button size="sm" variant="ghost" className="ml-auto hover:text-danger" icon={<Ban className="size-3.5" />} onClick={() => onBlock(d, true)}>
                 Block
               </Button>
@@ -364,12 +377,131 @@ function DeviceCard({ d, introducer, onRemove, onBlock }: {
           ) : (
             <Button size="sm" icon={<Ban className="size-3.5" />} onClick={() => onBlock(d, false)}>Unblock</Button>
           )}
+          {d.blocked_at === null && !d.online && d.can_wake && <WakeButton d={d} />}
           <Button size="sm" variant="ghost" className={d.blocked_at === null ? 'hover:text-danger' : 'ml-auto hover:text-danger'} icon={<Trash2 className="size-3.5" />} onClick={() => onRemove(d)}>
             Remove
           </Button>
         </div>
       )}
       {editingAccess && <AccessModal device={d} onClose={() => setEditingAccess(false)} />}
+    </div>
+  )
+}
+
+/** Runs one of the fixed commands on a paired device. */
+function CommandsButton({ d }: { d: Device }) {
+  const [open, setOpen] = useState(false)
+  const [list, setList] = useState<{ name: string; label: string; description: string }[] | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    if (!open || list) return
+    api.deviceCommands(d.id).then(setList).catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }, [open])
+  const run = async (name: string) => {
+    setBusy(name)
+    try {
+      const r = await api.runCommand(d.id, name)
+      toast(`${d.name}: ${r.message}`)
+      setOpen(false)
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(null)
+    }
+  }
+  return (
+    <>
+      <Button size="sm" variant="ghost" icon={<TerminalSquare className="size-3.5" />} onClick={() => setOpen(true)}>Commands</Button>
+      <Modal open={open} onClose={() => setOpen(false)} title={`Run on ${d.name}`}>
+        {error ? (
+          <ErrorNote>{error}</ErrorNote>
+        ) : !list ? (
+          <Spinner />
+        ) : (
+          <ul className="divide-y divide-line">
+            {list.map((c) => (
+              <li key={c.name} className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">{c.label}</div>
+                  <div className="text-[12px] text-subtle">{c.description}</div>
+                </div>
+                <Button size="sm" loading={busy === c.name} disabled={busy !== null} onClick={() => void run(c.name)}>Run</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
+    </>
+  )
+}
+
+/** Wakes a sleeping computer over the network. */
+function WakeButton({ d }: { d: Device }) {
+  const [busy, setBusy] = useState(false)
+  const wake = async () => {
+    setBusy(true)
+    try {
+      const r = await api.wakeDevice(d.id)
+      toast(
+        r.relayed_by.length
+          ? `Asked ${d.name} to wake up, from here and from ${r.relayed_by.join(', ')}`
+          : `Asked ${d.name} to wake up. It wakes only if it is on the same network and Wake-on-LAN is on in its settings.`,
+      )
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <Button size="sm" icon={<Power className="size-3.5" />} loading={busy} onClick={() => void wake()}>Wake</Button>
+}
+
+/** NEXUS devices on the same local network, and pairing with them. */
+function NearbyPanel({ onPair }: { onPair: (link: string) => void }) {
+  const [list, setList] = useState<NearbyDevice[] | null>(null)
+  useEffect(() => {
+    let live = true
+    const load = () => api.nearbyDevices().then((l) => live && setList(l)).catch(() => live && setList([]))
+    load()
+    const poll = setInterval(load, 4000)
+    return () => {
+      live = false
+      clearInterval(poll)
+    }
+  }, [])
+  if (!list || list.length === 0) return null
+  return (
+    <div className="mt-4">
+      <Panel title="On this network">
+        <ul className="divide-y divide-line">
+          {list.map((n) => {
+            const Icon = deviceIcon(n.device_type)
+            return (
+              <li key={n.id} className="flex items-center gap-3 py-2.5">
+                <Icon className="size-4 shrink-0 text-muted" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{n.name}</div>
+                  <div className="truncate text-[12px] text-subtle">
+                    <span className="font-mono">{n.address}</span>
+                    {n.fingerprint && <> · <FingerprintText value={n.fingerprint} className="text-[11px]" /></>}
+                  </div>
+                </div>
+                {n.paired ? (
+                  <Badge>Paired</Badge>
+                ) : n.invite ? (
+                  <Button size="sm" variant="primary" icon={<Link2 className="size-3.5" />} onClick={() => onPair(n.invite!)}>Pair</Button>
+                ) : (
+                  <span className="max-w-[220px] text-right text-[12px] text-subtle">To pair, open Devices → Add device on it</span>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+        <p className="mt-2 flex items-center gap-1.5 text-[12px] text-subtle">
+          <Wifi className="size-3.5" /> Compare the fingerprint with the one the other device shows before you approve.
+        </p>
+      </Panel>
     </div>
   )
 }
@@ -383,6 +515,16 @@ export function Devices() {
   const [removing, setRemoving] = useState<Device | null>(null)
   const [blocking, setBlocking] = useState<Device | null>(null)
   const [busy, setBusy] = useState(false)
+  const [nearbyLink, setNearbyLink] = useState<string | undefined>(undefined)
+
+  // Traffic rates are measured between two looks: look again while a
+  // paired device is online.
+  const anyOnline = (devices.data ?? []).some((d) => !d.is_local && d.online)
+  useEffect(() => {
+    if (!anyOnline) return
+    const poll = setInterval(() => devices.reload(), 3000)
+    return () => clearInterval(poll)
+  }, [anyOnline])
 
   const setBlocked = async (d: Device, blocked: boolean) => {
     setBusy(true)
@@ -453,6 +595,8 @@ export function Devices() {
         </div>
       )}
 
+      <NearbyPanel onPair={(link) => { setNearbyLink(link); setJoining(true) }} />
+
       <IntroductionsToggle />
 
       <div className="mt-4"><NetworkPanel /></div>
@@ -466,7 +610,7 @@ export function Devices() {
       </div>
 
       <InviteModal open={inviting} onClose={() => { setInviting(false); requests.reload(); devices.reload() }} />
-      <JoinModal open={joining} onClose={() => { setJoining(false); devices.reload() }} />
+      <JoinModal open={joining} link={nearbyLink} onClose={() => { setJoining(false); setNearbyLink(undefined); devices.reload() }} />
       <Modal
         open={!!blocking}
         onClose={() => setBlocking(null)}

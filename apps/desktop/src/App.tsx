@@ -7,6 +7,10 @@ import { Toasts } from './components/Toasts'
 import { Button, Spinner } from './components/ui'
 import { Overview } from './pages/Overview'
 import { Files } from './pages/Files'
+import { Duplicates } from './pages/Duplicates'
+import { Automation } from './pages/Automation'
+import { Photos } from './pages/Photos'
+import { Media } from './pages/Media'
 import { Storage } from './pages/Storage'
 import { Devices } from './pages/Devices'
 import { Transfers } from './pages/Transfers'
@@ -34,6 +38,10 @@ function Shell() {
         <UpdateBanner />
         {page === 'overview' && <Overview />}
         {page === 'files' && <Files route={route} />}
+        {page === 'duplicates' && <Duplicates route={route} />}
+        {page === 'automation' && <Automation />}
+        {page === 'photos' && <Photos route={route} />}
+        {page === 'media' && <Media route={route} />}
         {page === 'storage' && <Storage route={route} />}
         {page === 'devices' && <Devices />}
         {page === 'sync' && <Sync />}

@@ -31,6 +31,10 @@ pub struct AuthUser {
     /// above, never beyond what the role allows.
     #[serde(skip)]
     pub shared: Vec<FolderGrant>,
+    /// Signed in with a token for programs: such a caller may not manage
+    /// people, tokens or sign-in.
+    #[serde(skip)]
+    pub via_token: bool,
 }
 
 /// What a request does with a path, for checking it against shared folders.
@@ -44,6 +48,25 @@ pub enum Need {
     Change,
     /// Add something new (a folder or a file under a free name).
     Add,
+}
+
+/// One grant per shared folder: someone given a folder both directly and
+/// through a group gets the most it allows (edit, then view, then add).
+fn strongest(grants: Vec<FolderGrant>) -> Vec<FolderGrant> {
+    let rank = |a: FolderAccess| match a {
+        FolderAccess::Edit => 3,
+        FolderAccess::View => 2,
+        FolderAccess::Add => 1,
+    };
+    let mut out: Vec<FolderGrant> = Vec::with_capacity(grants.len());
+    for g in grants {
+        match out.iter_mut().find(|o| o.folder_id == g.folder_id) {
+            Some(o) if rank(g.access) > rank(o.access) => *o = g,
+            Some(_) => {}
+            None => out.push(g),
+        }
+    }
+    out
 }
 
 /// Whether `path` is `base` or inside it. Paths are case-insensitive.
@@ -67,17 +90,23 @@ impl AuthUser {
             device_id: None,
             allowed_roots,
             shared: Vec::new(),
+            via_token: false,
         }
     }
 
-    /// Adds the folders shared with this person or device.
+    /// Adds the folders shared with this person (directly or through a
+    /// group they are in) or device.
     pub async fn with_shared(mut self, state: &AppState) -> Result<Self> {
-        let member = match (&self.device_id, &self.user_id) {
-            (Some(device), _) => format!("device:{device}"),
-            (None, Some(user)) if !self.local => format!("user:{user}"),
+        let members = match (&self.device_id, &self.user_id) {
+            (Some(device), _) => vec![format!("device:{device}")],
+            (None, Some(user)) if !self.local => {
+                let mut members = vec![format!("user:{user}")];
+                members.extend(state.db.groups_of_user(user).await?.into_iter().map(|g| format!("group:{g}")));
+                members
+            }
             _ => return Ok(self),
         };
-        self.shared = state.db.grants_for(&[member]).await?;
+        self.shared = strongest(state.db.grants_for(&members).await?);
         Ok(self)
     }
 
@@ -192,6 +221,9 @@ pub fn bearer(headers: &HeaderMap) -> Option<&str> {
 }
 
 pub async fn authenticate(state: &AppState, token: &str) -> Result<AuthUser> {
+    if token.starts_with(crate::tokens::PREFIX) {
+        return crate::tokens::authenticate(state, token).await;
+    }
     if token_matches(token, &state.local_token) {
         let owner = state.db.first_owner().await?;
         return Ok(AuthUser {
@@ -202,6 +234,7 @@ pub async fn authenticate(state: &AppState, token: &str) -> Result<AuthUser> {
             device_id: None,
             allowed_roots: None,
             shared: Vec::new(),
+            via_token: false,
         });
     }
     match state.db.session_user(&hash_token(token)).await? {
@@ -277,6 +310,7 @@ pub async fn authenticate_device(state: &AppState, signed: &SignedHeaders, via: 
         allowed_roots: narrow(device.allowed_root_list(), acting_roots.clone()),
         device_id: Some(device.id),
         shared: Vec::new(),
+        via_token: false,
     }
     .with_shared(state)
     .await?;
@@ -308,7 +342,11 @@ impl FromRequestParts<SharedState> for AuthUser {
 
     async fn from_request_parts(parts: &mut Parts, state: &SharedState) -> Result<Self, Self::Rejection> {
         if let Some(token) = bearer(&parts.headers) {
-            return Ok(authenticate(state, token).await?);
+            let user = authenticate(state, token).await?;
+            if user.via_token && crate::tokens::forbidden_path(&original_path_and_query(parts)) {
+                return Err(NexusError::PermissionDenied("Tokens for programs cannot manage people, tokens, pairing or sign-in".into()).into());
+            }
+            return Ok(user);
         }
         if parts.headers.contains_key(HDR_DEVICE) {
             // Device requests are only accepted over the peer-to-peer network.
@@ -347,6 +385,7 @@ mod tests {
             device_id: None,
             allowed_roots: Some(vec![]),
             shared,
+            via_token: false,
         }
     }
 

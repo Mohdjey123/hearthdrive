@@ -26,6 +26,7 @@ use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use futures_util::StreamExt;
+use http_body_util::{BodyExt, Limited};
 use nexus_common::events::Event;
 use nexus_common::time::now_ms;
 use nexus_common::types::FileEntry;
@@ -42,6 +43,13 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 /// How often one file is tried again after its connection drops.
 const RETRIES: u32 = 8;
+/// Files at least this big are downloaded from several devices when they can.
+const MULTI_SOURCE_MIN: u64 = 16 * 1024 * 1024;
+/// The pieces of such downloads, and how long one may take.
+const PIECE_SIZE: u64 = 8 * 1024 * 1024;
+const PIECE_TIMEOUT: Duration = Duration::from_secs(120);
+const MAX_SOURCES: usize = 4;
+const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Folder listings can be large.
 const MAX_TREE: usize = 256 * 1024 * 1024;
 const TREE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -98,7 +106,7 @@ pub struct Job {
 
 #[derive(Serialize)]
 pub struct JobView {
-    id: String,
+    pub(crate) id: String,
     kind: &'static str,
     route: String,
     by: String,
@@ -111,7 +119,7 @@ pub struct JobView {
 }
 
 impl Job {
-    fn view(&self) -> JobView {
+    pub(crate) fn view(&self) -> JobView {
         let can_retry = self.finished() && self.retry.lock().unwrap().as_ref().is_some_and(|r| !r.files.is_empty());
         JobView {
             id: self.id.clone(),
@@ -189,11 +197,21 @@ pub struct TransferSettings {
     pub hours_start: Option<String>,
     #[serde(default)]
     pub hours_end: Option<String>,
+    /// Transfers wait while this computer runs on battery.
+    #[serde(default = "yes")]
+    pub pause_on_battery: bool,
+    /// This computer does not go to sleep while transfers run.
+    #[serde(default = "yes")]
+    pub keep_awake: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for TransferSettings {
     fn default() -> Self {
-        Self { parallel: 2, limit_kbps: 0, hours_start: None, hours_end: None }
+        Self { parallel: 2, limit_kbps: 0, hours_start: None, hours_end: None, pause_on_battery: true, keep_awake: true }
     }
 }
 
@@ -237,7 +255,10 @@ impl TransferSettings {
         Ok(self)
     }
 
-    fn hours_note(&self) -> Option<String> {
+    fn hours_note(&self, on_battery: bool) -> Option<String> {
+        if on_battery && self.pause_on_battery {
+            return Some("Waits for this computer to be plugged in".into());
+        }
         Some(format!("Waits for transfer hours, {}–{}", self.hours_start.as_deref()?, self.hours_end.as_deref()?))
     }
 }
@@ -281,13 +302,20 @@ impl RateLimit {
 pub struct Shared {
     settings: Mutex<TransferSettings>,
     limit: RateLimit,
-    /// Whether it is within transfer hours (looked at every few seconds).
+    /// Whether it is within transfer hours (looked at every few seconds),
+    /// and not on battery when that pauses transfers.
     in_hours: AtomicBool,
+    on_battery: AtomicBool,
 }
 
 impl Default for Shared {
     fn default() -> Self {
-        Self { settings: Mutex::new(TransferSettings::default()), limit: RateLimit::default(), in_hours: AtomicBool::new(true) }
+        Self {
+            settings: Mutex::new(TransferSettings::default()),
+            limit: RateLimit::default(),
+            in_hours: AtomicBool::new(true),
+            on_battery: AtomicBool::new(false),
+        }
     }
 }
 
@@ -381,17 +409,23 @@ impl Jobs {
     /// Applies new settings and lets waiting jobs look again.
     pub fn apply(&self, settings: TransferSettings) {
         self.shared.limit.set(settings.limit_kbps.saturating_mul(1024));
-        self.shared.in_hours.store(settings.allows(local_minutes()), Ordering::Relaxed);
+        let battery = self.shared.on_battery.load(Ordering::Relaxed) && settings.pause_on_battery;
+        self.shared.in_hours.store(settings.allows(local_minutes()) && !battery, Ordering::Relaxed);
         *self.shared.settings.lock().unwrap() = settings;
         self.wake.notify_waiters();
     }
 
-    /// Looks at the clock for transfer hours.
-    fn tick(&self) {
-        let allowed = self.shared.settings.lock().unwrap().allows(local_minutes());
+    /// Looks at the clock for transfer hours, and at the power supply.
+    fn tick(&self, on_battery: bool) {
+        self.shared.on_battery.store(on_battery, Ordering::Relaxed);
+        let settings = self.shared.settings.lock().unwrap().clone();
+        let allowed = settings.allows(local_minutes()) && !(on_battery && settings.pause_on_battery);
         if self.shared.in_hours.swap(allowed, Ordering::Relaxed) != allowed {
             self.wake.notify_waiters();
         }
+        // Stay awake while something runs.
+        let busy = *self.running.lock().unwrap() > 0;
+        crate::power::keep_awake(busy && settings.keep_awake);
     }
 
     /// Whether `job` is first in line among the jobs waiting to run.
@@ -433,7 +467,7 @@ impl Jobs {
             let (status, note) = if job.is_paused() {
                 ("paused", None)
             } else if !in_hours {
-                ("queued", settings.hours_note())
+                ("queued", settings.hours_note(self.shared.on_battery.load(Ordering::Relaxed)))
             } else {
                 ("queued", None)
             };
@@ -491,6 +525,21 @@ impl Jobs {
         true
     }
 
+    /// Pauses or resumes every unfinished job. Returns how many changed.
+    pub fn pause_all(&self, s: &AppState, on: bool) -> usize {
+        let jobs: Vec<Arc<Job>> = self.list.lock().unwrap().iter().filter(|j| !j.finished() && j.is_paused() != on).cloned().collect();
+        for job in &jobs {
+            self.pause(job, on);
+            let status = job.info.lock().unwrap().status.clone();
+            match (on, status.as_str()) {
+                (true, "queued") => set_status(s, job, "paused"),
+                (false, "paused") => set_status(s, job, "queued"),
+                _ => {}
+            }
+        }
+        jobs.len()
+    }
+
     fn pause(&self, job: &Job, on: bool) {
         job.paused.store(on, Ordering::Relaxed);
         self.wake.notify_waiters();
@@ -513,8 +562,9 @@ pub fn spawn(s: SharedState) {
             s.jobs.apply(settings);
         }
         loop {
-            s.jobs.tick();
-            tokio::time::sleep(Duration::from_secs(15)).await;
+            let on_battery = tokio::task::spawn_blocking(crate::power::on_battery).await.unwrap_or(false);
+            s.jobs.tick(on_battery);
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
     });
 }
@@ -637,7 +687,7 @@ fn cancelled() -> NexusError {
 }
 
 /// Reads a local file from `offset` as a stream of chunks.
-fn file_body(file: tokio::fs::File) -> Body {
+fn file_body<R: tokio::io::AsyncRead + Unpin + Send + 'static>(file: R) -> Body {
     Body::from_stream(futures_util::stream::unfold(file, |mut file| async move {
         let mut buf = vec![0u8; 256 * 1024];
         match file.read(&mut buf).await {
@@ -793,6 +843,32 @@ impl Mover<'_> {
 
     /// Opens a file's content from `offset`.
     pub(crate) async fn open(&self, side: &Side, file_id: &str, offset: u64) -> Result<Body> {
+        self.open_range(side, file_id, offset, None).await
+    }
+
+    /// Reads bytes `start..end` of a file whole (one piece of a download
+    /// from several devices).
+    async fn read_range(&self, side: &Side, file_id: &str, start: u64, end: u64) -> Result<Bytes> {
+        let read = async {
+            let body = self.open_range(side, file_id, start, Some(end)).await?;
+            let limit = (end - start) as usize;
+            let bytes = Limited::new(body, limit + 1)
+                .collect()
+                .await
+                .map_err(|e| NexusError::PeerUnreachable(format!("{}: {e}", side.name())))?
+                .to_bytes();
+            if bytes.len() != limit {
+                return Err(NexusError::PeerUnreachable(format!("{} sent part of the file only", side.name())));
+            }
+            Ok(bytes)
+        };
+        tokio::time::timeout(PIECE_TIMEOUT, read)
+            .await
+            .unwrap_or_else(|_| Err(NexusError::PeerUnreachable(format!("{} was too slow", side.name()))))
+    }
+
+    /// Opens a file's content from `offset`, up to `end` (exclusive) if given.
+    async fn open_range(&self, side: &Side, file_id: &str, offset: u64, end: Option<u64>) -> Result<Body> {
         match side {
             Side::Local => {
                 self.user.require(Action::Read).map_err(|e| e.0)?;
@@ -808,7 +884,10 @@ impl Mover<'_> {
                 if offset > 0 {
                     handle.seek(std::io::SeekFrom::Start(offset)).await?;
                 }
-                Ok(file_body(handle))
+                match end {
+                    Some(end) => Ok(file_body(handle.take(end.saturating_sub(offset)))),
+                    None => Ok(file_body(handle)),
+                }
             }
             Side::Peer(t) => {
                 let link: serde_json::Value =
@@ -817,8 +896,13 @@ impl Mover<'_> {
                     .as_str()
                     .ok_or_else(|| NexusError::PeerUnreachable(format!("{} sent an unexpected reply", t.name)))?;
                 let mut headers = HeaderMap::new();
-                if offset > 0 {
-                    headers.insert(header::RANGE, HeaderValue::from_str(&format!("bytes={offset}-")).map_err(NexusError::internal)?);
+                let range = match end {
+                    Some(end) => Some(format!("bytes={offset}-{}", end.saturating_sub(1))),
+                    None if offset > 0 => Some(format!("bytes={offset}-")),
+                    None => None,
+                };
+                if let Some(range) = range {
+                    headers.insert(header::RANGE, HeaderValue::from_str(&range).map_err(NexusError::internal)?);
                 }
                 let (res, _) = self.s.peers.send(t, Method::GET, url, headers, Body::empty(), self.acting(), CALL_TIMEOUT).await?;
                 let status = res.status();
@@ -826,7 +910,7 @@ impl Mover<'_> {
                     let bytes = read_body(res).await.unwrap_or_default();
                     return Err(peer_error(&t.name, status, &bytes));
                 }
-                if offset > 0 && status != StatusCode::PARTIAL_CONTENT {
+                if (offset > 0 || end.is_some()) && status != StatusCode::PARTIAL_CONTENT {
                     return Err(NexusError::PeerUnreachable(format!("{} could not continue from the middle of the file", t.name)));
                 }
                 Ok(Body::new(res.into_body()))
@@ -894,7 +978,17 @@ impl Mover<'_> {
     /// drops. Returns the file as it now exists at the destination.
     pub async fn send_file(&self, job: &Arc<Job>, from: &Side, src: &Meta, to: &Side, req: NewUpload) -> Result<Meta> {
         let source = Source::Item(from, &src.id);
-        let placed = self.send_from(job, &src.filename, &source, to, req).await?;
+        let placed = match self.other_copies(from, src, to).await {
+            Some(sources) => match self.send_pieces(job, &src.filename, &sources, to, req.clone()).await {
+                Ok(placed) => placed,
+                Err(e) if job.is_cancelled() => return Err(e),
+                Err(e) => {
+                    tracing::info!(file = %src.filename, error = %e, "download from several devices stopped; continuing from one");
+                    self.send_from(job, &src.filename, &source, to, req).await?
+                }
+            },
+            None => self.send_from(job, &src.filename, &source, to, req).await?,
+        };
         let Some(want) = src.content_hash.as_deref() else { return Ok(placed) };
         if placed.content_hash.as_deref() == Some(want) {
             job.update(|i| i.verified += 1);
@@ -922,6 +1016,93 @@ impl Mover<'_> {
             Err(NexusError::Conflict(
                 "The copy differs from the original (BLAKE3). The original may have changed while it was copied".into(),
             ))
+        }
+    }
+
+    /// For a big file coming from a paired device to this computer: the same
+    /// content on other online devices, to fetch parts of it from each.
+    /// `None` when there is only the one source.
+    async fn other_copies(&self, from: &Side, src: &Meta, to: &Side) -> Option<Vec<(Side, String)>> {
+        let (Side::Peer(origin), Side::Local) = (from, to) else { return None };
+        let hash = src.content_hash.as_deref()?;
+        if (src.size as u64) < MULTI_SOURCE_MIN {
+            return None;
+        }
+        let devices = self.s.db.list_peer_devices().await.ok()?;
+        let candidates: Vec<Target> = devices
+            .iter()
+            .filter(|d| d.id != origin.device_id && d.status == "online" && d.blocked_at.is_none())
+            .filter_map(|d| Target::of(d).ok())
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let url = format!("/api/v1/files/by-hash/{hash}?size={}", src.size);
+        let found = futures_util::future::join_all(candidates.into_iter().map(|t| {
+            let url = url.clone();
+            async move {
+                let meta: Meta = self.json(&t, Method::GET, &url, None::<&()>, LOOKUP_TIMEOUT).await.ok()?;
+                (meta.size == src.size && meta.content_hash.as_deref() == Some(hash)).then(|| (Side::Peer(t), meta.id))
+            }
+        }))
+        .await;
+        let mut sources = vec![(from.clone(), src.id.clone())];
+        sources.extend(found.into_iter().flatten().take(MAX_SOURCES - 1));
+        (sources.len() > 1).then_some(sources)
+    }
+
+    /// Downloads a file in pieces from several devices at once, writing the
+    /// pieces in order. A piece one device fails to send is fetched from the
+    /// first device instead.
+    async fn send_pieces(&self, job: &Arc<Job>, label: &str, sources: &[(Side, String)], to: &Side, req: NewUpload) -> Result<Meta> {
+        let base = job.bytes();
+        let size = req.size;
+        let up = self.begin(to, &req).await?;
+        tracing::info!(file = %label, sources = sources.len(), "downloading from several devices");
+        let result = async {
+            let mut offset = 0u64;
+            while offset < size {
+                if job.is_cancelled() {
+                    return Err(cancelled());
+                }
+                if job.must_stop() {
+                    return Err(NexusError::Unavailable("Paused".into()));
+                }
+                let pieces: Vec<(u64, u64)> = (0..sources.len() as u64 * 2)
+                    .map(|i| offset + i * PIECE_SIZE)
+                    .take_while(|start| *start < size)
+                    .map(|start| (start, (start + PIECE_SIZE).min(size)))
+                    .collect();
+                let fetched = futures_util::future::join_all(pieces.iter().enumerate().map(|(i, &(start, end))| {
+                    let (side, id) = &sources[i % sources.len()];
+                    self.read_range(side, id, start, end)
+                }))
+                .await;
+                for (&(start, end), piece) in pieces.iter().zip(fetched) {
+                    let bytes = match piece {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            tracing::debug!(file = %label, error = %e, "piece failed; asking the first device");
+                            self.read_range(&sources[0].0, &sources[0].1, start, end).await?
+                        }
+                    };
+                    self.append(to, &up.id, start, end - start, counted(Body::from(bytes), job.clone())).await?;
+                    offset = end;
+                }
+            }
+            self.finish(to, &up.id).await
+        }
+        .await;
+        match result {
+            Ok(placed) => {
+                job.set_bytes(base + size);
+                Ok(placed)
+            }
+            Err(e) => {
+                self.abort(to, &up.id).await;
+                job.set_bytes(base);
+                Err(e)
+            }
         }
     }
 
@@ -1032,6 +1213,9 @@ pub struct CopyRequest {
     root_id: String,
     #[serde(default)]
     path: String,
+    /// Move: send the originals to the trash once they are copied.
+    #[serde(default)]
+    remove_originals: bool,
 }
 
 enum Piece {
@@ -1055,9 +1239,26 @@ pub async fn copy(State(s): State<SharedState>, user: AuthUser, Json(req): Json<
     user.require(Action::Write)?;
     let mut ids = req.file_ids.clone();
     ids.extend(req.file_id.clone());
+    let view = start_copy(&s, user, req.from_device.as_deref(), req.to_device.as_deref(), ids, req.root_id, &req.path, req.remove_originals)
+        .await?;
+    Ok((StatusCode::ACCEPTED, Json(view)))
+}
+
+/// Starts a job copying files and folders to a folder on a device (or this
+/// one; `None` or this device's id). Answers at once with the job.
+pub(crate) async fn start_copy(
+    s: &SharedState,
+    user: AuthUser,
+    from_device: Option<&str>,
+    to_device: Option<&str>,
+    mut ids: Vec<String>,
+    root_id: String,
+    path: &str,
+    remove_originals: bool,
+) -> Result<JobView> {
     ids.dedup();
     if ids.is_empty() {
-        return Err(NexusError::invalid("Choose something to copy").into());
+        return Err(NexusError::invalid("Choose something to copy"));
     }
     let side = |id: Option<&str>| {
         let s = s.clone();
@@ -1069,20 +1270,21 @@ pub async fn copy(State(s): State<SharedState>, user: AuthUser, Json(req): Json<
             }
         }
     };
-    let from = side(req.from_device.as_deref()).await?;
-    let to = side(req.to_device.as_deref()).await?;
-    let path = paths::normalize_relative(&req.path)?;
+    let from = side(from_device).await?;
+    let to = side(to_device).await?;
+    let path = paths::normalize_relative(path)?;
 
-    let title = if ids.len() == 1 { "Copy".to_string() } else { format!("Copy {} items", ids.len()) };
+    let verb = if remove_originals { "Move" } else { "Copy" };
+    let title = if ids.len() == 1 { verb.to_string() } else { format!("{verb} {} items", ids.len()) };
     // The title gets the item's name once it has been looked up.
     let route = format!("{} → {}", capitalise(&from.name()), capitalise(&to.name()));
     let job = s.jobs.add("copy", title, route, user.username.clone());
     let view = job.view();
     let state = s.clone();
     tokio::spawn(async move {
-        run_copy(&state, &user, &job, from, to, ids, req.root_id, path).await;
+        run_copy(&state, &user, &job, from, to, ids, root_id, path, remove_originals).await;
     });
-    Ok((StatusCode::ACCEPTED, Json(view)))
+    Ok(view)
 }
 
 fn capitalise(s: &str) -> String {
@@ -1094,7 +1296,17 @@ fn capitalise(s: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_copy(s: &AppState, user: &AuthUser, job: &Arc<Job>, from: Side, to: Side, ids: Vec<String>, root_id: String, path: String) {
+async fn run_copy(
+    s: &AppState,
+    user: &AuthUser,
+    job: &Arc<Job>,
+    from: Side,
+    to: Side,
+    ids: Vec<String>,
+    root_id: String,
+    path: String,
+    remove_originals: bool,
+) {
     let Some(_slot) = s.jobs.start(s, job).await else { return };
     let mover = Mover { s, user };
 
@@ -1130,7 +1342,7 @@ async fn run_copy(s: &AppState, user: &AuthUser, job: &Arc<Job>, from: Side, to:
         i.files_total = files;
         i.bytes_total = bytes;
         if let (Some(name), 1) = (&first, ids.len()) {
-            i.title = format!("Copy {name}");
+            i.title = format!("{} {name}", if remove_originals { "Move" } else { "Copy" });
         }
     });
 
@@ -1146,10 +1358,17 @@ async fn run_copy(s: &AppState, user: &AuthUser, job: &Arc<Job>, from: Side, to:
         }
     };
 
+    // Originals copied without a problem, for a move.
+    let mut copied = Vec::new();
     for piece in pieces {
         if job.is_cancelled() {
             break;
         }
+        let errors_before = job.error_count();
+        let failed_before = failed.lock().unwrap().len();
+        let original = match &piece {
+            Piece::File(m) | Piece::Folder(m, _) => m.id.clone(),
+        };
         match piece {
             Piece::File(meta) => copy_one(meta, path.clone()).await,
             Piece::Folder(meta, items) => {
@@ -1174,6 +1393,16 @@ async fn run_copy(s: &AppState, user: &AuthUser, job: &Arc<Job>, from: Side, to:
                         copy_one(Meta::of_tree(&item, &meta.root_id, &meta.relative_path), dest_parent).await;
                     }
                 }
+            }
+        }
+        if !job.is_cancelled() && job.error_count() == errors_before && failed.lock().unwrap().len() == failed_before {
+            copied.push(original);
+        }
+    }
+    if remove_originals {
+        for id in copied {
+            if let Err(e) = mover.trash(&from, &id).await {
+                job.fail_file(&id, &NexusError::internal(format!("copied, but the original stays: {e}")));
             }
         }
     }

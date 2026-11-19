@@ -2,8 +2,12 @@
 //! tree in File Explorer, independent of Windows.
 //!
 //! ```text
-//! <sync root>\<device name>\<storage location name>\<path on that device>
+//! <sync root>\My Files\<device name>\<storage location name>\<path on that device>
+//! <sync root>\Shared With Me\<shared folder> (<device name>)\<path inside it>
 //! ```
+//!
+//! "My Files" holds this computer (device [`LOCAL`]) and every paired
+//! device; "Shared With Me" the folders other devices shared with this one.
 //!
 //! Every placeholder carries an [`Identity`] (stored by Windows with the
 //! placeholder), so a callback never has to work out from a display name
@@ -15,6 +19,9 @@ use serde::{Deserialize, Serialize};
 /// Windows keeps at most this many bytes of identity per placeholder.
 pub const MAX_IDENTITY: usize = 4096;
 
+/// The device id that stands for this computer itself.
+pub const LOCAL: &str = "local";
+
 /// Version prefix of the identity encoding.
 const IDENTITY_TAG: &[u8] = b"NX1";
 
@@ -22,6 +29,9 @@ const IDENTITY_TAG: &[u8] = b"NX1";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "k")]
 pub enum Identity {
+    /// "My Files" (`mine`) or "Shared With Me" (`shared`).
+    #[serde(rename = "s")]
+    Section { s: String },
     /// A paired device's folder.
     #[serde(rename = "d")]
     Device { dev: String },
@@ -60,6 +70,7 @@ impl Identity {
     /// placeholders with one key are the same item.
     pub fn key(&self) -> String {
         match self {
+            Identity::Section { s } => format!("s:{s}"),
             Identity::Device { dev } => format!("d:{dev}"),
             Identity::Root { root, .. } => format!("r:{root}"),
             Identity::Entry { path, .. } => format!("e:{path}"),
@@ -73,13 +84,14 @@ impl Identity {
     pub fn device(&self) -> &str {
         match self {
             Identity::Device { dev } | Identity::Root { dev, .. } | Identity::Entry { dev, .. } => dev,
+            Identity::Section { .. } => "",
         }
     }
 
     /// The storage location a placeholder is in, if any.
     pub fn root(&self) -> Option<&str> {
         match self {
-            Identity::Device { .. } => None,
+            Identity::Device { .. } | Identity::Section { .. } => None,
             Identity::Root { root, .. } | Identity::Entry { root, .. } => Some(root),
         }
     }
@@ -88,10 +100,26 @@ impl Identity {
     /// its storage location (`""` for the location itself).
     pub fn folder_path(&self) -> Option<&str> {
         match self {
-            Identity::Device { .. } => None,
+            Identity::Device { .. } | Identity::Section { .. } => None,
             Identity::Root { .. } => Some(""),
             Identity::Entry { path, dir: true, .. } => Some(path),
             Identity::Entry { .. } => None,
+        }
+    }
+
+    /// The same item at another path (renamed or moved on its device).
+    pub fn moved_to(&self, new_path: &str) -> Identity {
+        match self {
+            Identity::Entry { dev, root, id, dir, size, mtime, .. } => Identity::Entry {
+                dev: dev.clone(),
+                root: root.clone(),
+                path: new_path.to_string(),
+                id: id.clone(),
+                dir: *dir,
+                size: *size,
+                mtime: *mtime,
+            },
+            other => other.clone(),
         }
     }
 

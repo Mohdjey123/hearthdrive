@@ -159,6 +159,8 @@ pub struct P2pNode {
     config: P2pConfig,
     started: Instant,
     conns: Mutex<HashMap<PublicKey, Connection>>,
+    /// Connections peers opened to this node, while they are served.
+    incoming: Mutex<HashMap<usize, Connection>>,
 }
 
 /// Decodes a NEXUS public key (base64url of 32 bytes).
@@ -221,7 +223,7 @@ impl P2pNode {
             Err(e) => return Err(e),
         };
         tracing::info!(sockets = ?endpoint.bound_sockets(), relay = ?config.relay, "peer-to-peer endpoint ready");
-        Ok(Self { endpoint, config, started: Instant::now(), conns: Mutex::new(HashMap::new()) })
+        Ok(Self { endpoint, config, started: Instant::now(), conns: Mutex::new(HashMap::new()), incoming: Mutex::new(HashMap::new()) })
     }
 
     pub fn id(&self) -> PublicKey {
@@ -346,6 +348,37 @@ impl P2pNode {
         if let Some(conn) = self.conns.lock().unwrap_or_else(|e| e.into_inner()).remove(key) {
             conn.close(0u32.into(), b"forgotten");
         }
+    }
+
+    /// Remembers a connection a peer opened to this node, so its traffic
+    /// counts; [`P2pNode::untrack`] once it is no longer served.
+    pub fn track(&self, conn: &Connection) {
+        self.incoming.lock().unwrap_or_else(|e| e.into_inner()).insert(conn.stable_id(), conn.clone());
+    }
+
+    pub fn untrack(&self, conn: &Connection) {
+        self.incoming.lock().unwrap_or_else(|e| e.into_inner()).remove(&conn.stable_id());
+    }
+
+    /// Bytes received from and sent to `key` over the connections open now
+    /// (both directions), as `(received, sent)`. `None` when not connected.
+    pub fn traffic(&self, key: &PublicKey) -> Option<(u64, u64)> {
+        let mut conns: Vec<Connection> = self.cached(key).into_iter().collect();
+        conns.extend(
+            self.incoming
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .values()
+                .filter(|c| c.remote_id() == *key && c.close_reason().is_none())
+                .cloned(),
+        );
+        if conns.is_empty() {
+            return None;
+        }
+        Some(conns.iter().fold((0, 0), |(rx, tx), c| {
+            let stats = c.stats();
+            (rx + stats.udp_rx.bytes, tx + stats.udp_tx.bytes)
+        }))
     }
 
     /// How traffic to `key` currently flows, if connected.

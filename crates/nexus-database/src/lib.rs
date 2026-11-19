@@ -4,12 +4,17 @@
 //! the network; nodes exchange metadata events instead.
 
 mod activity;
+mod api_tokens;
 mod backup;
 mod devices;
 mod pairing;
 mod files;
+mod groups;
 mod health;
+mod docs;
+mod media;
 mod roots;
+mod rules;
 mod security;
 mod sessions;
 mod settings;
@@ -18,16 +23,23 @@ mod sharing;
 mod snapshots;
 mod sync;
 mod trash;
+mod upload_links;
 mod users;
 
+pub use api_tokens::ApiToken;
 pub use backup::{Backup, NewBackup};
 pub use devices::NewPeer;
 pub use pairing::NewPairingRequest;
-pub use files::{RootStats, SortField, UnhashedFile};
+pub use files::{RootStats, SearchFilter, SortField, UnhashedFile};
+pub use groups::Group;
 pub use health::{DamagedFile, HashedFile, RootCheck};
+pub use docs::{DocState, FileTag, TagCount};
+pub use rules::{Rule, RuleScope};
+pub use media::{Album, AlbumMember, LibraryFilter, MediaInfo, MediaItem, MonthCount, MusicAlbum, PhotoFilter, PhotoHash, Place, Playback};
 pub use security::{Passkey, SessionInfo, TotpState, UserSecurity};
 pub use shares::{NewShare, Share};
 pub use sharing::{Comment, FolderAccess, FolderGrant, FolderMember, SharedFolder};
+pub use upload_links::{NewUploadLink, UploadLink};
 pub use snapshots::{NewSnapshotSet, Schedule, Snapshot, SnapshotFile, SnapshotSet};
 pub use sync::{FileVersion, Fingerprints, HeldFile, NewSyncPair, StateChange, SyncPair, SyncState, UploadSession};
 

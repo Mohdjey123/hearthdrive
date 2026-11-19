@@ -47,6 +47,13 @@ pub struct DeviceView {
     allowed_roots: Option<Vec<String>>,
     roots: usize,
     indexed_bytes: i64,
+    /// Bytes per second received from and sent to this device right now.
+    rx_bps: u64,
+    tx_bps: u64,
+    /// Why the device cannot be reached, while it cannot.
+    unreachable: Option<crate::peers::Unreachable>,
+    /// It can be woken over the network (its network card is known).
+    can_wake: bool,
 }
 
 pub async fn list(State(s): State<SharedState>, _user: AuthUser) -> ApiResult<Json<Vec<DeviceView>>> {
@@ -62,12 +69,29 @@ pub async fn list(State(s): State<SharedState>, _user: AuthUser) -> ApiResult<Js
         let online = device.is_local || device.status == "online";
         let fingerprint = device.public_key.as_deref().and_then(fingerprint);
         let addresses = if device.is_local { s.net.advertised() } else { device.address_list() };
-        let route = match device.public_key.as_deref().and_then(nexus_network::public_key) {
-            Some(key) if !device.is_local => route_label(&s, &key),
-            _ => None,
+        let key = device.public_key.as_deref().and_then(nexus_network::public_key).filter(|_| !device.is_local);
+        let route = key.as_ref().and_then(|key| route_label(&s, key));
+        let (rx_bps, tx_bps) = match &key {
+            Some(key) => s.peer_health.rates(&device.id, s.net.p2p.traffic(key)),
+            None => (0, 0),
         };
+        let unreachable = if online || device.is_local { None } else { s.peer_health.problem(&device.id) };
+        let can_wake = !device.is_local && !wake_details(&device).is_empty();
         let allowed_roots = device.allowed_root_list();
-        out.push(DeviceView { device, online, fingerprint, addresses, route, allowed_roots, roots: count, indexed_bytes });
+        out.push(DeviceView {
+            device,
+            online,
+            fingerprint,
+            addresses,
+            route,
+            allowed_roots,
+            roots: count,
+            indexed_bytes,
+            rx_bps,
+            tx_bps,
+            unreachable,
+            can_wake,
+        });
     }
     Ok(Json(out))
 }
@@ -233,9 +257,11 @@ pub async fn create_invite(State(s): State<SharedState>, user: AuthUser) -> ApiR
         expires_at,
     };
     audit(&s, &user, "device.invite.created", None).await;
+    let link = invite.to_link();
+    s.nearby.offer(&session_id, &link, expires_at);
     Ok(Json(InviteResponse {
         session_id,
-        link: invite.to_link(),
+        link,
         expires_at,
         fingerprint: s.identity.fingerprint().to_string(),
         addresses,
@@ -265,7 +291,22 @@ pub async fn cancel_invite(State(s): State<SharedState>, user: AuthUser, Path(id
     user.require_person()?;
     user.require(Action::ManageUsers)?;
     s.db.close_pairing_session(&id).await?;
+    s.nearby.withdraw(&id);
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /devices/nearby`: NEXUS devices on the same local network, and the
+/// pairing links those waiting to be paired offer.
+pub async fn nearby(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Vec<crate::nearby::NearbyDevice>>> {
+    user.require_person()?;
+    let paired: Vec<(String, Option<String>)> =
+        s.db.list_peer_devices().await?.into_iter().map(|d| (d.id, d.public_key)).collect();
+    let can_pair = user.require(Action::ManageUsers).is_ok();
+    let mut list = s.nearby.list(|id, key| paired.iter().any(|(d, k)| d == id && k.as_deref().is_some_and(|k| same_key(k, key))));
+    if !can_pair {
+        list.iter_mut().for_each(|d| d.invite = None);
+    }
+    Ok(Json(list))
 }
 
 #[derive(Serialize)]
@@ -571,7 +612,93 @@ pub async fn hello(State(s): State<SharedState>, user: AuthUser, headers: Header
         name: me.name,
         version: VERSION.into(),
         addresses: s.net.advertised(),
+        wake: Some(local_wake_info().await),
     }))
+}
+
+/// This computer's wake details, looked up at most once a minute.
+async fn local_wake_info() -> crate::power::WakeInfo {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(std::time::Instant, crate::power::WakeInfo)>> = Mutex::new(None);
+    if let Some((at, info)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
+        && at.elapsed() < Duration::from_secs(60)
+    {
+        return info.clone();
+    }
+    let info = tokio::task::spawn_blocking(crate::power::wake_info).await.unwrap_or_default();
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), info.clone()));
+    info
+}
+
+fn wake_details(device: &Device) -> crate::power::WakeInfo {
+    let list = |v: Option<&str>| v.and_then(|v| serde_json::from_str::<Vec<String>>(v).ok()).unwrap_or_default();
+    crate::power::WakeInfo { macs: list(device.mac_addresses.as_deref()), broadcasts: list(device.broadcast.as_deref()) }
+        .cleaned()
+}
+
+#[derive(Serialize)]
+pub struct WakeReply {
+    /// Magic packets sent from this computer.
+    sent: usize,
+    /// Paired devices that sent them on their network too.
+    relayed_by: Vec<String>,
+}
+
+/// `POST /devices/{id}/wake`: wakes a sleeping paired computer with
+/// Wake-on-LAN, from here and from every online paired device (one of them
+/// may be on its network when this one is not).
+pub async fn wake(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<WakeReply>> {
+    user.require_person()?;
+    let device = s.db.get_device(&id).await?;
+    if device.is_local {
+        return Err(NexusError::invalid("This computer is already awake").into());
+    }
+    let info = wake_details(&device);
+    if info.is_empty() {
+        return Err(NexusError::Conflict(format!(
+            "NEXUS does not know {}'s network card yet. It learns it once both are online at the same time.",
+            device.name
+        ))
+        .into());
+    }
+    let sent = crate::power::send_wake(&info).await.unwrap_or(0);
+    let helpers: Vec<Device> = s
+        .db
+        .list_peer_devices()
+        .await?
+        .into_iter()
+        .filter(|d| d.id != device.id && d.status == "online" && d.blocked_at.is_none())
+        .collect();
+    let asked = futures_util::future::join_all(helpers.iter().map(|d| {
+        let info = info.clone();
+        let s = &s;
+        async move {
+            let target = Target::of(d).ok()?;
+            let reply: std::result::Result<(Value, _), _> = s
+                .peers
+                .call(&target, Method::POST, "/api/v1/power/wake", Some(&info), Some(Acting::NODE), Duration::from_secs(8))
+                .await;
+            reply.ok().map(|_| d.name.clone())
+        }
+    }))
+    .await;
+    // Look for it again shortly, and keep looking.
+    s.net.peer_wake.notify_one();
+    audit(&s, &user, "device.wake", Some(&device.name)).await;
+    Ok(Json(WakeReply { sent, relayed_by: asked.into_iter().flatten().collect() }))
+}
+
+/// `POST /power/wake` (from a paired device): sends magic packets on this
+/// computer's networks for a device the caller wants to wake.
+pub async fn wake_for_peer(
+    State(_s): State<SharedState>,
+    user: AuthUser,
+    Json(info): Json<crate::power::WakeInfo>,
+) -> ApiResult<Json<Value>> {
+    user.require_device()?;
+    let info = info.cleaned();
+    let sent = crate::power::send_wake(&info).await.unwrap_or(0);
+    Ok(Json(json!({ "sent": sent })))
 }
 
 /// The caller removed this node, so this node forgets the caller too.

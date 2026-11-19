@@ -11,8 +11,11 @@
 # The Tauri CLI links the compiled library into the Gradle project with a
 # symbolic link, which Windows only allows in Developer Mode. This script
 # copies the library instead, so it works without changing that setting.
-# Release builds are signed with the local Android debug key so they can be
-# installed directly; sign with your own key before publishing.
+# Release builds are signed with the keystore in NEXUS_ANDROID_KEYSTORE
+# (with NEXUS_ANDROID_KEYSTORE_PASSWORD, NEXUS_ANDROID_KEY_ALIAS and, if it
+# differs, NEXUS_ANDROID_KEY_PASSWORD), or else with the local Android debug
+# key so they can be installed directly. Updates install over the app only
+# when they are signed with the same key as the installed one.
 set -euo pipefail
 
 ARCH="${1:-aarch64}"
@@ -82,19 +85,31 @@ OUT_DIR="$GRADLE/app/build/outputs/apk/$(echo "$FLAVOR" | tr '[:upper:]' '[:lowe
 APK="$(ls "$OUT_DIR"/*.apk | head -1)"
 
 if [ "$PROFILE" = release ] && [[ "$APK" == *unsigned* ]]; then
-  echo "==> Signing with the local debug key"
   BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-  KEYSTORE="${USERPROFILE:-$HOME}/.android/debug.keystore"
-  if [ ! -f "$KEYSTORE" ]; then
-    mkdir -p "$(dirname "$KEYSTORE")"
-    "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android \
-      -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+  if [ -n "${NEXUS_ANDROID_KEYSTORE:-}" ]; then
+    echo "==> Signing with $NEXUS_ANDROID_KEYSTORE"
+    KEYSTORE="$NEXUS_ANDROID_KEYSTORE"
+    : "${NEXUS_ANDROID_KEYSTORE_PASSWORD:?NEXUS_ANDROID_KEYSTORE_PASSWORD is needed with NEXUS_ANDROID_KEYSTORE}"
+    : "${NEXUS_ANDROID_KEY_ALIAS:?NEXUS_ANDROID_KEY_ALIAS is needed with NEXUS_ANDROID_KEYSTORE}"
+    export NEXUS_ANDROID_KEY_PASSWORD="${NEXUS_ANDROID_KEY_PASSWORD:-$NEXUS_ANDROID_KEYSTORE_PASSWORD}"
+    export NEXUS_ANDROID_KEYSTORE_PASSWORD
+    ALIAS="$NEXUS_ANDROID_KEY_ALIAS"
+    PASSES=(--ks-pass env:NEXUS_ANDROID_KEYSTORE_PASSWORD --key-pass env:NEXUS_ANDROID_KEY_PASSWORD)
+  else
+    echo "==> Signing with the local debug key"
+    KEYSTORE="${USERPROFILE:-$HOME}/.android/debug.keystore"
+    if [ ! -f "$KEYSTORE" ]; then
+      mkdir -p "$(dirname "$KEYSTORE")"
+      "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android \
+        -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+    fi
+    ALIAS=androiddebugkey
+    PASSES=(--ks-pass pass:android --key-pass pass:android)
   fi
   SIGNED="${APK/-unsigned/}"
   "$BT/zipalign" -f -p 4 "$APK" "$SIGNED.aligned"
   APKSIGNER="$BT/apksigner"; [ -f "$APKSIGNER.bat" ] && APKSIGNER="$APKSIGNER.bat"
-  "$APKSIGNER" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
-    --ks-key-alias androiddebugkey --out "$SIGNED" "$SIGNED.aligned"
+  "$APKSIGNER" sign --ks "$KEYSTORE" "${PASSES[@]}" --ks-key-alias "$ALIAS" --out "$SIGNED" "$SIGNED.aligned"
   rm -f "$SIGNED.aligned"
   APK="$SIGNED"
 fi

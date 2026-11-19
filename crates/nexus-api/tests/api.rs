@@ -22,6 +22,7 @@ const LOCAL_TOKEN: &str = "test-local-token";
 
 struct Harness {
     app: Router,
+    state: nexus_api::SharedState,
     _data: tempfile::TempDir,
     storage: tempfile::TempDir,
 }
@@ -51,8 +52,8 @@ async fn harness_with(peer: [u8; 4], setup_needs_token: bool) -> Harness {
         identity,
         NetRuntime::new(p2p, true),
     ).with_setup_token_required(setup_needs_token));
-    let app = nexus_api::router(state, None).layer(MockConnectInfo(SocketAddr::from((peer, 50000))));
-    Harness { app, _data: data, storage }
+    let app = nexus_api::router(state.clone(), None).layer(MockConnectInfo(SocketAddr::from((peer, 50000))));
+    Harness { app, state, _data: data, storage }
 }
 
 async fn call(app: &Router, method: Method, uri: &str, token: Option<&str>, body: Option<Value>) -> (StatusCode, Value) {
@@ -515,4 +516,377 @@ async fn shared_folders_drop_folders_and_comments() {
     let (s, _) = call(app, Method::DELETE, &format!("/api/v1/shared-folders/{family_share}"), Some(&owner), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     assert_eq!(list(anna.clone(), "Family-2026").await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn rules_sort_files_once() {
+    let h = harness([127, 0, 0, 1]).await;
+    let app = &h.app;
+    let base = h.storage.path();
+    std::fs::create_dir(base.join("Downloads")).unwrap();
+    std::fs::write(base.join("Downloads").join("beach.jpg"), [0xFF, 0xD8, 0xFF]).unwrap();
+    std::fs::write(base.join("Downloads").join("notes.txt"), b"shopping list").unwrap();
+
+    let (s, _) = call(app, Method::POST, "/api/v1/setup", None,
+        Some(json!({"node_name": "Desk", "username": "owner", "password": "correct horse"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let owner = sign_in(app, "owner", "correct horse").await;
+    let (s, v) = call(app, Method::POST, "/api/v1/storage/roots", Some(&owner), Some(json!({"path": base.to_string_lossy()}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let root = v["id"].as_str().unwrap().to_string();
+    wait_for_scan(app, &owner, &root).await;
+
+    // A trash rule without conditions is refused.
+    let (s, _) = call(app, Method::POST, "/api/v1/rules", Some(&owner), Some(json!({
+        "name": "Empty", "trigger": "daily", "root_id": root, "path": "Downloads", "then": {"type": "trash"}
+    }))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    let (s, v) = call(app, Method::POST, "/api/v1/rules", Some(&owner), Some(json!({
+        "name": "Photos by year", "trigger": "added", "root_id": root, "path": "Downloads",
+        "when": {"kinds": ["image"]}, "then": {"type": "move", "folder": "Photos/{year}"}
+    }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+
+    let (s, v) = call(app, Method::GET, &format!("/api/v1/rules/{id}/preview"), Some(&owner), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let items = v.as_array().unwrap();
+    assert_eq!(items.len(), 1, "{v}");
+    assert_eq!(items[0]["file"]["filename"], "beach.jpg");
+    let target = items[0]["target"].as_str().unwrap().to_string();
+    assert!(target.starts_with("Photos/20"), "{target}");
+
+    let (s, v) = call(app, Method::POST, &format!("/api/v1/rules/{id}/run"), Some(&owner), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["done"], 1, "{v}");
+    assert!(base.join(&target).join("beach.jpg").exists());
+    assert!(base.join("Downloads").join("notes.txt").exists());
+    let (_, v) = call(app, Method::GET, &format!("/api/v1/files?root_id={root}&path={target}"), Some(&owner), None).await;
+    assert_eq!(names(&v), ["beach.jpg"]);
+
+    // The same file is never dealt with twice.
+    let (_, v) = call(app, Method::POST, &format!("/api/v1/rules/{id}/run"), Some(&owner), None).await;
+    assert_eq!(v["matched"], 0, "{v}");
+    let (_, list) = call(app, Method::GET, "/api/v1/rules", Some(&owner), None).await;
+    assert_eq!(list[0]["files_done"], 1, "{list}");
+
+    // Only owners and administrators manage rules.
+    let (_, editor) = limited_person(app, &owner, "erin", "editor").await;
+    let (s, _) = call(app, Method::GET, "/api/v1/rules", Some(&editor), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    let (s, v) = call(app, Method::GET, "/api/v1/storage/suggestions", Some(&owner), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v.is_array());
+
+    let (s, _) = call(app, Method::DELETE, &format!("/api/v1/rules/{id}"), Some(&owner), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+}
+
+/// Sends a request to the address for programs.
+async fn program_call(app: &Router, method: &str, uri: &str, headers: &[(&str, String)], body: Vec<u8>) -> (StatusCode, Vec<u8>) {
+    let mut req = Request::builder().method(method).uri(uri).header(header::HOST, "127.0.0.1:47180");
+    for (k, v) in headers {
+        req = req.header(*k, v);
+    }
+    let res = app.clone().oneshot(req.body(Body::from(body)).unwrap()).await.unwrap();
+    let status = res.status();
+    (status, res.into_body().collect().await.unwrap().to_bytes().to_vec())
+}
+
+fn hexs(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn hmac256(key: &[u8], data: &str) -> Vec<u8> {
+    ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key), data.as_bytes()).as_ref().to_vec()
+}
+
+/// An S3 request signed with Signature Version 4, as S3 tools send it.
+async fn s3(app: &Router, access: &str, secret: &str, method: &str, path: &str, query: &str, body: &[u8]) -> (StatusCode, String) {
+    let now = chrono::Utc::now();
+    let date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let day = now.format("%Y%m%d").to_string();
+    let payload = hexs(ring::digest::digest(&ring::digest::SHA256, body).as_ref());
+    let host = "127.0.0.1:47180";
+    let canonical = format!(
+        "{method}\n{path}\n{query}\nhost:{host}\nx-amz-content-sha256:{payload}\nx-amz-date:{date}\n\nhost;x-amz-content-sha256;x-amz-date\n{payload}"
+    );
+    let scope = format!("{day}/us-east-1/s3/aws4_request");
+    let to_sign = format!(
+        "AWS4-HMAC-SHA256\n{date}\n{scope}\n{}",
+        hexs(ring::digest::digest(&ring::digest::SHA256, canonical.as_bytes()).as_ref())
+    );
+    let mut key = hmac256(format!("AWS4{secret}").as_bytes(), &day);
+    for p in ["us-east-1", "s3", "aws4_request"] {
+        key = hmac256(&key, p);
+    }
+    let sig = hexs(&hmac256(&key, &to_sign));
+    let auth = format!("AWS4-HMAC-SHA256 Credential={access}/{scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature={sig}");
+    let uri = if query.is_empty() { path.to_string() } else { format!("{path}?{query}") };
+    let (s, b) = program_call(app, method, &uri, &[
+        ("authorization", auth),
+        ("x-amz-date", date),
+        ("x-amz-content-sha256", payload),
+    ], body.to_vec()).await;
+    (s, String::from_utf8_lossy(&b).into_owned())
+}
+
+#[tokio::test]
+async fn programs_use_tokens_for_the_api_webdav_and_s3() {
+    let h = harness([127, 0, 0, 1]).await;
+    let app = &h.app;
+    let base = h.storage.path();
+    std::fs::create_dir(base.join("docs")).unwrap();
+    std::fs::write(base.join("docs").join("a.txt"), b"alpha").unwrap();
+
+    let (s, _) = call(app, Method::POST, "/api/v1/setup", None,
+        Some(json!({"node_name": "Desk", "username": "owner", "password": "correct horse"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let owner = sign_in(app, "owner", "correct horse").await;
+    let (s, v) = call(app, Method::POST, "/api/v1/storage/roots", Some(&owner), Some(json!({"path": base.to_string_lossy(), "name": "Main Disk"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let root = v["id"].as_str().unwrap().to_string();
+    wait_for_scan(app, &owner, &root).await;
+    let bucket = nexus_api::programs::slug(v["name"].as_str().unwrap());
+
+    let (s, v) = call(app, Method::POST, "/api/v1/tokens", Some(&owner), Some(json!({"name": "backup script"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let token = v["secret_token"].as_str().unwrap().to_string();
+    let access = v["access_key"].as_str().unwrap().to_string();
+    let secret = v["secret_key"].as_str().unwrap().to_string();
+    assert!(v.get("secret").is_none(), "the sealed secret is never sent");
+
+    // The token works on the API, but not to manage people or tokens.
+    let (s, _) = call(app, Method::GET, "/api/v1/storage/roots", Some(&token), None).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = call(app, Method::GET, "/api/v1/users", Some(&token), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(app, Method::POST, "/api/v1/tokens", Some(&token), Some(json!({"name": "more"}))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    // The address for programs takes only these tokens.
+    let programs = nexus_api::programs::router(h.state.clone());
+    let p = &programs;
+    let (s, _) = program_call(p, "GET", "/api/v1/storage/roots", &[("authorization", format!("Bearer {owner}"))], vec![]).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, _) = program_call(p, "GET", "/api/v1/storage/roots", &[("authorization", format!("Bearer {token}"))], vec![]).await;
+    assert_eq!(s, StatusCode::OK);
+
+    // WebDAV.
+    use base64::Engine;
+    let basic = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("me:{token}")));
+    let (s, _) = program_call(p, "PROPFIND", "/dav/", &[], vec![]).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, b) = program_call(p, "PROPFIND", "/dav/", &[("authorization", basic.clone()), ("depth", "1".into())], vec![]).await;
+    assert_eq!(s, StatusCode::MULTI_STATUS);
+    assert!(String::from_utf8_lossy(&b).contains(&format!("/dav/{bucket}/")));
+    let (s, b) = program_call(p, "GET", &format!("/dav/{bucket}/docs/a.txt"), &[("authorization", basic.clone())], vec![]).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b, b"alpha");
+    let (s, _) = program_call(p, "PUT", &format!("/dav/{bucket}/docs/b.txt"), &[("authorization", basic.clone())], b"bravo".to_vec()).await;
+    assert!(s.is_success(), "{s}");
+    assert_eq!(std::fs::read(base.join("docs").join("b.txt")).unwrap(), b"bravo");
+    let (s, _) = program_call(p, "PROPFIND", &format!("/dav/{bucket}/.nexus/"), &[("authorization", basic.clone())], vec![]).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, b) = program_call(p, "PROPFIND", &format!("/dav/{bucket}/"), &[("authorization", basic.clone()), ("depth", "1".into())], vec![]).await;
+    assert_eq!(s, StatusCode::MULTI_STATUS);
+    assert!(!String::from_utf8_lossy(&b).contains(".nexus"));
+
+    // S3.
+    let (s, b) = s3(p, &access, &secret, "GET", "/", "", b"").await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(b.contains(&format!("<Name>{bucket}</Name>")), "{b}");
+    let (s, b) = s3(p, &access, &secret, "PUT", &format!("/{bucket}/new/c.txt"), "", b"charlie").await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(std::fs::read(base.join("new").join("c.txt")).unwrap(), b"charlie");
+    let (s, b) = s3(p, &access, &secret, "GET", &format!("/{bucket}/new/c.txt"), "", b"").await;
+    assert_eq!((s, b.as_str()), (StatusCode::OK, "charlie"));
+    let (s, b) = s3(p, &access, &secret, "GET", &format!("/{bucket}"), "list-type=2&prefix=docs%2F", b"").await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(b.contains("<Key>docs/a.txt</Key>") && b.contains("<Key>docs/b.txt</Key>"), "{b}");
+    let (s, b) = s3(p, &access, &secret, "GET", &format!("/{bucket}"), "delimiter=%2F&list-type=2", b"").await;
+    assert!(b.contains("<Prefix>docs/</Prefix>") && b.contains("<Prefix>new/</Prefix>"), "{s} {b}");
+    let (s, _) = s3(p, &access, "wrong-secret-wrong-secret-wrong-secret!", "GET", "/", "", b"").await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = s3(p, &access, &secret, "DELETE", &format!("/{bucket}/new/c.txt"), "", b"").await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(!base.join("new").join("c.txt").exists());
+
+    // Multipart upload.
+    let (s, b) = s3(p, &access, &secret, "POST", &format!("/{bucket}/big.bin"), "uploads=", b"").await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let upload = b.split("<UploadId>").nth(1).unwrap().split("</UploadId>").next().unwrap().to_string();
+    for (n, part) in [(1, b"one-".as_slice()), (2, b"two".as_slice())] {
+        let (s, b) = s3(p, &access, &secret, "PUT", &format!("/{bucket}/big.bin"), &format!("partNumber={n}&uploadId={upload}"), part).await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+    }
+    let done = b"<CompleteMultipartUpload><Part><PartNumber>1</PartNumber></Part><Part><PartNumber>2</PartNumber></Part></CompleteMultipartUpload>";
+    let (s, b) = s3(p, &access, &secret, "POST", &format!("/{bucket}/big.bin"), &format!("uploadId={upload}"), done).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(std::fs::read(base.join("big.bin")).unwrap(), b"one-two");
+
+    // A read-only token cannot change anything.
+    let (_, v) = call(app, Method::POST, "/api/v1/tokens", Some(&owner), Some(json!({"name": "reader", "read_only": true}))).await;
+    let (ra, rs) = (v["access_key"].as_str().unwrap().to_string(), v["secret_key"].as_str().unwrap().to_string());
+    let (s, _) = s3(p, &ra, &rs, "PUT", &format!("/{bucket}/nope.txt"), "", b"x").await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = s3(p, &ra, &rs, "GET", &format!("/{bucket}/docs/a.txt"), "", b"").await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Removed tokens stop working.
+    let (s, _) = call(app, Method::DELETE, &format!("/api/v1/tokens/{access}"), Some(&owner), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, _) = s3(p, &access, &secret, "GET", "/", "", b"").await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn groups_share_folders_with_everyone_in_them() {
+    let h = harness([127, 0, 0, 1]).await;
+    let app = &h.app;
+    let base = h.storage.path();
+    std::fs::create_dir(base.join("Family")).unwrap();
+    std::fs::write(base.join("Family").join("list.txt"), b"milk").unwrap();
+
+    let (s, _) = call(app, Method::POST, "/api/v1/setup", None,
+        Some(json!({"node_name": "Desk", "username": "owner", "password": "correct horse"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let owner = sign_in(app, "owner", "correct horse").await;
+    let (s, v) = call(app, Method::POST, "/api/v1/storage/roots", Some(&owner), Some(json!({"path": base.to_string_lossy()}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let root = v["id"].as_str().unwrap().to_string();
+    wait_for_scan(app, &owner, &root).await;
+    let (anna_id, anna) = limited_person(app, &owner, "anna", "editor").await;
+    let (bob_id, bob) = limited_person(app, &owner, "bob", "editor").await;
+    let list = |token: String| {
+        let root = root.clone();
+        async move { call(app, Method::GET, &format!("/api/v1/files?root_id={root}&path=Family"), Some(&token), None).await.0 }
+    };
+
+    // Only owners and administrators make groups, of people that exist.
+    let (s, _) = call(app, Method::POST, "/api/v1/groups", Some(&anna), Some(json!({"name": "Family"}))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(app, Method::POST, "/api/v1/groups", Some(&owner), Some(json!({"name": "Family", "members": ["nobody"]}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, group) = call(app, Method::POST, "/api/v1/groups", Some(&owner), Some(json!({"name": "Family", "members": [anna_id]}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{group}");
+    let group_id = group["id"].as_str().unwrap().to_string();
+    let (s, _) = call(app, Method::POST, "/api/v1/groups", Some(&owner), Some(json!({"name": "family"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+
+    // Shared with the group: Anna (in it) gets the folder, Bob does not.
+    let (s, folder) = call(app, Method::POST, "/api/v1/shared-folders", Some(&owner), Some(json!({"root_id": root, "path": "Family",
+        "members": [{"member": format!("group:{group_id}"), "access": "edit"}]}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{folder}");
+    assert_eq!(folder["members"][0]["kind"], "group");
+    assert_eq!(folder["members"][0]["name"], "Family");
+    assert_eq!(folder["members"][0]["note"], "anna");
+    assert_eq!(list(anna.clone()).await, StatusCode::OK);
+    assert_eq!(list(bob.clone()).await, StatusCode::NOT_FOUND);
+    let (_, mine) = call(app, Method::GET, "/api/v1/shared-folders/mine", Some(&anna), None).await;
+    assert_eq!(mine[0]["access"], "edit", "{mine}");
+
+    // Shared with Anna directly too, to view only: the group's edit wins.
+    let folder_id = folder["id"].as_str().unwrap().to_string();
+    let (s, _) = call(app, Method::PATCH, &format!("/api/v1/shared-folders/{folder_id}"), Some(&owner), Some(json!({"members": [
+        {"member": format!("group:{group_id}"), "access": "edit"}, {"member": format!("user:{anna_id}"), "access": "view"}]}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, v) = upload(app, &anna, &root, "Family", "more.txt", b"eggs").await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+
+    // Bob joins: he gets it at once. Anna leaves: only her own view is left.
+    let (s, v) = call(app, Method::PATCH, &format!("/api/v1/groups/{group_id}"), Some(&owner), Some(json!({"members": [bob_id]}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["folders"][0], "Family");
+    assert_eq!(list(bob.clone()).await, StatusCode::OK);
+    let (s, _) = upload(app, &anna, &root, "Family", "late.txt", b"x").await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert_eq!(list(anna.clone()).await, StatusCode::OK);
+
+    // Removing the group takes it off the folder.
+    let (s, _) = call(app, Method::DELETE, &format!("/api/v1/groups/{group_id}"), Some(&owner), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert_eq!(list(bob).await, StatusCode::NOT_FOUND);
+    let (_, v) = call(app, Method::GET, "/api/v1/shared-folders", Some(&owner), None).await;
+    assert_eq!(v[0]["members"].as_array().unwrap().len(), 1, "{v}");
+}
+
+#[tokio::test]
+async fn upload_links_take_files_from_anyone_with_the_link() {
+    let h = harness([127, 0, 0, 1]).await;
+    let app = &h.app;
+    let base = h.storage.path();
+    std::fs::create_dir(base.join("Inbox")).unwrap();
+    std::fs::write(base.join("Inbox").join("photo.jpg"), b"old").unwrap();
+
+    let (s, _) = call(app, Method::POST, "/api/v1/setup", None,
+        Some(json!({"node_name": "Desk", "username": "owner", "password": "correct horse"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let owner = sign_in(app, "owner", "correct horse").await;
+    let (s, v) = call(app, Method::POST, "/api/v1/storage/roots", Some(&owner), Some(json!({"path": base.to_string_lossy()}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let root = v["id"].as_str().unwrap().to_string();
+    wait_for_scan(app, &owner, &root).await;
+    let (_, viewer) = limited_person(app, &owner, "vic", "viewer").await;
+
+    // Viewers cannot ask for files; a folder must exist.
+    let (s, _) = call(app, Method::POST, "/api/v1/upload-links", Some(&viewer), Some(json!({"root_id": root, "path": "Inbox"}))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(app, Method::POST, "/api/v1/upload-links", Some(&owner), Some(json!({"root_id": root, "path": "Nope"}))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, link) = call(app, Method::POST, "/api/v1/upload-links", Some(&owner), Some(json!({
+        "root_id": root, "path": "Inbox", "title": "Holiday <photos>", "message": "Thanks!", "max_mb": 1}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{link}");
+    assert!(link.get("secret").is_none(), "the sealed secret is never sent");
+    assert_eq!(link["urls"].as_array().unwrap().len(), 0, "the address for programs is off");
+    let page_path = link["link_path"].as_str().unwrap().to_string();
+
+    let programs = nexus_api::programs::router(h.state.clone());
+    let p = &programs;
+
+    // The page, escaped, with a strict policy; a wrong secret gets nothing.
+    let (s, html) = program_call(p, "GET", &page_path, &[], vec![]).await;
+    assert_eq!(s, StatusCode::OK);
+    let html = String::from_utf8(html).unwrap();
+    assert!(html.contains("Holiday &lt;photos&gt;") && !html.contains("<photos>"), "{html}");
+    assert!(html.contains("owner asks you to add files here"));
+    let wrong = format!("{}x", page_path);
+    let (s, _) = program_call(p, "GET", &wrong, &[], vec![]).await;
+    assert_eq!(s, StatusCode::GONE);
+
+    // Files arrive next to what is there, never replacing it.
+    let up = |name: &str, body: Vec<u8>| {
+        let uri = format!("{page_path}/files?name={name}&from=Grandma");
+        async move {
+            let len = body.len().to_string();
+            program_call(p, "POST", &uri, &[("content-length", len)], body).await
+        }
+    };
+    let (s, v) = up("photo.jpg", b"new picture".to_vec()).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&v));
+    assert_eq!(std::fs::read(base.join("Inbox").join("photo.jpg")).unwrap(), b"old");
+    let added: serde_json::Value = serde_json::from_slice(&v).unwrap();
+    let added_name = added["name"].as_str().unwrap();
+    assert_ne!(added_name, "photo.jpg");
+    assert_eq!(std::fs::read(base.join("Inbox").join(added_name)).unwrap(), b"new picture");
+    let (s, _) = up("..%2Fescape.txt", b"x".to_vec()).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // The limit holds.
+    let (s, _) = up("big.bin", vec![0u8; 1024 * 1024]).await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE);
+    let (_, v) = call(app, Method::GET, "/api/v1/upload-links", Some(&owner), None).await;
+    assert_eq!(v[0]["received_files"], 1, "{v}");
+    assert_eq!(v[0]["received_bytes"], 11, "{v}");
+
+    // Taken down: the page and uploads stop at once.
+    let id = link["id"].as_str().unwrap();
+    let (s, _) = call(app, Method::DELETE, &format!("/api/v1/upload-links/{id}"), Some(&owner), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, _) = program_call(p, "GET", &page_path, &[], vec![]).await;
+    assert_eq!(s, StatusCode::GONE);
+    let (s, _) = up("late.txt", b"late".to_vec()).await;
+    assert_eq!(s, StatusCode::GONE);
 }

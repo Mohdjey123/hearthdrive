@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpDown, Copy, Folder, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, MonitorSmartphone, Settings } from 'lucide-react'
+import { ArrowUpDown, Clapperboard, Copy, Folder, Images, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, MonitorSmartphone, Settings, Wand2 } from 'lucide-react'
 import type { Page } from '../hooks/useRoute'
 import { navigate } from '../hooks/useRoute'
 import { subscribeStatus } from '../services/events'
@@ -12,7 +12,10 @@ import { cx, StatusDot } from './ui'
 const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
   { page: 'overview', label: 'Overview', icon: LayoutGrid },
   { page: 'files', label: 'Files', icon: Folder },
+  { page: 'photos', label: 'Photos', icon: Images },
+  { page: 'media', label: 'Media', icon: Clapperboard },
   { page: 'storage', label: 'Storage', icon: HardDrive },
+  { page: 'automation', label: 'Automation', icon: Wand2 },
   { page: 'health', label: 'Drive health', icon: HeartPulse },
   { page: 'devices', label: 'Devices', icon: MonitorSmartphone },
   { page: 'sync', label: 'Sync', icon: FolderSync },
@@ -25,7 +28,7 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
 ]
 
 /** Pages that need storage on this device. */
-export const PHONELESS: Page[] = ['overview', 'storage', 'health', 'sync', 'copies', 'backups']
+export const PHONELESS: Page[] = ['overview', 'storage', 'automation', 'health', 'sync', 'copies', 'backups']
 /** Pages only phones have. */
 export const PHONE_ONLY: Page[] = ['backup']
 

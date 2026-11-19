@@ -644,7 +644,7 @@ pub struct FoundItem {
     root_name: String,
 }
 
-async fn with_roots(s: &SharedState, files: Vec<FileEntry>) -> ApiResult<Vec<FoundItem>> {
+pub(crate) async fn with_roots(s: &SharedState, files: Vec<FileEntry>) -> ApiResult<Vec<FoundItem>> {
     let roots: HashMap<String, StorageRoot> =
         s.db.list_roots().await?.into_iter().map(|r| (r.id.clone(), r)).collect();
     Ok(files
@@ -661,8 +661,20 @@ async fn with_roots(s: &SharedState, files: Vec<FileEntry>) -> ApiResult<Vec<Fou
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
+    #[serde(default)]
     q: String,
     root_id: Option<String>,
+    /// `image`, `video`, `audio`, `document`, `archive`, `code`, `other`, `folder`.
+    kind: Option<String>,
+    modified_after: Option<i64>,
+    modified_before: Option<i64>,
+    min_size: Option<i64>,
+    max_size: Option<i64>,
+    tag: Option<String>,
+    /// `1`: only what can be opened now (connected storage).
+    available: Option<u8>,
+    /// `0`: names only, not text inside documents or tags.
+    content: Option<u8>,
     offset: Option<i64>,
     limit: Option<i64>,
 }
@@ -679,14 +691,42 @@ pub async fn search(
     Query(q): Query<SearchQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
     user.require(Action::Read)?;
-    if q.q.trim().is_empty() {
+    let filtered = q.kind.is_some()
+        || q.modified_after.is_some()
+        || q.modified_before.is_some()
+        || q.min_size.is_some()
+        || q.max_size.is_some()
+        || q.tag.is_some();
+    if q.q.trim().is_empty() && !filtered {
         return Ok(Json(SearchResponse { items: vec![], has_more: false }));
     }
+    if let Some(kind) = &q.kind
+        && kind != "folder"
+        && !nexus_common::kinds::KINDS.contains(&kind.as_str())
+    {
+        return Err(NexusError::InvalidInput(format!("Unknown kind of file: {kind}")).into());
+    }
+    let available = q.available == Some(1);
+    let roots = if available {
+        Some(s.db.list_roots().await?.into_iter().filter(StorageManager::is_online).map(|r| r.id).collect())
+    } else {
+        None
+    };
+    let filter = nexus_database::SearchFilter {
+        query: q.q.clone(),
+        content: q.content != Some(0),
+        root_id: q.root_id.clone(),
+        roots,
+        kind: q.kind.clone(),
+        modified_after: q.modified_after,
+        modified_before: q.modified_before,
+        min_size: q.min_size,
+        max_size: q.max_size,
+        tag: q.tag.clone(),
+        available,
+    };
     let limit = clamp_limit(q.limit, 100, 500);
-    let mut found = s
-        .db
-        .search(&q.q, q.root_id.as_deref(), q.offset.unwrap_or(0).max(0), limit + 1)
-        .await?;
+    let mut found = s.db.search(&filter, q.offset.unwrap_or(0).max(0), limit + 1).await?;
     let has_more = found.len() as i64 > limit;
     found.truncate(limit as usize);
     found.retain(|f| user.may(&f.root_id, &f.relative_path, Need::Read));

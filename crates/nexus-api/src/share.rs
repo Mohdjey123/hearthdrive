@@ -281,7 +281,7 @@ pub fn decrypt_metadata(secret_b64: &str, data: &[u8]) -> Option<serde_json::Val
 
 /// TLS with the built-in root certificates, so it works the same on every
 /// platform (phones included).
-fn tls() -> rustls::ClientConfig {
+pub(crate) fn tls() -> rustls::ClientConfig {
     let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
     rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()

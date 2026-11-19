@@ -200,10 +200,16 @@ pub async fn run_with(
     nexus_api::p2p::spawn_server(state.clone(), app.clone());
     nexus_api::net::spawn_network_monitor(state.clone());
     nexus_api::peers::spawn_peer_monitor(state.clone());
+    nexus_api::nearby::spawn(state.clone());
+    nexus_api::media::spawn(state.clone());
+    nexus_api::documents::spawn(state.clone());
+    nexus_api::automation::spawn(state.clone());
+    nexus_api::programs::spawn(state.clone());
     nexus_api::spawn_sync(state.clone());
     nexus_api::spawn_backup(state.clone());
     nexus_api::spawn_shares(state.clone());
     nexus_api::spawn_transfers(state.clone());
+    nexus_api::spawn_changes(state.clone());
     nexus_api::spawn_snapshots(state.clone());
     nexus_api::spawn_health(state.clone());
     nexus_api::spawn_updates(state.clone());
@@ -277,6 +283,7 @@ fn start_virtual_drive(state: &SharedState, app: &axum::Router, local_token: &st
     }
     let state = state.clone();
     tokio::spawn(async move {
+        state.vdrive.set_cache(nexus_api::saved_vdrive_cache(&state).await);
         let (enabled, path) = match nexus_api::saved_vdrive(&state).await {
             Ok(saved) => saved,
             Err(e) => {

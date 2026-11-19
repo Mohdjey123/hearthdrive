@@ -7,9 +7,13 @@
 //! own "Always keep on this device" and "Free up space" work on them.
 //!
 //! Everything is read through the local node's own API, as its owner, so
-//! the drive shows what the app's Files page shows. Phase 1 is read-only:
-//! files are marked read-only, and deleting or renaming placeholders is
-//! refused.
+//! the drive shows what the app's Files page shows. Changes made in the
+//! drive go back to their device: edited and new files are uploaded, new
+//! folders made, and renames, moves and deletes (to the device's trash)
+//! carried out there.
+//!
+//! Downloaded files form an offline cache: often used files stay, files not
+//! used for a while are cleared, and the cache is kept under a size limit.
 
 pub mod client;
 pub mod tree;
@@ -18,7 +22,7 @@ mod windows;
 
 use client::NodeClient;
 use nexus_common::events::EventBus;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -26,6 +30,68 @@ use std::sync::{Arc, Mutex};
 pub const ENABLED_SETTING: &str = "vdrive.enabled";
 /// The folder chosen for the drive (empty: the default).
 pub const PATH_SETTING: &str = "vdrive.path";
+
+/// The offline cache settings (JSON).
+pub const CACHE_SETTING: &str = "vdrive.cache";
+
+/// How the drive's offline cache behaves.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CacheSettings {
+    /// Most space downloaded files may take, in GB; 0 for no limit. Files
+    /// kept with "Always keep on this device" do not count.
+    pub limit_gb: f64,
+    /// Downloaded files not opened for this many days are cleared; 0 never.
+    pub clear_after_days: u32,
+    /// Files opened often stay downloaded, and are downloaded again when
+    /// they change on their device.
+    pub keep_frequent: bool,
+}
+
+impl Default for CacheSettings {
+    fn default() -> Self {
+        Self { limit_gb: 20.0, clear_after_days: 30, keep_frequent: true }
+    }
+}
+
+impl CacheSettings {
+    pub fn validate(self) -> Result<Self, String> {
+        if !(0.0..=100_000.0).contains(&self.limit_gb) || self.limit_gb.is_nan() {
+            return Err("Give the cache limit in GB, from 0 (no limit) up".into());
+        }
+        if self.clear_after_days > 3650 {
+            return Err("Clear files after at most 3650 days".into());
+        }
+        Ok(self)
+    }
+
+    pub fn limit_bytes(&self) -> u64 {
+        (self.limit_gb * 1024.0 * 1024.0 * 1024.0) as u64
+    }
+}
+
+/// What the offline cache holds right now.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct CacheStatus {
+    /// Space downloaded files take (not counting files kept on purpose).
+    pub used_bytes: u64,
+    pub files: u64,
+    /// Space of files kept with "Always keep on this device".
+    pub kept_bytes: u64,
+    /// Files opened often, kept downloaded.
+    pub frequent: u64,
+    /// Files cleared by the cache since the drive started.
+    pub cleared: u64,
+    pub checked_at: Option<i64>,
+}
+
+/// The cache's settings and state, shared with the running drive.
+#[derive(Default)]
+pub struct Cache {
+    pub settings: Mutex<CacheSettings>,
+    pub status: Mutex<CacheStatus>,
+    /// Look at the cache now (settings changed).
+    pub wake: tokio::sync::Notify,
+}
 
 /// What the drive needs from the node.
 pub struct Context {
@@ -38,7 +104,7 @@ pub struct Context {
     pub runtime: tokio::runtime::Handle,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Status {
     /// The drive can run here (Windows 10 1809 or later).
     pub supported: bool,
@@ -50,6 +116,8 @@ pub struct Status {
     pub default_path: String,
     /// Why the drive is not running although it is on.
     pub error: Option<String>,
+    pub cache: CacheSettings,
+    pub cache_status: CacheStatus,
 }
 
 #[derive(Default)]
@@ -66,6 +134,7 @@ struct State {
 #[derive(Default)]
 pub struct VirtualDrive {
     context: std::sync::OnceLock<Arc<Context>>,
+    cache: Arc<Cache>,
     state: Mutex<State>,
     /// One change at a time.
     applying: tokio::sync::Mutex<()>,
@@ -147,7 +216,15 @@ impl VirtualDrive {
             path: state.path.clone().unwrap_or_else(default_path).display().to_string(),
             default_path: default_path().display().to_string(),
             error: state.error.clone(),
+            cache: self.cache.settings.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            cache_status: self.cache.status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         }
+    }
+
+    /// Applies new offline cache settings (also while the drive is off).
+    pub fn set_cache(&self, settings: CacheSettings) {
+        *self.cache.settings.lock().unwrap_or_else(|e| e.into_inner()) = settings;
+        self.cache.wake.notify_one();
     }
 
     /// Turns the drive on in `path` (or moves it there), or off. Turning it
@@ -187,8 +264,9 @@ impl VirtualDrive {
             }
             let started = if enabled {
                 let path = path.clone();
+                let cache = self.cache.clone();
                 Some(
-                    tokio::task::spawn_blocking(move || windows::Provider::start(context, &path))
+                    tokio::task::spawn_blocking(move || windows::Provider::start(context, &path, cache))
                         .await
                         .map_err(|e| e.to_string())?,
                 )

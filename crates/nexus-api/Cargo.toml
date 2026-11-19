@@ -27,6 +27,10 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["c
 webpki-roots = "1"
 # Shared folders are sent as one zip file.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Opening archives: .tar, .tar.gz and .7z.
+tar = "0.4"
+flate2 = "1"
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["ppmd", "deflate"] }
 futures-util = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
@@ -34,13 +38,34 @@ hyper-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+socket2 = "0.6"
+netdev = "0.46"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff"] }
+kamadak-exif = "0.6"
+lofty = "0.22"
+pdf-extract = "0.9"
 tower = { workspace = true }
 tower-http = { workspace = true }
 tracing = { workspace = true }
 
 tempfile = { workspace = true }
+dav-server = "0.12.0"
+percent-encoding = "2"
 
 [dev-dependencies]
 # A passkey in memory, to sign in with in tests.
 nexus-security = { workspace = true, features = ["soft-authenticator"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Power"] }
+windows = { version = "0.62", features = [
+    "Data_Pdf",
+    "Foundation",
+    "Foundation_Collections",
+    "Graphics_Imaging",
+    "Media_FaceAnalysis",
+    "Media_Ocr",
+    "Storage",
+    "Storage_Streams",
+] }

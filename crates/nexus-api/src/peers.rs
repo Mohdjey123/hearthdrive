@@ -288,6 +288,9 @@ pub struct HelloReply {
     pub addresses: Vec<String>,
     /// Signature over the caller's nonce, proving the right node answered.
     pub proof: String,
+    /// What waking the replying node over the network needs.
+    #[serde(default)]
+    pub wake: Option<crate::power::WakeInfo>,
 }
 
 pub fn spawn_peer_monitor(state: SharedState) {
@@ -318,6 +321,13 @@ async fn check_peer(state: &SharedState, device: Device) {
             let name = (!name.is_empty() && name.len() <= 64).then_some(name);
             let addresses: Vec<String> =
                 reply.addresses.into_iter().filter(|a| nexus_network::valid_hint(a)).take(8).collect();
+            if let Some(wake) = reply.wake.map(crate::power::WakeInfo::cleaned).filter(|w| !w.is_empty()) {
+                let macs = serde_json::to_string(&wake.macs).unwrap_or_default();
+                let broadcasts = serde_json::to_string(&wake.broadcasts).unwrap_or_default();
+                if device.mac_addresses.as_deref() != Some(macs.as_str()) || device.broadcast.as_deref() != Some(broadcasts.as_str()) {
+                    let _ = state.db.set_device_wake(&device.id, &macs, &broadcasts).await;
+                }
+            }
             if let Err(e) = state
                 .db
                 .mark_peer_online(&device.id, route.as_deref(), Some(latency), name, Some(&addresses), Some(&reply.version))
@@ -325,6 +335,7 @@ async fn check_peer(state: &SharedState, device: Device) {
             {
                 tracing::warn!(error = %e, "could not record peer presence");
             }
+            state.peer_health.reached(&device.id);
             if device.status != "online" {
                 tracing::info!(device = %device.name, route = ?route, latency, "paired device is online");
                 state.introductions.notify_one();
@@ -333,6 +344,9 @@ async fn check_peer(state: &SharedState, device: Device) {
         }
         Err(e) => {
             tracing::debug!(device = %device.name, error = %e, "peer did not answer");
+            let detail = e.to_string();
+            let here_online = state.net.snapshot().status.connected || !state.net.p2p.hints().is_empty();
+            state.peer_health.failed(&device.id, explain_unreachable(&detail, here_online), detail);
             if device.status != "offline" {
                 tracing::info!(device = %device.name, "paired device is offline");
                 let _ = state.db.mark_peer_offline(&device.id).await;
@@ -362,10 +376,104 @@ async fn hello(state: &SharedState, device: &Device) -> Result<(i64, Option<Stri
 }
 
 // ---------------------------------------------------------------------------
+// Traffic and reachability per device
+
+/// Why a paired device cannot be reached, in words for people.
+#[derive(Debug, Clone, Serialize)]
+pub struct Unreachable {
+    pub reason: String,
+    /// What the connection attempt reported.
+    pub detail: String,
+    pub since: i64,
+}
+
+#[derive(Default)]
+struct Health {
+    sample: Option<(Instant, u64, u64)>,
+    rx_bps: u64,
+    tx_bps: u64,
+    problem: Option<Unreachable>,
+}
+
+/// Live traffic rates and the last connection problem of each paired device.
+#[derive(Default)]
+pub struct PeerHealth {
+    inner: std::sync::Mutex<std::collections::HashMap<String, Health>>,
+}
+
+impl PeerHealth {
+    /// Bytes per second received from and sent to a device, measured since
+    /// the last time anyone asked (at least a second, at most half a minute).
+    pub fn rates(&self, device_id: &str, traffic: Option<(u64, u64)>) -> (u64, u64) {
+        let now = Instant::now();
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let h = map.entry(device_id.to_string()).or_default();
+        match (traffic, h.sample) {
+            (None, _) => {
+                h.sample = None;
+                (h.rx_bps, h.tx_bps) = (0, 0);
+            }
+            (Some((rx, tx)), Some((at, prev_rx, prev_tx))) => {
+                let secs = now.duration_since(at).as_secs_f64();
+                if secs > 30.0 {
+                    h.sample = Some((now, rx, tx));
+                    (h.rx_bps, h.tx_bps) = (0, 0);
+                } else if secs >= 1.0 {
+                    h.rx_bps = (rx.saturating_sub(prev_rx) as f64 / secs) as u64;
+                    h.tx_bps = (tx.saturating_sub(prev_tx) as f64 / secs) as u64;
+                    h.sample = Some((now, rx, tx));
+                }
+            }
+            (Some((rx, tx)), None) => h.sample = Some((now, rx, tx)),
+        }
+        (h.rx_bps, h.tx_bps)
+    }
+
+    pub fn problem(&self, device_id: &str) -> Option<Unreachable> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).get(device_id).and_then(|h| h.problem.clone())
+    }
+
+    fn failed(&self, device_id: &str, reason: String, detail: String) {
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let h = map.entry(device_id.to_string()).or_default();
+        let since = h.problem.as_ref().map(|p| p.since).unwrap_or_else(now_ms);
+        h.problem = Some(Unreachable { reason, detail, since });
+    }
+
+    fn reached(&self, device_id: &str) {
+        if let Some(h) = self.inner.lock().unwrap_or_else(|e| e.into_inner()).get_mut(device_id) {
+            h.problem = None;
+        }
+    }
+}
+
+/// Turns what a failed connection attempt reported into an explanation.
+pub fn explain_unreachable(error: &str, here_online: bool) -> String {
+    let e = error.to_ascii_lowercase();
+    if !here_online {
+        "This computer is not connected to a network, so no other device can be reached.".into()
+    } else if e.contains("no known address") {
+        "NEXUS does not know where to find this device. Open NEXUS on it once while both are online, or pair again.".into()
+    } else if e.contains("did not come from") {
+        "Another device answered at its address. If it was reinstalled, remove it under Devices and pair it again.".into()
+    } else if e.contains("refused") || e.contains("remote access is off") {
+        "The device turned the connection down: remote access is off on it. Turn it on under Settings, Network on that device.".into()
+    } else if e.contains("blocked") || e.contains("401") || e.contains("403") || e.contains("not paired") || e.contains("unknown device") {
+        "The device no longer accepts this one. It may have removed or blocked this computer; pair again.".into()
+    } else if e.contains("timed out") || e.contains("in time") || e.contains("timeout") {
+        "The device did not answer. It may be asleep or turned off, NEXUS may not be running on it, or a firewall blocks it.".into()
+    } else if e.contains("relay") {
+        "The relay server that links the two devices could not be reached. Direct connections still work on the same network.".into()
+    } else {
+        "The device could not be reached. It may be off, asleep or without a network connection.".into()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Proxy
 
 /// API areas another node's files can be browsed through.
-const PROXY_AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "shared-folders"];
+const PROXY_AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "shared-folders", "commands", "photos", "albums", "library", "playback", "tags"];
 
 const REQUEST_HEADERS: &[HeaderName] = &[
     header::CONTENT_TYPE,
@@ -395,7 +503,7 @@ fn is_ticket_content(rest: &str, query: Option<&str>) -> bool {
     let parts: Vec<&str> = rest.split('/').collect();
     parts.len() == 3
         && parts[0] == "files"
-        && parts[2] == "content"
+        && (parts[2] == "content" || parts[2] == "thumbnail" || parts[2] == "stream")
         && query.is_some_and(|q| q.split('&').any(|p| p.starts_with("ticket=")))
 }
 
@@ -429,6 +537,7 @@ pub async fn proxy(
             device_id: None,
             allowed_roots: None,
             shared: Vec::new(),
+            via_token: false,
         },
         None => return Err(NexusError::Unauthorized.into()),
     };

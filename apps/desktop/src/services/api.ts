@@ -27,14 +27,23 @@ export interface RootSummary { id: string; name: string; online: boolean; read_o
 /** What someone may do in a shared folder: open it, change it, or only add files. */
 export type FolderAccess = 'view' | 'edit' | 'add'
 export interface FolderMember {
-  /** `user:<id>` or `device:<id>`. */
+  /** `user:<id>`, `device:<id>` or `group:<id>`. */
   member: string
   access: FolderAccess
   added_at: number
-  kind: 'person' | 'device'
+  kind: 'person' | 'device' | 'group'
   name: string
   /** Why they can do less (or more) than `access` says. */
   note: string | null
+}
+/** A group of people on this computer ("Family"), to share folders with all of them. */
+export interface PeopleGroup {
+  id: string
+  name: string
+  created_at: number
+  members: { user_id: string; username: string }[]
+  /** Names of the folders shared with the group. */
+  folders: string[]
 }
 export interface SharedFolder {
   id: string
@@ -68,6 +77,30 @@ export interface FileComment {
 }
 export interface FileDetails extends FileEntry { root: RootSummary }
 export interface FoundItem extends FileEntry { root_name: string }
+
+export type FileKindFilter = 'image' | 'video' | 'audio' | 'document' | 'archive' | 'code' | 'other' | 'folder'
+
+export interface SearchFilters {
+  root_id?: string
+  kind?: FileKindFilter
+  modified_after?: number
+  modified_before?: number
+  min_size?: number
+  max_size?: number
+  tag?: string
+  /** Only what can be opened now. */
+  available?: boolean
+}
+
+export interface DuplicateGroup { hash: string; size: number; wasted: number; files: FoundItem[] }
+
+export interface ArchiveListing {
+  format: string
+  entries: { path: string; size: number; is_dir: boolean }[]
+  total_entries: number
+  total_size: number
+  truncated: boolean
+}
 
 export interface ScanState {
   root_id: string
@@ -132,6 +165,124 @@ export interface Device {
   introduced_by: string | null
   /** When it was blocked: its requests are refused and nothing is sent to it. */
   blocked_at: number | null
+  /** Bytes per second received from and sent to it right now. */
+  rx_bps: number
+  tx_bps: number
+  /** Why it cannot be reached, while it cannot. */
+  unreachable: { reason: string; detail: string; since: number } | null
+  /** It can be woken over the network (Wake-on-LAN). */
+  can_wake: boolean
+}
+
+/** What NEXUS read from inside a photo, video or song. */
+export interface MediaInfo {
+  kind: 'photo' | 'video' | 'music' | 'other'
+  taken_at: number | null
+  width: number | null
+  height: number | null
+  camera: string | null
+  lens: string | null
+  latitude: number | null
+  longitude: number | null
+  duration_ms: number | null
+  title: string | null
+  artist: string | null
+  album: string | null
+  album_artist: string | null
+  track: number | null
+  disc: number | null
+  year: number | null
+  genre: string | null
+  show_name: string | null
+  season: number | null
+  episode: number | null
+  media_type: 'film' | 'episode' | 'music' | 'home_video' | null
+  error: string | null
+}
+
+export type PhotoItem = FileEntry & {
+  media: MediaInfo
+  thumb_url: string | null
+  preview_url: string | null
+  content_url?: string
+}
+
+export interface PhotoAlbum {
+  id: string
+  name: string
+  created_by: string
+  created_at: number
+  cover_id: string | null
+  cover_url: string | null
+  items: number
+  mine: boolean
+  can_add: boolean
+  members: { member: string; can_add: boolean }[]
+}
+
+export interface PhotoPlace { file_id: string; root_id: string; latitude: number; longitude: number; taken_at: number | null; thumb_url: string }
+
+export type PhotoQuery = { kind?: 'photo' | 'video'; from?: number; to?: number; camera?: string; root_id?: string; place?: 1; people?: 1; offset?: number; limit?: number }
+
+/** Photo calls for this computer (`''`) or a paired device's proxy prefix. */
+export function photoApi(prefix = '') {
+  return {
+    list: (query: PhotoQuery = {}) => request<{ items: PhotoItem[]; more: boolean }>('GET', `${prefix}/photos${q(query)}`),
+    months: (query: PhotoQuery = {}) =>
+      request<{ months: { month: string; count: number }[]; cameras: [string, number][]; reading: boolean }>('GET', `${prefix}/photos/months${q(query)}`),
+    places: () => request<PhotoPlace[]>('GET', `${prefix}/photos/places`),
+    memories: () => request<{ year: number; years_ago: number; items: PhotoItem[] }[]>('GET', `${prefix}/photos/memories`),
+    similar: () => request<PhotoItem[][]>('GET', `${prefix}/photos/similar`),
+    albums: () => request<PhotoAlbum[]>('GET', `${prefix}/albums`),
+    album: (id: string) => request<PhotoAlbum & { items: PhotoItem[] }>('GET', `${prefix}/albums/${id}`),
+    createAlbum: (name: string, file_ids: string[] = []) => request<PhotoAlbum>('POST', `${prefix}/albums`, { name, file_ids }),
+    changeAlbum: (id: string, b: { name?: string; cover_id?: string; add?: string[]; remove?: string[]; members?: { member: string; can_add: boolean }[] }) =>
+      request<PhotoAlbum>('PATCH', `${prefix}/albums/${id}`, b),
+    deleteAlbum: (id: string) => request<void>('DELETE', `${prefix}/albums/${id}`),
+    /** A URL from the API (`/api/v1/...`), made absolute and routed to the device. */
+    url: (path: string | null | undefined) => (path ? absoluteUrl(prefix ? path.replace(/^\/api\/v1/, `/api/v1${prefix}`) : path) : null),
+  }
+}
+
+export interface Playback { file_id: string; position_ms: number; duration_ms: number | null; device_name: string | null; updated_at: number }
+export type LibraryItem = FileEntry & { media: MediaInfo; playback: Playback | null }
+export interface MusicAlbum { album: string; artist: string; year: number | null; tracks: number; duration_ms: number; first_file: string }
+export interface LibraryCapabilities { transcode: boolean; ocr: boolean; faces: boolean; ocr_images: boolean }
+export interface FileTag { tag: string; auto: boolean; added_by: string; added_at: number }
+export interface DocText { method: string | null; chars: number; read_at: number; error: string | null }
+
+/** Media library calls for this computer (`''`) or a paired device's proxy prefix. */
+export function libraryApi(prefix = '') {
+  return {
+    music: () => request<MusicAlbum[]>('GET', `${prefix}/library/music`),
+    items: (type: 'music' | 'film' | 'episode' | 'home_video', f: { album?: string; artist?: string; show?: string } = {}) =>
+      request<LibraryItem[]>('GET', `${prefix}/library/items${q({ type, ...f })}`),
+    capabilities: () => request<LibraryCapabilities>('GET', `${prefix}/library/capabilities`),
+    continueWatching: () => request<(FileEntry & { media: MediaInfo; playback: Playback })[]>('GET', `${prefix}/playback`),
+    playback: (id: string) => request<Playback | null>('GET', `${prefix}/playback/${id}`),
+    savePlayback: (id: string, b: { position_ms: number; duration_ms?: number; device?: string }) => request<void>('PUT', `${prefix}/playback/${id}`, b),
+    streamLink: (id: string) => request<{ url: string }>('POST', `${prefix}/files/${id}/stream-link`),
+    tags: () => request<{ tag: string; files: number }[]>('GET', `${prefix}/tags`),
+    fileTags: (id: string) => request<{ tags: FileTag[]; text: DocText | null }>('GET', `${prefix}/files/${id}/tags`),
+    setFileTags: (id: string, tags: string[], keep_auto?: string[]) =>
+      request<{ tags: FileTag[]; text: DocText | null }>('PUT', `${prefix}/files/${id}/tags`, { tags, keep_auto }),
+    setDocumentSettings: (ocr_images: boolean) => request<LibraryCapabilities>('PUT', `${prefix}/documents/settings`, { ocr_images }),
+    /** A URL from the API, made absolute and routed to the device. */
+    url: (path: string) => absoluteUrl(prefix ? path.replace(/^\/api\/v1/, `/api/v1${prefix}`) : path),
+  }
+}
+
+/** A NEXUS device heard on the local network. */
+export interface NearbyDevice {
+  id: string
+  name: string
+  device_type: string
+  address: string
+  fingerprint: string | null
+  version: string
+  paired: boolean
+  /** The pairing link it offers while its Add device window is open. */
+  invite: string | null
 }
 
 export type NetworkState = 'off' | 'starting' | 'online' | 'local_only'
@@ -272,6 +423,24 @@ export interface VirtualDriveStatus {
   path: string
   default_path: string
   error: string | null
+  cache: VirtualDriveCache
+  cache_status: {
+    used_bytes: number
+    files: number
+    kept_bytes: number
+    frequent: number
+    cleared: number
+    checked_at: number | null
+  }
+}
+
+export interface VirtualDriveCache {
+  /** Most space downloaded files take, in GB (0: no limit). */
+  limit_gb: number
+  /** Downloaded files not opened this many days are cleared (0: never). */
+  clear_after_days: number
+  /** Often used files stay downloaded and are refreshed when they change. */
+  keep_frequent: boolean
 }
 
 export interface TrashItem {
@@ -420,6 +589,10 @@ export interface TransferSettings {
   /** "HH:MM", local time; both null for any time. */
   hours_start: string | null
   hours_end: string | null
+  /** Transfers wait while this computer runs on battery. */
+  pause_on_battery: boolean
+  /** The computer does not go to sleep while transfers run. */
+  keep_awake: boolean
 }
 
 export interface Backup {
@@ -469,6 +642,8 @@ export interface UpdateStatus {
   install_note: string | null
   package_path: string | null
   auto_install: boolean
+  from_github: boolean
+  github_repo: string | null
   can_configure: boolean
   checking: boolean
   downloading: string | null
@@ -734,8 +909,16 @@ function createFileApi(prefix: string) {
     restoreFile: (id: string) => r<FileDetails>('POST', `/files/${id}/restore`),
     trash: () => r<TrashItem[]>('GET', '/trash'),
     purge: (id: string) => r<void>('DELETE', `/trash/${id}`),
-    search: (query: string, root_id?: string) =>
-      r<{ items: FoundItem[]; has_more: boolean }>('GET', `/search${q({ q: query, root_id, limit: 200 })}`),
+    search: (query: string, filters: SearchFilters = {}) =>
+      r<{ items: FoundItem[]; has_more: boolean }>(
+        'GET',
+        `/search${q({ q: query, limit: 200, ...filters, available: filters.available ? 1 : undefined })}`,
+      ),
+    duplicates: (min_size?: number, root_id?: string) => r<DuplicateGroup[]>('GET', `/files/duplicates${q({ min_size, root_id })}`),
+    archive: (id: string) => r<ArchiveListing>('GET', `/files/${id}/archive`),
+    extract: (id: string) => r<{ job_id: string; path: string }>('POST', `/files/${id}/extract`),
+    fetchUrl: (b: { root_id: string; path: string; url: string; name?: string }) =>
+      r<{ job_id: string; path: string }>('POST', '/files/fetch', b),
     recent: (limit = 10) => r<FoundItem[]>('GET', `/recent${q({ limit })}`),
     versions: (id: string) => r<FileVersion[]>('GET', `/files/${id}/versions`),
     restoreVersion: (id: string, version: string) => r<FileDetails>('POST', `/files/${id}/versions/${version}/restore`),
@@ -814,6 +997,10 @@ export const api = {
   updateSharedFolder: (id: string, b: { name?: string; members?: { member: string; access: FolderAccess }[] }) =>
     request<SharedFolder>('PATCH', `/shared-folders/${id}`, b),
   unshareFolder: (id: string) => request<void>('DELETE', `/shared-folders/${id}`),
+  groups: () => request<PeopleGroup[]>('GET', '/groups'),
+  createGroup: (b: { name: string; members: string[] }) => request<PeopleGroup>('POST', '/groups', b),
+  updateGroup: (id: string, b: { name?: string; members?: string[] }) => request<PeopleGroup>('PATCH', `/groups/${id}`, b),
+  removeGroup: (id: string) => request<void>('DELETE', `/groups/${id}`),
   createUser: (b: { username: string; password: string; role: Role }) => request<User>('POST', '/users', b),
   updateUser: (id: string, b: { role?: Role; password?: string; allowed_roots?: string[]; all_roots?: boolean; locked?: boolean; two_factor?: false }) =>
     request<User>('PATCH', `/users/${id}`, b),
@@ -821,7 +1008,7 @@ export const api = {
 
   /** Starts copying files and folders between devices ('' or undefined = this
    *  device). Resolves at once; the copy runs in the background (see `jobs`). */
-  copyItems: (b: { from_device?: string; file_ids: string[]; to_device?: string; root_id: string; path: string }) =>
+  copyItems: (b: { from_device?: string; file_ids: string[]; to_device?: string; root_id: string; path: string; remove_originals?: boolean }) =>
     requestJson<Job>('POST', '/transfers/copy', b),
   jobs: () => request<Job[]>('GET', '/transfers'),
   cancelJob: (id: string) => request<void>('POST', `/transfers/${id}/cancel`),
@@ -887,12 +1074,14 @@ export const api = {
   updates: () => request<UpdateStatus>('GET', '/updates'),
   checkUpdates: () => request<UpdateStatus>('POST', '/updates/check'),
   setAutoUpdate: (auto_install: boolean) => request<UpdateStatus>('PUT', '/updates/settings', { auto_install }),
+  setGithubUpdates: (from_github: boolean) => request<UpdateStatus>('PUT', '/updates/settings', { from_github }),
   installUpdate: () => request<UpdateRelease>('POST', '/updates/install'),
   introductions: () => request<{ enabled: boolean }>('GET', '/devices/introductions'),
   setIntroductions: (enabled: boolean) => request<{ enabled: boolean }>('PUT', '/devices/introductions', { enabled }),
   autostart: () => request<{ supported: boolean; enabled: boolean }>('GET', '/system/autostart'),
   virtualDrive: () => request<VirtualDriveStatus>('GET', '/vdrive'),
   setVirtualDrive: (b: { enabled: boolean; path?: string }) => request<VirtualDriveStatus>('PUT', '/vdrive', b),
+  setVirtualDriveCache: (b: VirtualDriveCache) => request<VirtualDriveStatus>('PUT', '/vdrive/cache', b),
   setAutostart: (enabled: boolean) => request<{ supported: boolean; enabled: boolean }>('PUT', '/system/autostart', { enabled }),
   removeDevice: (id: string) => request<void>('DELETE', `/devices/${id}`),
   createInvite: () => request<Invite>('POST', '/devices/pair'),
@@ -902,6 +1091,13 @@ export const api = {
     request<{ device_id: string }>('POST', `/devices/pair/requests/${id}/approve`, { role }),
   rejectPairing: (id: string) => request<void>('POST', `/devices/pair/requests/${id}/reject`),
   join: (link: string) => request<JoinState>('POST', '/pairing/join', { link }),
+  nearbyDevices: () => request<NearbyDevice[]>('GET', '/devices/nearby'),
+  /** Commands that can be run on a device ('' for this computer). */
+  deviceCommands: (deviceId: string) =>
+    request<{ name: string; label: string; description: string }[]>('GET', `${deviceId ? peerPrefix(deviceId) : ''}/commands`),
+  runCommand: (deviceId: string, name: string) =>
+    request<{ message: string }>('POST', `${deviceId ? peerPrefix(deviceId) : ''}/commands/${encodeURIComponent(name)}`),
+  wakeDevice: (id: string) => request<{ sent: number; relayed_by: string[] }>('POST', `/devices/${id}/wake`),
   joinStatus: (id: string) => request<JoinState>('GET', `/pairing/join/${id}`),
 
   network: () => request<NetworkInfo>('GET', '/network'),
@@ -1070,4 +1266,180 @@ function uploadWhole(
     xhr.send(file)
   })
   return { promise, abort: () => xhr.abort() }
+}
+
+/* ---------- Automation rules and storage suggestions ---------- */
+
+export interface RuleConditions {
+  subfolders?: boolean
+  kinds?: string[]
+  extensions?: string[]
+  name_contains?: string | null
+  text_contains?: string | null
+  tag?: string | null
+  older_than_days?: number | null
+  larger_than_mb?: number | null
+  smaller_than_mb?: number | null
+}
+
+export type RuleAction =
+  | { type: 'tag'; tags: string[] }
+  | { type: 'move'; folder: string }
+  | { type: 'copy'; device_id?: string | null; root_id: string; folder: string }
+  | { type: 'trash' }
+
+export type RuleTrigger = 'added' | 'hourly' | 'daily'
+
+/** A rule as it is written: what the editor sends. */
+export interface RuleDraft {
+  name: string
+  enabled?: boolean
+  trigger: RuleTrigger
+  root_id: string
+  path: string
+  when: RuleConditions
+  then: RuleAction
+}
+
+export interface Rule {
+  id: string
+  name: string
+  enabled: boolean
+  trigger: RuleTrigger
+  root_id: string
+  path: string
+  created_by: string
+  created_at: number
+  last_run: number | null
+  last_result: string | null
+  files_done: number
+  when: RuleConditions | null
+  then: RuleAction | null
+  root_name: string | null
+}
+
+export interface RulePreviewItem { file: FileEntry; target: string | null }
+export interface RuleRunReport { matched: number; done: number; failed: number; errors: string[]; job_id: string | null }
+
+export interface StorageRoom {
+  device_id: string
+  device_name: string
+  root_id: string | null
+  root_name: string | null
+  available_bytes: number | null
+}
+
+export interface StorageSuggestion {
+  id: string
+  kind: 'full' | 'duplicates' | 'sort'
+  title: string
+  detail: string
+  root_id: string
+  bytes: number
+  files: FileEntry[]
+  rule: RuleDraft | null
+  room_on: StorageRoom[]
+}
+
+export const rulesApi = {
+  list: () => request<Rule[]>('GET', '/rules'),
+  create: (r: RuleDraft) => request<Rule>('POST', '/rules', r),
+  update: (id: string, r: RuleDraft) => request<Rule>('PUT', `/rules/${id}`, r),
+  remove: (id: string) => request<void>('DELETE', `/rules/${id}`),
+  run: (id: string) => request<RuleRunReport>('POST', `/rules/${id}/run`),
+  preview: (id: string) => request<RulePreviewItem[]>('GET', `/rules/${id}/preview`),
+  previewDraft: (r: RuleDraft) => request<RulePreviewItem[]>('POST', '/rules/preview', r),
+  suggestions: () => request<StorageSuggestion[]>('GET', '/storage/suggestions'),
+}
+
+/* ---------- Tokens for programs, WebDAV and S3 ---------- */
+
+export interface ProgramSettings { enabled: boolean; port: number; lan: boolean }
+export interface ProgramStatus { running: boolean; error: string | null; addresses: string[] }
+export interface ApiToken {
+  id: string
+  user_id: string
+  username: string | null
+  name: string
+  read_only: boolean
+  created_at: number
+  last_used: number | null
+  expires_at: number | null
+}
+export interface CreatedToken extends ApiToken { secret_token: string; access_key: string; secret_key: string }
+
+export const programsApi = {
+  get: () => request<{ settings: ProgramSettings; status: ProgramStatus }>('GET', '/programs'),
+  set: (s: ProgramSettings) => request<{ settings: ProgramSettings; status: ProgramStatus }>('PUT', '/programs', s),
+  tokens: () => request<ApiToken[]>('GET', '/tokens'),
+  createToken: (b: { name: string; read_only: boolean; expires_days?: number }) => request<CreatedToken>('POST', '/tokens', b),
+  removeToken: (id: string) => request<void>('DELETE', `/tokens/${encodeURIComponent(id)}`),
+}
+
+/* ---------- Encrypted folders and plugins ---------- */
+
+export interface EncryptionState { encrypted: boolean; locked_files: number; open_files: number }
+export interface PluginCommand {
+  plugin: string
+  plugin_name: string
+  id: string
+  label: string
+  description: string
+  for: 'file' | 'folder' | 'none'
+  extensions: string[]
+  program: string
+  args: string[]
+}
+export interface PluginInfo {
+  id: string
+  folder: string
+  enabled: boolean
+  changed: boolean
+  error: string | null
+  manifest: { name: string; description: string; version: string; commands: Omit<PluginCommand, 'plugin' | 'plugin_name'>[] } | null
+}
+export interface PluginRun { exit_code: number | null; output: string; took_ms: number; timed_out: boolean }
+
+export const toolsApi = {
+  encryption: (id: string) => request<EncryptionState>('GET', `/files/${id}/encryption`),
+  lockFolder: (id: string, password: string) => request<Job>('POST', `/files/${id}/encryption/lock`, { password }),
+  unlockFolder: (id: string, password: string) => request<Job>('POST', `/files/${id}/encryption/unlock`, { password }),
+  plugins: () => request<{ folder: string; plugins: PluginInfo[] }>('GET', '/plugins'),
+  setPlugin: (id: string, enabled: boolean) => request<PluginInfo>('PUT', `/plugins/${encodeURIComponent(id)}`, { enabled }),
+  pluginCommands: (file_id?: string) => request<PluginCommand[]>('GET', `/plugins/commands${file_id ? `?file_id=${encodeURIComponent(file_id)}` : ''}`),
+  runPlugin: (plugin: string, command: string, file_id?: string) =>
+    request<PluginRun>('POST', `/plugins/${encodeURIComponent(plugin)}/commands/${encodeURIComponent(command)}`, { file_id }),
+}
+
+/* ---------- Upload links (file requests) ---------- */
+
+export interface UploadLink {
+  id: string
+  root_id: string
+  root_name: string
+  path: string
+  title: string
+  message: string
+  user_id: string
+  created_by: string
+  created_at: number
+  expires_at: number | null
+  max_bytes: number
+  received_bytes: number
+  received_files: number
+  last_used_at: number | null
+  /** The page's path on the address for programs. */
+  link_path: string
+  /** The link at each address that can open it, local network first; empty while that address is off. */
+  urls: string[]
+  reachable_from_network: boolean
+  /** Expired or full. */
+  expired: boolean
+}
+
+export const uploadLinksApi = {
+  list: () => request<UploadLink[]>('GET', '/upload-links'),
+  create: (b: { root_id: string; path: string; title?: string; message?: string; expires_days?: number; max_mb?: number }) =>
+    request<UploadLink>('POST', '/upload-links', b),
+  remove: (id: string) => request<void>('DELETE', `/upload-links/${encodeURIComponent(id)}`),
 }

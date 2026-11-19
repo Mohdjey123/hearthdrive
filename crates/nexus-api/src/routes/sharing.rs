@@ -7,6 +7,9 @@
 //! a viewer given "edit" can still only view. Owners and administrators
 //! decide what is shared.
 //!
+//! Groups of people ("Family") can be members too: everyone in the group
+//! gets the folder, and people added to the group later get it as well.
+//!
 //! Anyone who may open a file may comment on it. Authors can delete their
 //! comments; owners and administrators can delete any.
 
@@ -20,7 +23,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use nexus_common::NexusError;
 use nexus_common::types::StorageRoot;
-use nexus_database::{Comment, FolderAccess, SharedFolder};
+use nexus_database::{Comment, FolderAccess, Group, SharedFolder};
 use nexus_security::{Action, role_allows};
 use nexus_storage::paths;
 use serde::{Deserialize, Serialize};
@@ -35,7 +38,7 @@ pub struct MemberView {
     member: String,
     access: FolderAccess,
     added_at: i64,
-    /// "person" or "device".
+    /// "person", "device" or "group".
     kind: &'static str,
     name: String,
     /// Why they can do less (or more) than `access` says, if they can.
@@ -62,6 +65,7 @@ type Entry = (String, nexus_common::types::Role, Option<Vec<String>>);
 struct Directory {
     people: HashMap<String, Entry>,
     devices: HashMap<String, Entry>,
+    groups: HashMap<String, Group>,
 }
 
 impl Directory {
@@ -74,7 +78,16 @@ impl Directory {
             let limits = d.allowed_root_list();
             (d.id, (d.name, d.role, limits))
         });
-        Ok(Self { people: people.collect(), devices: devices.collect() })
+        let groups = s.db.list_groups().await?.into_iter().map(|g| (g.id.clone(), g));
+        Ok(Self { people: people.collect(), devices: devices.collect(), groups: groups.collect() })
+    }
+
+    /// Whether `member` is someone (or a group) here.
+    fn knows(&self, member: &str) -> bool {
+        match member.strip_prefix("group:") {
+            Some(id) => self.groups.contains_key(id),
+            None => self.find(member).is_some(),
+        }
     }
 
     fn find(&self, member: &str) -> Option<(&'static str, &Entry)> {
@@ -88,6 +101,17 @@ impl Directory {
     }
 
     fn view(&self, root: &StorageRoot, member: &nexus_database::FolderMember) -> MemberView {
+        if let Some(id) = member.member.strip_prefix("group:") {
+            let (name, note) = match self.groups.get(id) {
+                Some(g) => {
+                    let names: Vec<&str> = g.members.iter().filter_map(|u| self.people.get(u)).map(|p| p.0.as_str()).collect();
+                    let note = if names.is_empty() { "Nobody is in it yet".to_string() } else { names.join(", ") };
+                    (g.name.clone(), Some(note))
+                }
+                None => ("Removed group".to_string(), None),
+            };
+            return MemberView { member: member.member.clone(), access: member.access, added_at: member.added_at, kind: "group", name, note };
+        }
         let (kind, name, note) = match self.find(&member.member) {
             Some((kind, (name, role, limits))) => {
                 let writes = role_allows(*role, Action::Write);
@@ -161,8 +185,8 @@ fn members_of(dir: &Directory, body: Vec<MemberBody>) -> Result<Vec<(String, Fol
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for m in body {
-        if dir.find(&m.member).is_none() {
-            return Err(NexusError::invalid("Share with people on this computer or paired devices"));
+        if !dir.knows(&m.member) {
+            return Err(NexusError::invalid("Share with people or groups on this computer, or paired devices"));
         }
         if seen.insert(m.member.clone()) {
             out.push((m.member, m.access));
@@ -287,6 +311,127 @@ pub async fn mine(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Jso
         }
     }
     Ok(Json(out))
+}
+
+// -- groups -----------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct GroupView {
+    id: String,
+    name: String,
+    created_at: i64,
+    members: Vec<GroupMemberView>,
+    /// Folders shared with the group.
+    folders: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct GroupMemberView {
+    user_id: String,
+    username: String,
+}
+
+async fn group_views(s: &AppState, only: Option<&str>) -> Result<Vec<GroupView>, NexusError> {
+    let people: HashMap<String, String> = s.db.list_users().await?.into_iter().map(|u| (u.id, u.username)).collect();
+    let folders = s.db.list_shared_folders().await?;
+    Ok(s.db
+        .list_groups()
+        .await?
+        .into_iter()
+        .filter(|g| only.is_none_or(|id| id == g.id))
+        .map(|g| {
+            let key = format!("group:{}", g.id);
+            GroupView {
+                folders: folders.iter().filter(|f| f.members.iter().any(|m| m.member == key)).map(|f| f.name.clone()).collect(),
+                members: g
+                    .members
+                    .iter()
+                    .filter_map(|u| people.get(u).map(|name| GroupMemberView { user_id: u.clone(), username: name.clone() }))
+                    .collect(),
+                id: g.id,
+                name: g.name,
+                created_at: g.created_at,
+            }
+        })
+        .collect())
+}
+
+/// `GET /groups`
+pub async fn groups(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Vec<GroupView>>> {
+    require_manager(&user)?;
+    Ok(Json(group_views(&s, None).await?))
+}
+
+#[derive(Deserialize)]
+pub struct GroupBody {
+    name: Option<String>,
+    /// The ids of the people in it.
+    members: Option<Vec<String>>,
+}
+
+fn group_name(name: Option<&str>) -> Result<Option<String>, NexusError> {
+    match name.map(str::trim) {
+        None => Ok(None),
+        Some("") => Err(NexusError::invalid("Give the group a name")),
+        Some(n) if n.chars().count() > 60 => Err(NexusError::invalid("Group names are at most 60 characters")),
+        Some(n) => Ok(Some(n.to_string())),
+    }
+}
+
+async fn check_people(s: &AppState, ids: &[String]) -> Result<Vec<String>, NexusError> {
+    let people: HashSet<String> = s.db.list_users().await?.into_iter().map(|u| u.id).collect();
+    let mut out = Vec::new();
+    for id in ids {
+        if !people.contains(id) {
+            return Err(NexusError::invalid("Only people on this computer can be in a group"));
+        }
+        if !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// `POST /groups`
+pub async fn create_group(State(s): State<SharedState>, user: AuthUser, Json(body): Json<GroupBody>) -> ApiResult<(StatusCode, Json<GroupView>)> {
+    require_manager(&user)?;
+    let name = group_name(body.name.as_deref())?.ok_or_else(|| NexusError::invalid("Give the group a name"))?;
+    let members = check_people(&s, body.members.as_deref().unwrap_or_default()).await?;
+    let group = s.db.create_group(&name, &user.username).await?;
+    s.db.set_group_members(&group.id, &members).await?;
+    audit(&s, &user, "group.created", Some(&name)).await;
+    let view = group_views(&s, Some(&group.id)).await?.pop().ok_or_else(|| NexusError::NotFound("Group".into()))?;
+    Ok((StatusCode::CREATED, Json(view)))
+}
+
+/// `PATCH /groups/{id}`: renames it or changes who is in it.
+pub async fn update_group(
+    State(s): State<SharedState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+    Json(body): Json<GroupBody>,
+) -> ApiResult<Json<GroupView>> {
+    require_manager(&user)?;
+    let group = s.db.get_group(&id).await?;
+    if let Some(name) = group_name(body.name.as_deref())? {
+        s.db.rename_group(&id, &name).await?;
+    }
+    if let Some(members) = body.members {
+        let members = check_people(&s, &members).await?;
+        s.db.set_group_members(&id, &members).await?;
+    }
+    audit(&s, &user, "group.changed", Some(&group.name)).await;
+    let view = group_views(&s, Some(&id)).await?.pop().ok_or_else(|| NexusError::NotFound("Group".into()))?;
+    Ok(Json(view))
+}
+
+/// `DELETE /groups/{id}`: its folders stay, shared with whoever else they are.
+pub async fn delete_group(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    require_manager(&user)?;
+    let group = s.db.get_group(&id).await?;
+    s.db.delete_group(&id).await?;
+    audit(&s, &user, "group.removed", Some(&group.name)).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // -- comments ---------------------------------------------------------------

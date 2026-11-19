@@ -55,10 +55,14 @@ export function fileKind(entry: { is_dir: boolean; mime_type: string | null; ext
   if (mime === 'application/pdf') return 'PDF'
   if (mime.startsWith('text/')) return 'Text'
   if (['zip', '7z', 'rar', 'tar', 'gz'].includes(entry.extension ?? '')) return 'Archive'
+  if (entry.extension === 'nxlocked') return 'Encrypted'
   return entry.extension ? entry.extension.toUpperCase() : 'File'
 }
 
-export type PreviewKind = 'image' | 'video' | 'audio' | 'text' | null
+/** Camera raw and HEIC photos: shown through their preview. */
+const RAW_EXT = new Set(['dng', 'cr2', 'cr3', 'crw', 'nef', 'nrw', 'arw', 'srf', 'sr2', 'orf', 'rw2', 'raf', 'srw', 'pef', 'x3f', '3fr', 'erf', 'kdc', 'mrw', 'iiq', 'rwl', 'heic', 'heif'])
+
+export type PreviewKind = 'image' | 'video' | 'audio' | 'text' | 'pdf' | 'archive' | null
 
 const TEXT_EXT = new Set(['txt', 'md', 'json', 'csv', 'log', 'xml', 'yml', 'yaml', 'toml', 'ini', 'ts', 'tsx', 'js', 'rs', 'py', 'css', 'html', 'sql', 'sh', 'ps1', 'bat'])
 
@@ -66,8 +70,11 @@ export function previewKind(entry: { is_dir: boolean; mime_type: string | null; 
   if (entry.is_dir) return null
   const mime = entry.mime_type ?? ''
   if (mime.startsWith('image/') && mime !== 'image/svg+xml') return 'image'
+  if (RAW_EXT.has((entry.extension ?? '').toLowerCase())) return 'image'
   if (mime.startsWith('video/')) return 'video'
   if (mime.startsWith('audio/')) return 'audio'
+  if (mime === 'application/pdf' || entry.extension === 'pdf') return 'pdf'
+  if (['zip', 'cbz', '7z', 'cb7', 'tar', 'tgz', 'gz'].includes(entry.extension ?? '')) return 'archive'
   if (mime.startsWith('text/') || TEXT_EXT.has(entry.extension ?? '')) return 'text'
   return null
 }

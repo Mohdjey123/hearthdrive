@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { MessageSquare, Monitor, Trash2, User, UserPlus, X } from 'lucide-react'
+import { MessageSquare, Monitor, Trash2, User, UserPlus, Users, X } from 'lucide-react'
 import {
-  api, type Device, type FileApi, type FileComment, type FileEntry, type FolderAccess, type Person, type SharedFolder,
+  api, type Device, type FileApi, type FileComment, type FileEntry, type FolderAccess, type PeopleGroup, type Person, type SharedFolder,
 } from '../services/api'
 import { formatRelative } from '../lib/format'
 import { toast, toastError } from './Toasts'
@@ -30,7 +30,7 @@ function AccessSelect({ value, onChange, label }: { value: FolderAccess; onChang
 interface Candidate {
   member: string
   name: string
-  kind: 'person' | 'device'
+  kind: 'person' | 'device' | 'group'
 }
 
 interface Row extends Candidate {
@@ -68,8 +68,8 @@ export function ShareFolderDialog({ target, onClose, onSaved }: {
 
   useEffect(() => {
     let live = true
-    Promise.all([api.sharedFolders(), api.users(), api.devices()])
-      .then(([folders, people, devices]: [SharedFolder[], Person[], Device[]]) => {
+    Promise.all([api.sharedFolders(), api.users(), api.devices(), api.groups().catch(() => [] as PeopleGroup[])])
+      .then(([folders, people, devices, groups]: [SharedFolder[], Person[], Device[], PeopleGroup[]]) => {
         if (!live) return
         const found = folders.find((f) => samePlace(f, target)) ?? null
         setExisting(found)
@@ -78,6 +78,7 @@ export function ShareFolderDialog({ target, onClose, onSaved }: {
           setRows(found.members.map((m) => ({ member: m.member, name: m.name, kind: m.kind, access: m.access, note: m.note })))
         }
         const sorted = [
+          ...groups.map((g): Candidate => ({ member: `group:${g.id}`, name: g.name, kind: 'group' })),
           ...people
             .filter((p) => p.role !== 'owner' && p.role !== 'administrator')
             .map((p): Candidate => ({ member: `user:${p.id}`, name: p.username, kind: 'person' })),
@@ -165,10 +166,12 @@ export function ShareFolderDialog({ target, onClose, onSaved }: {
               <ul className="divide-y divide-line rounded-md border border-line">
                 {rows.map((r) => (
                   <li key={r.member} className="flex flex-wrap items-center gap-2 px-3 py-2">
-                    {r.kind === 'device' ? <Monitor className="size-4 shrink-0 text-subtle" /> : <User className="size-4 shrink-0 text-subtle" />}
+                    {r.kind === 'device' ? <Monitor className="size-4 shrink-0 text-subtle" />
+                      : r.kind === 'group' ? <Users className="size-4 shrink-0 text-subtle" />
+                      : <User className="size-4 shrink-0 text-subtle" />}
                     <div className="min-w-0 flex-1">
                       <div className="truncate">{r.name}</div>
-                      {r.note && <div className="text-[11.5px] text-warn">{r.note}</div>}
+                      {r.note && <div className={r.kind === 'group' ? 'text-[11.5px] text-subtle' : 'text-[11.5px] text-warn'}>{r.note}</div>}
                     </div>
                     <AccessSelect
                       label={`What ${r.name} may do`}
@@ -185,9 +188,11 @@ export function ShareFolderDialog({ target, onClose, onSaved }: {
           </div>
           {free.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <select aria-label="Person or device" value={adding} onChange={(e) => setAdding(e.target.value)} className={`${selectClass} min-w-0 flex-1`}>
+              <select aria-label="Person, group or device" value={adding} onChange={(e) => setAdding(e.target.value)} className={`${selectClass} min-w-0 flex-1`}>
                 {free.map((c) => (
-                  <option key={c.member} value={c.member}>{c.kind === 'device' ? `${c.name} (device)` : c.name}</option>
+                  <option key={c.member} value={c.member}>
+                    {c.kind === 'device' ? `${c.name} (device)` : c.kind === 'group' ? `${c.name} (group)` : c.name}
+                  </option>
                 ))}
               </select>
               <AccessSelect label="What they may do" value={addAccess} onChange={setAddAccess} />
@@ -196,7 +201,7 @@ export function ShareFolderDialog({ target, onClose, onSaved }: {
           ) : (
             candidates.length === 0 && (
               <p className="text-[12.5px] text-subtle">
-                Add people in Settings → People (limited to some storage) or pair devices to share folders with them.
+                Add people in Settings → People (limited to some storage), make a group on Sharing, or pair devices to share folders with them.
               </p>
             )
           )}

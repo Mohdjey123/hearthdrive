@@ -16,5 +16,9 @@ sysinfo = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+# Asking disks about their health directly, which needs no administrator.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_Security"] }
+
 [dev-dependencies]
 tempfile = { workspace = true }

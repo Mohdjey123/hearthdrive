@@ -63,11 +63,18 @@ pub fn normalize_relative(input: &str) -> Result<String> {
     Ok(parts.join("/"))
 }
 
+/// The file that makes a folder encrypted (its salt and password check):
+/// never shown, and never changed through NEXUS, since losing it loses the
+/// folder's files.
+pub const VAULT_MARKER: &str = ".nexus-vault";
+
 /// True for paths inside folders NEXUS never exposes (its own bookkeeping
-/// directory, the recycle bin, volume metadata).
+/// directory, the recycle bin, volume metadata) and for encrypted folders'
+/// marker files.
 pub fn is_hidden_internal(rel: &str) -> bool {
     let first = rel.split('/').next().unwrap_or("");
-    SKIPPED_TOP_LEVEL.iter().any(|s| first.eq_ignore_ascii_case(s))
+    let last = rel.rsplit('/').next().unwrap_or("");
+    SKIPPED_TOP_LEVEL.iter().any(|s| first.eq_ignore_ascii_case(s)) || last.eq_ignore_ascii_case(VAULT_MARKER)
 }
 
 pub fn join(parent: &str, name: &str) -> String {

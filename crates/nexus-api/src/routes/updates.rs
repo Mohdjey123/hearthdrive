@@ -1,4 +1,9 @@
-//! Updates that spread between your own devices.
+//! Updates that spread between your own devices, and come from GitHub.
+//!
+//! Every node also looks at the latest release of a public GitHub
+//! repository ([`RELEASES_REPO`]), so a device that cannot reach any paired
+//! device with the update still gets it. Those packages are checked exactly
+//! like the ones from paired devices.
 //!
 //! A release is published by dropping a signed package into one node's
 //! update store (`<data>/updates/<platform>/`, see the `nexus-release`
@@ -226,6 +231,12 @@ pub async fn check(s: &SharedState) {
     s.events.emit(Event::UpdatesChanged);
 }
 
+/// Where a package can be fetched from.
+enum Source<'a> {
+    Peer(&'a Target),
+    Web(String),
+}
+
 async fn fetch_newer(s: &SharedState) -> Result<()> {
     let peers: Vec<Target> = s
         .db
@@ -246,7 +257,7 @@ async fn fetch_newer(s: &SharedState) -> Result<()> {
 
     // The newest trusted release per platform, and who has it.
     let platforms = carried();
-    let mut best: HashMap<String, (SignedRelease, Release, Vec<&Target>)> = HashMap::new();
+    let mut best: HashMap<String, (SignedRelease, Release, Vec<Source>)> = HashMap::new();
     for (target, reply) in listed {
         let Ok((list, _)) = reply else { continue };
         for signed in list.into_iter().take(MAX_LISTED) {
@@ -258,30 +269,63 @@ async fn fetch_newer(s: &SharedState) -> Result<()> {
                 continue;
             }
             match best.get_mut(&release.platform) {
-                Some(entry) if entry.1.version == release.version => entry.2.push(target),
+                Some(entry) if entry.1.version == release.version => entry.2.push(Source::Peer(target)),
                 Some(entry) if !is_newer(&release.version, &entry.1.version) => {}
                 _ => {
-                    best.insert(release.platform.clone(), (signed, release, vec![target]));
+                    best.insert(release.platform.clone(), (signed, release, vec![Source::Peer(target)]));
                 }
             }
         }
     }
 
+    // The latest release on GitHub: devices that cannot reach a paired
+    // device with the update get it there. Paired devices are asked first
+    // when they have the same version (they are usually closer).
     let mut last_error = None;
+    if github_on(s).await {
+        match github_releases(s).await {
+            Ok(list) => {
+                for (signed, release, url) in list {
+                    if have(s, &release.platform).is_some_and(|v| !is_newer(&release.version, &v)) {
+                        continue;
+                    }
+                    match best.get_mut(&release.platform) {
+                        Some(entry) if entry.1.version == release.version => entry.2.push(Source::Web(url)),
+                        Some(entry) if !is_newer(&release.version, &entry.1.version) => {}
+                        _ => {
+                            best.insert(release.platform.clone(), (signed, release, vec![Source::Web(url)]));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "could not look for updates on GitHub");
+                if peers.is_empty() {
+                    last_error = Some(e);
+                }
+            }
+        }
+    }
+
     for (signed, release, sources) in best.into_values() {
         s.updates.set(|st| st.downloading = Some(format!("{} {}", release.platform, release.version)));
         s.events.emit(Event::UpdatesChanged);
         let mut fetched = false;
-        for target in sources {
-            match download(s, target, &signed, &release).await {
+        for source in &sources {
+            let (result, from, device) = match source {
+                Source::Peer(target) => (download(s, target, &signed, &release).await, target.name.as_str(), Some(target.device_id.as_str())),
+                Source::Web(url) => (download_web(s, url, &signed, &release).await, "GitHub", None),
+            };
+            match result {
                 Ok(()) => {
-                    tracing::info!(platform = %release.platform, version = %release.version, from = %target.name, "update received");
-                    let _ = s.db.log_activity("update.received", Some(&format!("{} {}", release.platform, release.version)), None, Some(&target.device_id)).await;
+                    tracing::info!(platform = %release.platform, version = %release.version, from, "update received");
+                    let detail = format!("{} {} from {from}", release.platform, release.version);
+                    let _ = s.db.log_activity("update.received", Some(&detail), None, device).await;
                     fetched = true;
                     break;
                 }
                 Err(e) => {
-                    tracing::warn!(platform = %release.platform, from = %target.name, error = %e, "could not fetch an update");
+                    tracing::warn!(platform = %release.platform, from, error = %e, "could not fetch an update");
                     last_error = Some(e);
                 }
             }
@@ -325,6 +369,141 @@ async fn download(s: &AppState, target: &Target, signed: &SignedRelease, release
                 }
                 file.write_all(&data).await?;
             }
+        }
+        file.flush().await?;
+        Ok(())
+    }
+    .await;
+    drop(file);
+    if let Err(e) = result {
+        let _ = tokio::fs::remove_file(&staged).await;
+        return Err(e);
+    }
+    let (data_dir, signed, release) = (s.data_dir.clone(), signed.clone(), release.clone());
+    tokio::task::spawn_blocking(move || place(&data_dir, &signed, &release, &staged))
+        .await
+        .map_err(NexusError::internal)?
+}
+
+// ---------------------------------------------------------------------------
+// Fetching from GitHub
+
+/// Whether this node also looks for updates on GitHub. On by default.
+pub const GITHUB_SETTING: &str = "updates.github";
+
+/// The public repository whose latest release holds the update packages,
+/// each next to a signed `nexus-update-<platform>.json`. `NEXUS_UPDATE_REPO`
+/// names another (`off` turns GitHub off).
+const RELEASES_REPO: &str = "Mohdjey123/nexus-cloud-releases";
+
+/// The most a signed description may take.
+const MANIFEST_MAX: u64 = 64 * 1024;
+
+fn releases_repo() -> Option<String> {
+    match std::env::var("NEXUS_UPDATE_REPO") {
+        Ok(v) if v.trim().is_empty() || v.trim().eq_ignore_ascii_case("off") => None,
+        Ok(v) => Some(v.trim().to_string()),
+        Err(_) => Some(RELEASES_REPO.to_string()),
+    }
+}
+
+async fn github_on(s: &AppState) -> bool {
+    releases_repo().is_some() && s.db.get_setting(GITHUB_SETTING).await.ok().flatten().is_none_or(|v| v != "0")
+}
+
+fn web() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .tls_backend_preconfigured(crate::share::tls())
+            .user_agent(concat!("NEXUS-Cloud-updater/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(Duration::from_secs(20))
+            .read_timeout(Duration::from_secs(60))
+            .https_only(true)
+            .build()
+            .expect("HTTP client")
+    })
+}
+
+fn web_error(e: reqwest::Error) -> NexusError {
+    NexusError::PeerUnreachable(format!("GitHub could not be reached ({})", e.without_url()))
+}
+
+#[derive(Deserialize)]
+struct GithubRelease {
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+    size: u64,
+    browser_download_url: String,
+}
+
+/// The signed releases in the repository's latest release, for the
+/// platforms this node keeps, each with where its package is downloaded.
+async fn github_releases(s: &AppState) -> Result<Vec<(SignedRelease, Release, String)>> {
+    let Some(repo) = releases_repo() else { return Ok(Vec::new()) };
+    let res = web()
+        .get(format!("https://api.github.com/repos/{repo}/releases/latest"))
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(web_error)?;
+    if res.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(Vec::new()); // nothing released yet
+    }
+    if !res.status().is_success() {
+        return Err(NexusError::PeerUnreachable(format!("GitHub answered {}", res.status())));
+    }
+    let latest: GithubRelease = res.json().await.map_err(web_error)?;
+    let mut found = Vec::new();
+    for platform in carried() {
+        let name = format!("nexus-update-{platform}.json");
+        let Some(manifest) = latest.assets.iter().find(|a| a.name == name && a.size <= MANIFEST_MAX) else { continue };
+        let res = web().get(&manifest.browser_download_url).send().await.map_err(web_error)?;
+        if !res.status().is_success() {
+            continue;
+        }
+        let bytes = res.bytes().await.map_err(web_error)?;
+        if bytes.len() as u64 > MANIFEST_MAX {
+            continue;
+        }
+        let Ok(signed) = serde_json::from_slice::<SignedRelease>(&bytes) else { continue };
+        let Some(release) = signed.verify(&s.update_keys) else {
+            tracing::warn!(platform, "a release on GitHub is not signed with a trusted key");
+            continue;
+        };
+        if release.platform != platform {
+            continue;
+        }
+        let Some(package) = latest.assets.iter().find(|a| a.name == release.file && a.size == release.size) else { continue };
+        found.push((signed, release, package.browser_download_url.clone()));
+    }
+    Ok(found)
+}
+
+/// Downloads a package from GitHub into the store, checking its size as it
+/// arrives and its hash before keeping it.
+async fn download_web(s: &AppState, url: &str, signed: &SignedRelease, release: &Release) -> Result<()> {
+    let mut res = web().get(url).send().await.map_err(web_error)?;
+    if !res.status().is_success() {
+        return Err(NexusError::PeerUnreachable(format!("GitHub answered {}", res.status())));
+    }
+    let dir = store_dir(&s.data_dir, &release.platform);
+    tokio::fs::create_dir_all(&dir).await?;
+    let staged = dir.join("download.part");
+    let mut file = tokio::fs::File::create(&staged).await?;
+    let mut received = 0u64;
+    let result: Result<()> = async {
+        while let Some(chunk) = res.chunk().await.map_err(web_error)? {
+            received += chunk.len() as u64;
+            if received > release.size {
+                return Err(NexusError::invalid("The package is larger than its signed release"));
+            }
+            file.write_all(&chunk).await?;
         }
         file.flush().await?;
         Ok(())
@@ -529,6 +708,10 @@ pub struct UpdateStatus {
     /// Phones: the verified package the app hands to Android's installer.
     package_path: Option<String>,
     auto_install: bool,
+    /// Also looks for updates on GitHub.
+    from_github: bool,
+    /// The GitHub repository it looks in.
+    github_repo: Option<String>,
     can_configure: bool,
     #[serde(flatten)]
     check: CheckStatus,
@@ -551,6 +734,8 @@ async fn status_for(s: &AppState, user: &AuthUser) -> UpdateStatus {
         install_note,
         package_path,
         auto_install: auto_install_on(s).await,
+        from_github: github_on(s).await,
+        github_repo: releases_repo(),
         can_configure: user.require(Action::ManageStorage).is_ok(),
         check: s.updates.snapshot(),
         carried: PLATFORMS.iter().filter_map(|p| stored(&s.data_dir, p, &s.update_keys)).map(|(_, r)| r.into()).collect(),
@@ -563,7 +748,8 @@ pub async fn status(State(s): State<SharedState>, user: AuthUser) -> ApiResult<J
     Ok(Json(status_for(&s, &user).await))
 }
 
-/// `POST /updates/check`: asks paired devices now (in the background).
+/// `POST /updates/check`: asks paired devices and GitHub now (in the
+/// background).
 pub async fn check_now(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<UpdateStatus>> {
     user.require_person()?;
     s.updates.set(|st| st.checking = true);
@@ -573,7 +759,8 @@ pub async fn check_now(State(s): State<SharedState>, user: AuthUser) -> ApiResul
 
 #[derive(Deserialize)]
 pub struct Settings {
-    auto_install: bool,
+    auto_install: Option<bool>,
+    from_github: Option<bool>,
 }
 
 /// `PUT /updates/settings`
@@ -584,8 +771,17 @@ pub async fn set_settings(
 ) -> ApiResult<Json<UpdateStatus>> {
     user.require_person()?;
     user.require(Action::ManageStorage)?;
-    s.db.set_setting(AUTO_INSTALL_SETTING, if body.auto_install { "1" } else { "0" }).await?;
-    audit(&s, &user, if body.auto_install { "updates.auto.enabled" } else { "updates.auto.disabled" }, None).await;
+    if let Some(on) = body.auto_install {
+        s.db.set_setting(AUTO_INSTALL_SETTING, if on { "1" } else { "0" }).await?;
+        audit(&s, &user, if on { "updates.auto.enabled" } else { "updates.auto.disabled" }, None).await;
+    }
+    if let Some(on) = body.from_github {
+        s.db.set_setting(GITHUB_SETTING, if on { "1" } else { "0" }).await?;
+        audit(&s, &user, if on { "updates.github.enabled" } else { "updates.github.disabled" }, None).await;
+        if on {
+            s.updates.wake.notify_one();
+        }
+    }
     Ok(Json(status_for(&s, &user).await))
 }
 

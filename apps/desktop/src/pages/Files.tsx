@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, ChevronRight, CopyPlus, Download, Eye, FolderInput, FolderPlus, HardDrive, History, Info, LayoutGrid,
-  Link2, List, Monitor, Pencil, RotateCcw, Search, Trash2, Upload, Users, WifiOff, X,
+  ArrowDown, ArrowUp, ChevronRight, CopyPlus, Download, Eye, FileArchive, FolderInput, FolderPlus, Globe, HardDrive, History, Info,
+  Inbox, LayoutGrid, Link2, List, Lock, Monitor, Pencil, RotateCcw, Search, SlidersHorizontal, Trash2, Upload, Users, WifiOff, X,
 } from 'lucide-react'
 import { ShareDialog } from '../components/ShareDialog'
 import { AccessBadge, Comments, ShareFolderDialog } from '../components/FolderSharing'
+import { EncryptDialog, PluginsButton } from '../components/FolderTools'
+import { AskForFilesDialog } from '../components/UploadLinks'
 import {
-  api, ApiError, fileApi, isMobile, isTouch, peerPrefix, thisDevice, type Device, type FileApi, type FileEntry, type FoundItem,
-  type RootSummary, type SharedWithMe, type TrashItem,
+  api, ApiError, fileApi, isMobile, libraryApi, isTouch, peerPrefix, thisDevice, type Device, type FileApi, type FileEntry, type FoundItem,
+  type FileKindFilter, type RootSummary, type SearchFilters, type SharedWithMe, type TrashItem,
 } from '../services/api'
 import { useSession } from '../stores/session'
 import { subscribe } from '../services/events'
@@ -22,6 +24,31 @@ import { toast, toastError } from '../components/Toasts'
 import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, Spinner, cx } from '../components/ui'
 
 type Sort = 'name' | 'size' | 'modified' | 'type'
+
+const KIND_OPTIONS: [FileKindFilter | '', string][] = [
+  ['', 'Any type'], ['image', 'Photos and images'], ['video', 'Videos'], ['audio', 'Music and audio'], ['document', 'Documents'],
+  ['archive', 'Archives'], ['code', 'Code'], ['folder', 'Folders'], ['other', 'Other files'],
+]
+/** Choose a tag to search by (tags people gave, and ones NEXUS gave documents). */
+function TagFilter({ prefix, value, onChange }: { prefix: string; value: string; onChange: (t: string) => void }) {
+  const [tags, setTags] = useState<{ tag: string; files: number }[]>([])
+  useEffect(() => {
+    libraryApi(prefix).tags().then(setTags).catch(() => setTags([]))
+  }, [prefix])
+  if (!tags.length && !value) return null
+  return (
+    <select className="h-7 rounded-md border border-line bg-surface px-2" value={value} onChange={(e) => onChange(e.target.value)} aria-label="Tag">
+      <option value="">Any tag</option>
+      {tags.map((t) => <option key={t.tag} value={t.tag}>{t.tag} ({t.files})</option>)}
+    </select>
+  )
+}
+
+const WHEN_OPTIONS: [string, string, number][] = [
+  ['', 'Any time', 0], ['day', 'Last 24 hours', 1], ['week', 'Last 7 days', 7], ['month', 'Last 30 days', 30], ['year', 'Last year', 365],
+]
+const ARCHIVE_RE = /\.(zip|cbz|7z|cb7|tar|tgz|tar\.gz)$/i
+export const isArchive = (name: string) => ARCHIVE_RE.test(name)
 
 /** A search result, tagged with the device it lives on when searching all
  *  devices (`''` = this device). Untagged results belong to the device being browsed. */
@@ -387,9 +414,18 @@ export function Files({ route }: { route: Route }) {
   const [results, setResults] = useState<Found[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [everywhere, setEverywhere] = useState(false)
+  const [filtering, setFiltering] = useState(false)
+  const [kind, setKind] = useState<FileKindFilter | ''>('')
+  const [when, setWhen] = useState('')
+  const [availableOnly, setAvailableOnly] = useState(false)
+  const [tag, setTag] = useState('')
+  const [fetching, setFetching] = useState(false)
+  const filtered = !!kind || !!when || availableOnly || !!tag
   const [copying, setCopying] = useState(false)
   const [sharing, setSharing] = useState<FileEntry | null>(null)
   const [sharingFolder, setSharingFolder] = useState<FileEntry | null>(null)
+  const [encrypting, setEncrypting] = useState<FileEntry | null>(null)
+  const [asking, setAsking] = useState<FileEntry | null>(null)
   const [dialog, setDialog] = useState<null | 'folder' | 'rename' | 'move' | 'delete'>(null)
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -414,23 +450,30 @@ export function Files({ route }: { route: Route }) {
   const peerKey = peers.map((d) => d.id + d.online).join()
   useEffect(() => {
     const text = query.trim()
-    if (!text) {
+    if (!text && !filtered) {
       setResults(null)
       setSearching(false)
       return
+    }
+    const days = WHEN_OPTIONS.find((w) => w[0] === when)?.[2] ?? 0
+    const filters: SearchFilters = {
+      kind: kind || undefined,
+      modified_after: days ? Date.now() - days * 86400000 : undefined,
+      available: availableOnly || undefined,
+      tag: tag || undefined,
     }
     let live = true
     setSearching(true)
     const t = setTimeout(() => {
       const run = async (): Promise<Found[]> => {
-        if (!everywhere) return (await fapi.search(text)).items
+        if (!everywhere) return (await fapi.search(text, filters)).items
         const sources = [
           ...(isMobile() ? [] : [{ id: '', name: `This ${thisDevice()}` }]),
           ...peers.filter((d) => d.online).map((d) => ({ id: d.id, name: d.name })),
         ]
         const found = await Promise.allSettled(
           sources.map(async (src) =>
-            (await fileApi(src.id ? peerPrefix(src.id) : '').search(text)).items.map((i) => ({ ...i, device_id: src.id, device_name: src.name })),
+            (await fileApi(src.id ? peerPrefix(src.id) : '').search(text, filters)).items.map((i) => ({ ...i, device_id: src.id, device_name: src.name })),
           ),
         )
         const failed = found.filter((r) => r.status === 'rejected').length
@@ -446,7 +489,7 @@ export function Files({ route }: { route: Route }) {
       live = false
       clearTimeout(t)
     }
-  }, [query, fapi, everywhere, peerKey])
+  }, [query, fapi, everywhere, peerKey, kind, when, availableOnly, tag])
 
   /** Which device's API serves this entry: its own for tagged results. */
   const deviceOf = (f: FileEntry) => (f as Found).device_id ?? deviceId
@@ -660,19 +703,50 @@ export function Files({ route }: { route: Route }) {
             className="pl-8"
           />
           {query && (
-            <button className="absolute top-2 right-2 text-subtle hover:text-fg" onClick={() => setQuery('')} aria-label="Clear search">
+            <button className="absolute top-2 right-8 text-subtle hover:text-fg" onClick={() => setQuery('')} aria-label="Clear search">
               <X className="size-4" />
             </button>
           )}
+          <button
+            className={cx('absolute top-2 right-2', filtering || filtered ? 'text-accent' : 'text-subtle hover:text-fg')}
+            onClick={() => setFiltering((v) => !v)}
+            aria-label="Filters"
+            title="Filter by type, date and availability"
+          >
+            <SlidersHorizontal className="size-4" />
+          </button>
         </div>
       </div>
+
+      {(filtering || filtered) && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 text-[12.5px] md:px-4">
+          <select className="h-7 rounded-md border border-line bg-surface px-2" value={kind} onChange={(e) => setKind(e.target.value as FileKindFilter | '')} aria-label="Type">
+            {KIND_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+          </select>
+          <select className="h-7 rounded-md border border-line bg-surface px-2" value={when} onChange={(e) => setWhen(e.target.value)} aria-label="Modified">
+            {WHEN_OPTIONS.map(([v, label]) => <option key={v} value={v}>{v ? `Changed: ${label.toLowerCase()}` : 'Changed any time'}</option>)}
+          </select>
+          <TagFilter prefix={fapi.prefix} value={tag} onChange={setTag} />
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" className="accent-[var(--nx-accent)]" checked={availableOnly} onChange={(e) => setAvailableOnly(e.target.checked)} />
+            Available now
+          </label>
+          {filtered && (
+            <button className="text-muted hover:text-fg hover:underline" onClick={() => { setKind(''); setWhen(''); setAvailableOnly(false); setTag('') }}>
+              Clear filters
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-line px-3 py-1 md:px-4">
         {results ? (
           <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-muted">
             <span className="truncate">
-              {searching ? 'Searching…' : `${results.length} result${results.length === 1 ? '' : 's'} for “${query}”`}
+              {searching
+                ? 'Searching…'
+                : `${results.length} result${results.length === 1 ? '' : 's'}${query.trim() ? ` for “${query}”` : ''}`}
             </span>
             {peers.length > 0 && (
               <label className="flex shrink-0 items-center gap-1.5 text-[12.5px] text-fg">
@@ -713,9 +787,28 @@ export function Files({ route }: { route: Route }) {
               {single && single.availability === 'online' && (
                 <IconButton label="Share a link" onClick={() => setSharing(single)}><Link2 className="size-4" /></IconButton>
               )}
+              {single && !single.is_dir && isArchive(single.filename) && canAdd && !results && (
+                <IconButton
+                  label="Extract here"
+                  onClick={() =>
+                    void fileApi(prefixOf(single)).extract(single.id)
+                      .then((r) => toast(`Extracting into ${r.path.split('/').pop()} — follow it under Transfers`))
+                      .catch(toastError)
+                  }
+                >
+                  <FileArchive className="size-4" />
+                </IconButton>
+              )}
               {single?.is_dir && manager && !prefix && !results && (
                 <IconButton label="Share with people" onClick={() => setSharingFolder(single)}><Users className="size-4" /></IconButton>
               )}
+              {single?.is_dir && writable && !prefix && !results && (
+                <IconButton label="Encrypt or decrypt" onClick={() => setEncrypting(single)}><Lock className="size-4" /></IconButton>
+              )}
+              {single?.is_dir && writable && !prefix && !results && !isMobile() && (
+                <IconButton label="Ask for files" onClick={() => setAsking(single)}><Inbox className="size-4" /></IconButton>
+              )}
+              {single && manager && !prefix && single.availability === 'online' && <PluginsButton entry={single} />}
               {peers.length > 0 && (
                 <IconButton label="Copy to another device" onClick={() => setCopying(true)}><CopyPlus className="size-4" /></IconButton>
               )}
@@ -737,6 +830,9 @@ export function Files({ route }: { route: Route }) {
           <IconButton label="Trash" onClick={() => navigate('files', { device: deviceId || undefined, root: rootId, path, view: 'trash' })}><Trash2 className="size-4" /></IconButton>
           <IconButton label={view === 'list' ? 'Grid view' : 'List view'} onClick={() => setView(view === 'list' ? 'grid' : 'list')}>
             {view === 'list' ? <LayoutGrid className="size-4" /> : <List className="size-4" />}
+          </IconButton>
+          <IconButton label="Download from a link" disabled={!canAdd || !!results} onClick={() => setFetching(true)}>
+            <Globe className="size-4" />
           </IconButton>
           <Button size="sm" icon={<FolderPlus className="size-3.5" />} disabled={!canAdd || !!results} onClick={() => setDialog('folder')}>
             <span className="hidden sm:inline">New folder</span>
@@ -909,6 +1005,13 @@ export function Files({ route }: { route: Route }) {
         prefix={preview ? prefixOf(preview) : prefix}
       />
       {sharing && <ShareDialog file={sharing} prefix={prefixOf(sharing)} onClose={() => setSharing(null)} />}
+      {fetching && root && (
+        <FetchDialog fapi={fapi} rootId={root.id} path={path} where={`${where}${root.name}${path ? ` / ${path}` : ''}`} onClose={() => setFetching(false)} />
+      )}
+      {encrypting && <EncryptDialog folder={encrypting} onClose={() => setEncrypting(null)} />}
+      {asking && rootId && (
+        <AskForFilesDialog root_id={rootId} path={asking.relative_path} name={asking.filename} onClose={() => setAsking(null)} />
+      )}
       {sharingFolder && (
         <ShareFolderDialog
           target={{ root_id: sharingFolder.root_id, path: sharingFolder.relative_path, name: sharingFolder.filename }}
@@ -1168,4 +1271,40 @@ function FileDialogs({ fapi, kind, root, path, items, onClose, onDone }: {
     )
   }
   return null
+}
+
+/** Downloads a web link straight into the folder being browsed. */
+function FetchDialog({ fapi, rootId, path, where, onClose }: { fapi: FileApi; rootId: string; path: string; where: string; onClose: () => void }) {
+  const [url, setUrl] = useState('')
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await fapi.fetchUrl({ root_id: rootId, path, url: url.trim(), name: name.trim() || undefined })
+      toast('Downloading — follow it under Transfers')
+      onClose()
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Download from a link"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" disabled={!/^https?:\/\/./i.test(url.trim()) || busy} onClick={submit}>Download</Button>
+        </>
+      }
+    >
+      <p className="mb-3 text-[13px] text-muted">The device downloads the file itself, into {where}. You can close the app meanwhile.</p>
+      <Field label="Link"><Input autoFocus value={url} placeholder="https://" onChange={(e) => setUrl(e.target.value)} /></Field>
+      <Field label="Save as (optional)"><Input value={name} placeholder="Name from the link" onChange={(e) => setName(e.target.value)} /></Field>
+    </Modal>
+  )
 }

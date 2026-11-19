@@ -5,14 +5,25 @@
 //! checked here on the backend, never only in the UI.
 
 mod auth;
+pub mod automation;
 mod error;
+pub mod documents;
+pub mod media;
+pub mod nearby;
 pub mod net;
 pub mod p2p;
 pub mod peers;
+pub mod plugins;
+pub mod power;
+pub mod programs;
+pub mod s3;
+pub mod webdav;
+pub mod winrt;
 mod routes;
 pub mod share;
 
 pub use routes::backup::spawn as spawn_backup;
+pub use routes::changes::spawn as spawn_changes;
 pub use routes::introductions::{introduce_now as introduce_devices, spawn as spawn_introductions};
 pub use routes::health::spawn as spawn_health;
 pub use routes::shares::spawn as spawn_shares;
@@ -20,13 +31,16 @@ pub use routes::sync::spawn as spawn_sync;
 pub use routes::snapshots::spawn as spawn_snapshots;
 pub use routes::transfers::spawn as spawn_transfers;
 pub use routes::updates::{check as check_updates, spawn as spawn_updates};
-pub use routes::vdrive::saved as saved_vdrive;
+pub use routes::vdrive::{saved as saved_vdrive, saved_cache as saved_vdrive_cache};
 
 /// The signed update packages a node keeps and passes on.
 pub mod update_store {
     pub use crate::routes::updates::{AUTO_INSTALL_SETTING, import, package_path, stored};
 }
 mod state;
+pub mod tokens;
+pub mod upload_links;
+pub mod vault;
 
 pub use state::{AppState, NodeInfo, SharedState};
 
@@ -62,10 +76,10 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
     img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; \
     frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
-pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
-    use routes::{backup, devices, files, health, introductions, network, security, shares, sharing, snapshots, storage, sync, system, transfers, updates, uploads, users, vdrive};
-
-    let api = Router::new()
+/// The API's routes, under `/api/v1`.
+pub(crate) fn api_routes(state: SharedState) -> Router {
+    use routes::{backup, commands, devices, library, photos, files, health, introductions, network, security, shares, sharing, snapshots, storage, sync, system, tools, transfers, updates, uploads, users, vdrive};
+    Router::new()
         .route("/health", get(system::health))
         .route("/setup/status", get(system::setup_status))
         .route("/setup", post(system::setup))
@@ -93,6 +107,41 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/devices/{id}", patch(devices::update).delete(devices::remove))
         .route("/devices/introductions", get(introductions::settings).put(introductions::set_settings))
         .route("/devices/pair", post(devices::create_invite))
+        .route("/devices/nearby", get(devices::nearby))
+        .route("/library/music", get(library::music))
+        .route("/library/items", get(library::items))
+        .route("/library/capabilities", get(library::capabilities))
+        .route("/playback", get(library::continue_watching))
+        .route("/playback/{id}", get(library::get_playback).put(library::set_playback))
+        .route("/tags", get(library::tags))
+        .route("/documents/settings", axum::routing::put(library::set_document_settings))
+        .route("/photos", get(photos::list))
+        .route("/photos/months", get(photos::months))
+        .route("/photos/places", get(photos::places))
+        .route("/photos/memories", get(photos::memories))
+        .route("/photos/similar", get(photos::similar))
+        .route("/albums", get(photos::albums).post(photos::create_album))
+        .route("/albums/{id}", get(photos::album).patch(photos::change_album).delete(photos::delete_album))
+        .route("/commands", get(commands::list))
+        .route("/plugins", get(plugins::get_all))
+        .route("/plugins/commands", get(plugins::commands))
+        .route("/plugins/{id}", axum::routing::put(plugins::set_enabled))
+        .route("/plugins/{id}/commands/{command}", post(plugins::run))
+        .route("/files/{id}/encryption", get(vault::state))
+        .route("/files/{id}/encryption/lock", post(vault::lock))
+        .route("/files/{id}/encryption/unlock", post(vault::unlock))
+        .route("/programs", get(programs::get).put(programs::put))
+        .route("/tokens", get(programs::list_tokens).post(programs::create_token))
+        .route("/tokens/{id}", delete(programs::delete_token))
+        .route("/rules", get(routes::rules::list).post(routes::rules::create))
+        .route("/rules/preview", post(routes::rules::preview_draft))
+        .route("/rules/{id}", axum::routing::put(routes::rules::update).delete(routes::rules::remove))
+        .route("/rules/{id}/run", post(routes::rules::run))
+        .route("/rules/{id}/preview", get(routes::rules::preview))
+        .route("/storage/suggestions", get(routes::rules::suggestions))
+        .route("/commands/{name}", post(commands::run))
+        .route("/devices/{id}/wake", post(devices::wake))
+        .route("/power/wake", post(devices::wake_for_peer))
         .route("/devices/pair/{id}", delete(devices::cancel_invite))
         .route("/devices/pair/requests", get(devices::list_requests))
         .route("/devices/pair/requests/{id}/approve", post(devices::approve))
@@ -148,6 +197,10 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/shared-folders", get(sharing::list).post(sharing::create))
         .route("/shared-folders/mine", get(sharing::mine))
         .route("/shared-folders/{id}", patch(sharing::update).delete(sharing::remove))
+        .route("/groups", get(sharing::groups).post(sharing::create_group))
+        .route("/upload-links", get(crate::upload_links::list).post(crate::upload_links::create))
+        .route("/upload-links/{id}", delete(crate::upload_links::remove))
+        .route("/groups/{id}", patch(sharing::update_group).delete(sharing::delete_group))
         .route("/users", get(users::list).post(users::create))
         .route("/users/{id}", patch(users::update).delete(users::remove))
         .route("/updates", get(updates::status))
@@ -156,10 +209,12 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/updates/install", post(updates::install))
         .route("/system/autostart", get(system::autostart).put(system::set_autostart))
         .route("/vdrive", get(vdrive::get).put(vdrive::set))
+        .route("/vdrive/cache", axum::routing::put(vdrive::set_cache))
         .route("/network", get(network::get).put(network::update))
         .route("/network/refresh", post(network::refresh))
         .route("/events", get(routes::events::events))
         .route("/storage/drives", get(storage::drives))
+        .route("/storage/changes", get(routes::changes::changes))
         .route("/storage/roots", get(storage::list_roots).post(storage::add_root))
         .route("/storage/roots/{id}", delete(storage::remove_root))
         .route("/storage/roots/{id}/stats", get(storage::root_stats))
@@ -176,6 +231,11 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
             post(files::upload).layer(DefaultBodyLimit::disable()),
         )
         .route("/files/tree", get(files::tree))
+        .route("/files/by-hash/{hash}", get(tools::by_hash))
+        .route("/files/duplicates", get(tools::duplicates))
+        .route("/files/fetch", post(tools::fetch))
+        .route("/files/{id}/archive", get(tools::archive))
+        .route("/files/{id}/extract", post(tools::extract))
         .route("/files/uploads", post(uploads::create))
         .route(
             "/files/uploads/{id}",
@@ -190,6 +250,10 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         .route("/files/{id}/versions/{version}/content", get(files::version_content))
         .route("/files/{id}/link", post(files::link))
         .route("/files/{id}/content", get(files::content))
+        .route("/files/{id}/thumbnail", get(photos::thumbnail))
+        .route("/files/{id}/stream", get(library::stream))
+        .route("/files/{id}/stream-link", post(library::stream_link))
+        .route("/files/{id}/tags", get(library::file_tags).put(library::set_file_tags))
         .route("/files/{id}/restore", post(files::restore))
         .route("/files/{id}/comments", get(sharing::comments).post(sharing::add_comment))
         .route("/files/{id}/comments/{comment}", delete(sharing::remove_comment))
@@ -208,12 +272,19 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
                 } })),
             )
         })
-        .with_state(state.clone());
+        .with_state(state)
+}
+
+pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
+    let api = api_routes(state.clone());
 
     let mut app = Router::new().nest("/api/v1", api);
     if let Some(dir) = ui_dir {
         let index = dir.join("index.html");
-        app = app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)));
+        let ui = Router::new()
+            .fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+            .layer(middleware::map_response_with_state((), ui_caching));
+        app = app.fallback_service(ui);
     }
 
     let cors = CorsLayer::new()
@@ -243,6 +314,17 @@ pub fn router(state: SharedState, ui_dir: Option<PathBuf>) -> Router {
         ))
         .layer(middleware::from_fn_with_state(state, host_guard))
         .layer(TraceLayer::new_for_http())
+}
+
+/// The web interface: the page itself is checked every time, so an update
+/// shows at once; its scripts and styles carry their content's hash in their
+/// names, so they are kept.
+async fn ui_caching(State(()): State<()>, uri: axum::http::Uri, mut res: Response) -> Response {
+    if res.status().is_success() {
+        let value = if uri.path().starts_with("/assets/") { "public, max-age=31536000, immutable" } else { "no-cache" };
+        res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
+    }
+    res
 }
 
 /// Rejects requests whose Host header does not name this node on loopback,
