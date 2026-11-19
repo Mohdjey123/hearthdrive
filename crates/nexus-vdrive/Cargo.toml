@@ -1,6 +1,6 @@
 [package]
 name = "nexus-vdrive"
-description = "The NEXUS virtual drive: paired devices in File Explorer through the Windows Cloud Files API"
+description = "The Hearthdrive virtual drive: paired devices in File Explorer through the Windows Cloud Files API"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -56,7 +56,7 @@ export function EncryptDialog({ folder, onClose }: { folder: FileEntry; onClose:
           </p>
           {first && (
             <p className="text-warn">
-              Without the password the files cannot be recovered by anyone, including NEXUS. Write it down somewhere safe.
+              Without the password the files cannot be recovered by anyone, including Hearthdrive. Write it down somewhere safe.
             </p>
           )}
           <Field label="Password">

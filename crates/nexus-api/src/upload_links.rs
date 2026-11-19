@@ -1,9 +1,9 @@
 //! Upload links: a page anyone with the link can add files to a folder
-//! from, to collect files from people who have no NEXUS (a file request).
+//! from, to collect files from people who have no Hearthdrive (a file request).
 //!
 //! The page is served on the address for programs ([`crate::programs`]),
 //! so it works for anyone who can reach that address: this computer, or
-//! the local network when that is allowed. NEXUS has no server on the
+//! the local network when that is allowed. Hearthdrive has no server on the
 //! internet, so it never reaches further.
 //!
 //! Files are added as the person who made the link: never more than they

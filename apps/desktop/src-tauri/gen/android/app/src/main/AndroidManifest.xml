@@ -5,8 +5,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <!-- Updates: hands a verified NEXUS package to Android's installer. The
-         second lets NEXUS update itself without asking (Android 12 and later);
+    <!-- Updates: hands a verified Hearthdrive package to Android's installer. The
+         second lets Hearthdrive update itself without asking (Android 12 and later);
          without it, or when Android wants to, Android asks first. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />

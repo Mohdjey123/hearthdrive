@@ -32,7 +32,7 @@ function AccessNote({ onAsk }: { onAsk: () => void }) {
       <div className="flex items-start gap-3">
         <ShieldAlert className="mt-0.5 size-5 shrink-0 text-warn" />
         <div className="min-w-0 flex-1 space-y-2">
-          <div className="font-medium">Allow NEXUS to read your photos and videos</div>
+          <div className="font-medium">Allow Hearthdrive to read your photos and videos</div>
           <p className="text-muted">Backup only reads them, to copy them to your computer. Nothing on the phone is changed or deleted.</p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -130,7 +130,7 @@ function Setup({ status, computers, onDone, onCancel }: {
           {online ? (
             <PlacePicker prefix={peerPrefix(device)} writable value={place} onChange={setPlace} />
           ) : (
-            <p className="text-muted">This computer is offline. Open NEXUS on it, then choose a folder.</p>
+            <p className="text-muted">This computer is offline. Open Hearthdrive on it, then choose a folder.</p>
           )}
         </Field>
         <ErrorNote>{error}</ErrorNote>
@@ -194,7 +194,7 @@ export function Backup() {
   if (status.error) body = <ErrorNote>{status.error.message}</ErrorNote>
   else if (!status.data || !devices.data) body = <Spinner />
   else if (!status.data.available)
-    body = <EmptyState icon={<ImageUp className="size-6" />} title="Backup is for phones">Open NEXUS on your phone to back up its photos and videos here.</EmptyState>
+    body = <EmptyState icon={<ImageUp className="size-6" />} title="Backup is for phones">Open Hearthdrive on your phone to back up its photos and videos here.</EmptyState>
   else if (computers.length === 0)
     body = (
       <EmptyState
@@ -265,7 +265,7 @@ export function Backup() {
           </Panel>
         )}
         <p className="text-[12px] text-subtle">
-          Backup runs while NEXUS is open on this phone: when you open it, every 15 minutes, and when you press Back up now. Only new and
+          Backup runs while Hearthdrive is open on this phone: when you open it, every 15 minutes, and when you press Back up now. Only new and
           changed photos are sent. Deleting a photo here keeps its copy on the computer, and copies deleted there are not sent again.
         </p>
       </>

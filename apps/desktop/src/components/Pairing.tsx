@@ -187,7 +187,7 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
       ) : (
         <div className="space-y-4">
           <ol className="list-decimal space-y-1 pl-5 text-muted">
-            <li>On the other computer, open NEXUS Cloud → <span className="text-fg">Devices</span> → <span className="text-fg">Join a cloud</span>.</li>
+            <li>On the other computer, open Hearthdrive → <span className="text-fg">Devices</span> → <span className="text-fg">Join a cloud</span>.</li>
             <li>Paste this link there. You will approve the request here.</li>
           </ol>
           <div className={cx('mx-auto w-fit rounded-md bg-white', expired && 'opacity-30')}>
@@ -219,7 +219,7 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
           </div>
           <p className="text-[12px] text-subtle">
             The link contains this {thisDevice()}'s public key, how to reach it and a one-time code — never a password or private key.
-            Scan the code with the NEXUS app on a phone, or paste the link on another computer.
+            Scan the code with the Hearthdrive app on a phone, or paste the link on another computer.
           </p>
         </div>
       )}
@@ -286,7 +286,7 @@ export function JoinForm({ onJoined, onCancel, initialLink }: { onJoined: (join:
       }
       const result = await scanner.scan({ windowed: false, formats: [scanner.Format.QRCode] })
       if (!result.content.startsWith('nexus-pair:')) {
-        setError('That is not a NEXUS pairing code. Scan the code shown under Devices → Add device.')
+        setError('That is not a Hearthdrive pairing code. Scan the code shown under Devices → Add device.')
         return
       }
       setLink(result.content)
@@ -343,7 +343,7 @@ export function JoinForm({ onJoined, onCancel, initialLink }: { onJoined: (join:
       ) : (
         <p className="text-muted">
           On the computer you are joining, open <span className="text-fg">Devices</span> → <span className="text-fg">Add device</span> and copy its pairing link.
-          Both computers need NEXUS running and an internet connection, or the same local network. Nothing else to install.
+          Both computers need Hearthdrive running and an internet connection, or the same local network. Nothing else to install.
         </p>
       )}
       <label className="block">

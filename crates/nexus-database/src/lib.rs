@@ -1,4 +1,4 @@
-//! SQLite access for a single NEXUS node.
+//! SQLite access for a single Hearthdrive node.
 //!
 //! Every node owns its own database file. The database is never shared over
 //! the network; nodes exchange metadata events instead.

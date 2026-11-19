@@ -224,7 +224,7 @@ fn update_handle(handle: &Handle, child: &Child, drop_content: bool) -> Result<(
     .map_err(|e| e.message().to_string())
 }
 
-/// Marks a placeholder in sync again (after NEXUS itself changed it).
+/// Marks a placeholder in sync again (after Hearthdrive itself changed it).
 pub fn mark_in_sync(path: &Path) -> Result<(), String> {
     let handle = open(path, WRITE_DAC | FILE_READ_ATTRIBUTES).map_err(|e| e.message().to_string())?;
     unsafe { CfSetInSyncState(handle.0, CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAG_NONE, None) }

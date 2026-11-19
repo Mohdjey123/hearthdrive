@@ -295,7 +295,7 @@ pub async fn cancel_invite(State(s): State<SharedState>, user: AuthUser, Path(id
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /devices/nearby`: NEXUS devices on the same local network, and the
+/// `GET /devices/nearby`: Hearthdrive devices on the same local network, and the
 /// pairing links those waiting to be paired offer.
 pub async fn nearby(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Vec<crate::nearby::NearbyDevice>>> {
     user.require_person()?;
@@ -656,7 +656,7 @@ pub async fn wake(State(s): State<SharedState>, user: AuthUser, Path(id): Path<S
     let info = wake_details(&device);
     if info.is_empty() {
         return Err(NexusError::Conflict(format!(
-            "NEXUS does not know {}'s network card yet. It learns it once both are online at the same time.",
+            "Hearthdrive does not know {}'s network card yet. It learns it once both are online at the same time.",
             device.name
         ))
         .into());

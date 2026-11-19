@@ -439,7 +439,7 @@ fn web() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .tls_backend_preconfigured(crate::share::tls())
-            .user_agent(concat!("NEXUS-Cloud-updater/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Hearthdrive-updater/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(20))
             .read_timeout(Duration::from_secs(60))
             .https_only(true)
@@ -571,7 +571,7 @@ fn install_method() -> (&'static str, Option<String>) {
     }
     let installed = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join("uninstall.exe").is_file()));
     if installed != Some(true) {
-        return ("none", Some("NEXUS was installed from the MSI package. Install the newest MSI to update.".into()));
+        return ("none", Some("Hearthdrive was installed from an MSI package, which cannot update itself. Install the newest Hearthdrive setup (.exe) once; it updates itself from then on.".into()));
     }
     ("service", None)
 }
@@ -861,7 +861,7 @@ mod tests {
         let release = Release {
             platform: "android-aarch64".into(),
             version: version.into(),
-            file: format!("NEXUS-Cloud_{version}_arm64.apk"),
+            file: format!("Hearthdrive_{version}_arm64.apk"),
             size: package.len() as u64,
             blake3: blake3::hash(package).to_hex().to_string(),
             notes: String::new(),
@@ -876,7 +876,7 @@ mod tests {
         let mut r = Release {
             platform: "windows-x86_64".into(),
             version: "1.2.3".into(),
-            file: "NEXUS-Cloud_1.2.3_x64-setup.exe".into(),
+            file: "Hearthdrive_1.2.3_x64-setup.exe".into(),
             size: 1,
             blake3: "0".repeat(64),
             notes: String::new(),
@@ -885,12 +885,12 @@ mod tests {
         };
         assert_eq!(
             package_url("me/nexus", &r),
-            "https://github.com/me/nexus/releases/download/v1.2.3/NEXUS-Cloud_1.2.3_x64-setup.exe"
+            "https://github.com/me/nexus/releases/download/v1.2.3/Hearthdrive_1.2.3_x64-setup.exe"
         );
         r.channel = release::BETA.into();
         assert_eq!(
             package_url("me/nexus", &r),
-            "https://github.com/me/nexus/releases/download/v1.2.3-beta/NEXUS-Cloud_1.2.3_x64-setup.exe"
+            "https://github.com/me/nexus/releases/download/v1.2.3-beta/Hearthdrive_1.2.3_x64-setup.exe"
         );
     }
 

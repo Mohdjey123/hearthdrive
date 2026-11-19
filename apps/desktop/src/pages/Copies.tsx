@@ -296,7 +296,7 @@ function NewCopy({ devices, preset, onClose, onCreated }: {
           </span>
         </Field>
         <p className="text-[12px] text-subtle">
-          The copy is an ordinary folder you can open on {deviceName}. NEXUS keeps it the same as the folder here: new and changed files are
+          The copy is an ordinary folder you can open on {deviceName}. Hearthdrive keeps it the same as the folder here: new and changed files are
           copied over and checked, a file changed on {deviceName} is replaced by the one here (its old content is kept as a version), and once a
           week part of the copy is read back to make sure it is still intact. It keeps no history: for earlier versions, also set up a backup.
         </p>
@@ -349,7 +349,7 @@ export function Copies() {
             action={peers.length > 0 ? <Button variant="primary" onClick={() => setAdding({})}>Keep a copy of a folder</Button> : undefined}
           >
             {peers.length > 0
-              ? 'Pick a folder here and a place on another computer. NEXUS keeps a checked, ordinary copy there; add more computers for three copies.'
+              ? 'Pick a folder here and a place on another computer. Hearthdrive keeps a checked, ordinary copy there; add more computers for three copies.'
               : 'Pair another computer first (Devices → Add a device), then keep copies of folders on it.'}
           </EmptyState>
         </div>

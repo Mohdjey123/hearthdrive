@@ -221,7 +221,7 @@ impl Database {
             .collect())
     }
 
-    /// Keeps shared folders pointing at the same folder after NEXUS renamed
+    /// Keeps shared folders pointing at the same folder after Hearthdrive renamed
     /// or moved it (or a folder above it).
     pub async fn move_shared_paths(&self, root_id: &str, old_rel: &str, new_rel: &str) -> Result<()> {
         if old_rel.is_empty() {

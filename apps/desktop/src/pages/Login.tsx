@@ -84,7 +84,7 @@ export function Login({ nodeName }: { nodeName: string }) {
       <div className="flex min-h-full items-center justify-center bg-bg p-6">
         <form key="code" onSubmit={submitCode} className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-panel p-6">
           {header}
-          <Field label="Code" hint="The six-digit code your authenticator app shows for NEXUS, or one of your recovery codes.">
+          <Field label="Code" hint="The six-digit code your authenticator app shows for Hearthdrive, or one of your recovery codes.">
             <Input
               value={code}
               onChange={(e) => setCode(e.target.value)}

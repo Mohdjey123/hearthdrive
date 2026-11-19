@@ -72,7 +72,7 @@ export function Duplicates({ route }: { route: Route }) {
     <div>
       <PageHeader
         title="Duplicate files"
-        subtitle="Files with exactly the same content. Files are compared once NEXUS has read them, so new files show up after a while."
+        subtitle="Files with exactly the same content. Files are compared once Hearthdrive has read them, so new files show up after a while."
         actions={
           chosen.size > 0 && (
             <Button variant="primary" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirm(true)}>

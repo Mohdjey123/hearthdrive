@@ -82,7 +82,7 @@ function RecoveryKeyNote({ name, recoveryKey, first, onClose }: { name: string; 
       <div className="space-y-3">
         <p>
           The backup is encrypted. If this computer is lost, this key is the only way to open the backup from another one: no one,
-          including NEXUS, can recover it without the key.
+          including Hearthdrive, can recover it without the key.
         </p>
         <div className="rounded-md border border-line bg-bg p-3 text-center font-mono text-[14px] tracking-wide break-all select-all">
           {recoveryKey}
@@ -582,7 +582,7 @@ export function Backups() {
             action={peers.length > 0 ? <Button variant="primary" onClick={() => setAdding(true)}>Back up a folder</Button> : undefined}
           >
             {peers.length > 0
-              ? 'Pick a folder here and a place on another computer. NEXUS keeps snapshots of it there, on a schedule.'
+              ? 'Pick a folder here and a place on another computer. Hearthdrive keeps snapshots of it there, on a schedule.'
               : 'Pair another computer first (Devices → Add a device), then back up folders to it.'}
           </EmptyState>
         </div>

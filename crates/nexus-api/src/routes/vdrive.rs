@@ -16,7 +16,14 @@ use std::path::PathBuf;
 /// The saved choice: on or off, and the folder (`None`: the default).
 pub async fn saved(s: &AppState) -> nexus_common::Result<(bool, Option<PathBuf>)> {
     let enabled = s.db.get_setting(ENABLED_SETTING).await?.is_some_and(|v| v == "1");
-    let path = s.db.get_setting(PATH_SETTING).await?.filter(|p| !p.trim().is_empty()).map(PathBuf::from);
+    let mut path = s.db.get_setting(PATH_SETTING).await?.filter(|p| !p.trim().is_empty()).map(PathBuf::from);
+    if enabled && path.is_none() {
+        // Turned on in the default folder before the app was renamed (the
+        // folder is saved since): it stays in that folder.
+        let earlier = nexus_vdrive::earlier_default_path();
+        s.db.set_setting(PATH_SETTING, &earlier.display().to_string()).await?;
+        path = Some(earlier);
+    }
     Ok((enabled, path))
 }
 
@@ -77,7 +84,9 @@ pub async fn set(
         path = saved(&s).await?.1;
     }
     if body.enabled {
-        let chosen = path.clone().unwrap_or_else(nexus_vdrive::default_path);
+        // The folder is always saved, so a later change of the default
+        // never moves a drive.
+        let chosen = path.get_or_insert_with(nexus_vdrive::default_path).clone();
         let mut avoid: Vec<PathBuf> = s
             .db
             .list_roots()

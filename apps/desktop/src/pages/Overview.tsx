@@ -201,7 +201,7 @@ export function Overview() {
               title="No storage yet"
               action={<Button variant="primary" onClick={() => navigate('storage', { add: '1' })}>Add a folder or drive</Button>}
             >
-              Add existing folders or drives. NEXUS indexes them in place.
+              Add existing folders or drives. Hearthdrive indexes them in place.
             </EmptyState>
           ) : (
             <ul className="divide-y divide-line">

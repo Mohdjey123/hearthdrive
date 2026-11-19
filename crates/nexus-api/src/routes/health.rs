@@ -241,7 +241,7 @@ pub fn spawn(s: SharedState) {
                 });
                 // Asked for but not started now: keep them for the next round.
                 if let Some(root) = due {
-                    let by = asked.get(&root.id).cloned().unwrap_or_else(|| "NEXUS".into());
+                    let by = asked.get(&root.id).cloned().unwrap_or_else(|| "Hearthdrive".into());
                     s.health.verify_now.lock().unwrap().extend(asked.into_iter().filter(|(id, _)| *id != root.id));
                     s.health.verifying.lock().unwrap().insert(root.id.clone());
                     let s = s.clone();
@@ -386,7 +386,7 @@ async fn repair(s: &SharedState, user: &AuthUser, d: &DamagedFile, job: &std::sy
 pub struct DiskView {
     #[serde(flatten)]
     disk: PhysicalDisk,
-    /// NEXUS storage locations on this disk.
+    /// Hearthdrive storage locations on this disk.
     storage: Vec<String>,
 }
 

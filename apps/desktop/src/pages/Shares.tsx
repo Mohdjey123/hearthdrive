@@ -344,7 +344,7 @@ export function Shares() {
         <Spinner />
       ) : sources.length === 0 ? (
         <EmptyState icon={<Link2 className="size-8" />} title="No computer to share from">
-          Pair this phone with a computer that runs NEXUS, then share its files from Files.
+          Pair this phone with a computer that runs Hearthdrive, then share its files from Files.
         </EmptyState>
       ) : (
         <div className="space-y-6">

@@ -152,7 +152,7 @@ pub async fn run_with(
     // the peer-to-peer endpoint, which serves a restricted part of it.
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), config.port);
     let listener = tokio::net::TcpListener::bind(address).await.with_context(|| {
-        format!("port {} is in use — is NEXUS already running?", config.port)
+        format!("port {} is in use — is Hearthdrive already running?", config.port)
     })?;
     let address = listener.local_addr()?;
 
@@ -239,7 +239,7 @@ pub async fn run_with(
         exe: exe.map(|p| p.to_string_lossy().into_owned()),
     };
     write_runtime(&runtime_path, &runtime)?;
-    tracing::info!(%address, "NEXUS service listening");
+    tracing::info!(%address, "Hearthdrive service listening");
     if let Some(ready) = ready {
         let _ = ready.send(runtime);
     }

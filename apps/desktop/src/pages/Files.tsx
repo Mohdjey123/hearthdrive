@@ -29,7 +29,7 @@ const KIND_OPTIONS: [FileKindFilter | '', string][] = [
   ['', 'Any type'], ['image', 'Photos and images'], ['video', 'Videos'], ['audio', 'Music and audio'], ['document', 'Documents'],
   ['archive', 'Archives'], ['code', 'Code'], ['folder', 'Folders'], ['other', 'Other files'],
 ]
-/** Choose a tag to search by (tags people gave, and ones NEXUS gave documents). */
+/** Choose a tag to search by (tags people gave, and ones Hearthdrive gave documents). */
 function TagFilter({ prefix, value, onChange }: { prefix: string; value: string; onChange: (t: string) => void }) {
   const [tags, setTags] = useState<{ tag: string; files: number }[]>([])
   useEffect(() => {
@@ -172,7 +172,7 @@ function SortHeader({ label, field, sort, order, onSort, className }: {
   )
 }
 
-/** Earlier contents of a file, kept whenever NEXUS replaced it. */
+/** Earlier contents of a file, kept whenever Hearthdrive replaced it. */
 function Versions({ file, fapi, writable, onRestored }: { file: FileEntry; fapi: FileApi; writable: boolean; onRestored: () => void }) {
   const versions = useResource(() => fapi.versions(file.id), [file.id, fapi], (e) => e.type === 'file.modified')
   const [busy, setBusy] = useState<string | null>(null)
@@ -631,7 +631,7 @@ export function Files({ route }: { route: Route }) {
         title="Connect a computer"
         action={<Button variant="primary" onClick={() => navigate('devices', { join: '1' })}>Pair with a computer</Button>}
       >
-        Pair this phone with a computer that runs NEXUS to browse, download and upload its files.
+        Pair this phone with a computer that runs Hearthdrive to browse, download and upload its files.
       </EmptyState>
     )
   }

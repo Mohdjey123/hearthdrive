@@ -24,7 +24,7 @@ pub use scan::ScanSummary;
 pub struct Indexer {
     db: Database,
     events: EventBus,
-    /// Paths never indexed even inside a root (e.g. NEXUS's own data dir).
+    /// Paths never indexed even inside a root (e.g. Hearthdrive's own data dir).
     ignored: Vec<PathBuf>,
     active_scans: Mutex<HashSet<String>>,
     watchers: Mutex<HashMap<String, RecommendedWatcher>>,

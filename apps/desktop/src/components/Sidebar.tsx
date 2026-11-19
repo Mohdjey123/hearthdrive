@@ -72,7 +72,7 @@ export function Sidebar({ current }: { current: Page }) {
     <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
       <div className="flex h-14 items-center gap-2.5 px-4">
         <Logo className="size-6" />
-        <span className="text-[14px] font-semibold tracking-tight">NEXUS Cloud</span>
+        <span className="text-[14px] font-semibold tracking-tight">Hearthdrive</span>
       </div>
       <nav className="flex-1 space-y-0.5 px-2 py-2">
         {NAV.filter((n) => pageAvailable(n.page)).map(({ page, label, icon: Icon }) => (

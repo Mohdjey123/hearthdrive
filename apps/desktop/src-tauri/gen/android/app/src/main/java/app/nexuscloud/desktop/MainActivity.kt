@@ -27,7 +27,7 @@ import java.io.File
  *
  * - asks for permission to read photos and videos, for backup, through a
  *   small `window.NexusAndroid` bridge the page can call;
- * - receives files shared to NEXUS from other apps (the share menu) and
+ * - receives files shared to Hearthdrive from other apps (the share menu) and
  *   copies them into `<cache>/shared`, where the node sends them from once
  *   the person picks a computer and folder;
  * - hands an update the node received and verified to Android's package
@@ -108,7 +108,7 @@ class MainActivity : TauriActivity() {
      * Opens Android's installer for the update package at [path], which the
      * node verified (signature, size and hash) before keeping it. Only the
      * node's own update package is accepted. Returns `started`,
-     * `permission` (NEXUS must first be allowed to install apps; the
+     * `permission` (Hearthdrive must first be allowed to install apps; the
      * setting is opened) or `missing`.
      */
     @JavascriptInterface
@@ -135,7 +135,7 @@ class MainActivity : TauriActivity() {
 
   // -- Updates -------------------------------------------------------------
 
-  /** Android 12 and later, with NEXUS allowed to install apps. */
+  /** Android 12 and later, with Hearthdrive allowed to install apps. */
   private fun canUpdateQuietly(): Boolean =
     Build.VERSION.SDK_INT >= 31 && packageManager.canRequestPackageInstalls()
 
@@ -155,7 +155,7 @@ class MainActivity : TauriActivity() {
    * session that asks Android not to need the person (Android 12 and
    * later). If Android still wants them to confirm, its prompt is shown
    * when [interactive] (the person tapped Install), and the install is
-   * dropped otherwise. Returns `started`, `permission` (NEXUS must first be
+   * dropped otherwise. Returns `started`, `permission` (Hearthdrive must first be
    * allowed to install apps; the setting is opened) or `missing`.
    */
   private fun installUpdate(path: String, interactive: Boolean): String {
@@ -251,7 +251,7 @@ class MainActivity : TauriActivity() {
   /**
    * Copies one shared item into the inbox. Only content from other apps is
    * accepted: never `file://` paths or this app's own files, which another
-   * app could otherwise trick NEXUS into sending.
+   * app could otherwise trick Hearthdrive into sending.
    */
   private fun copyIn(uri: Uri, inbox: File) {
     if (uri.scheme != ContentResolver.SCHEME_CONTENT) return

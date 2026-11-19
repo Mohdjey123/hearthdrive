@@ -1145,7 +1145,7 @@ fn local_change(root: &Path, path: &Path) -> Option<LocalChange> {
         None => {
             let parent = ops::identity(path.parent()?)?;
             if !matches!(parent, Identity::Root { .. } | Identity::Entry { dir: true, .. }) {
-                // Devices and sections only hold what NEXUS puts there.
+                // Devices and sections only hold what Hearthdrive puts there.
                 return None;
             }
             Some(if meta.is_dir() { LocalChange::NewFolder { parent } } else { LocalChange::NewFile { parent } })

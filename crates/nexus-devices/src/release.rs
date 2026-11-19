@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// The second is the spare: its secret half is kept offline and has never
 /// signed anything. If the first key is lost or leaks, releases are signed
 /// with the spare instead (and the first is taken out of this list), so
-/// devices keep updating without anyone reinstalling NEXUS.
+/// devices keep updating without anyone reinstalling Hearthdrive.
 pub const TRUSTED_KEYS: &[&str] = &["Jx9BMwt9fve5bFgowIuSFnq2k7bRWMhmsD09tidtT8c", "xXlKnZ-eLFRyQU0IjV9ci3apfDnRLkFonkXyUeWkqpY"];
 
 /// The channel of a release that only devices taking beta versions get.
@@ -162,7 +162,7 @@ mod tests {
         Release {
             platform: "windows-x86_64".into(),
             version: "1.2.3".into(),
-            file: "NEXUS-Cloud_1.2.3_x64-setup.exe".into(),
+            file: "Hearthdrive_1.2.3_x64-setup.exe".into(),
             size: 10,
             blake3: blake3::hash(b"0123456789").to_hex().to_string(),
             notes: "Fixes".into(),

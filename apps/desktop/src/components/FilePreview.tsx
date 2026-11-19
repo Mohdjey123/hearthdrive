@@ -111,7 +111,7 @@ function TextPreview({ url }: { url: string }) {
   )
 }
 
-/** Tags on a file, and what NEXUS read from it. */
+/** Tags on a file, and what Hearthdrive read from it. */
 export function TagBar({ file, prefix = '' }: { file: FileEntry; prefix?: string }) {
   const lib = libraryApi(prefix)
   const [tags, setTags] = useState<FileTag[] | null>(null)
@@ -141,7 +141,7 @@ export function TagBar({ file, prefix = '' }: { file: FileEntry; prefix?: string
     <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
       <Tag className="size-3.5 text-subtle" />
       {tags.map((t) => (
-        <span key={t.tag} className={cx('flex items-center gap-1 rounded-full border px-2 py-0.5', t.auto ? 'border-dashed border-line text-muted' : 'border-line bg-elevated')} title={t.auto ? 'Given by NEXUS from what the document says' : `Added by ${t.added_by}`}>
+        <span key={t.tag} className={cx('flex items-center gap-1 rounded-full border px-2 py-0.5', t.auto ? 'border-dashed border-line text-muted' : 'border-line bg-elevated')} title={t.auto ? 'Given by Hearthdrive from what the document says' : `Added by ${t.added_by}`}>
           {t.tag}
           <button aria-label={`Remove ${t.tag}`} className="text-subtle hover:text-danger" onClick={() => void save(tags.filter((x) => x.tag !== t.tag))}>×</button>
         </span>

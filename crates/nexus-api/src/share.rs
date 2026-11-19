@@ -295,7 +295,7 @@ fn http() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .tls_backend_preconfigured(tls())
-            .user_agent(concat!("NEXUS-Cloud/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Hearthdrive/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(20))
             .build()
             .expect("HTTP client")

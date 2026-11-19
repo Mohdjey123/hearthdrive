@@ -463,7 +463,7 @@ async fn shared_folders_drop_folders_and_comments() {
     let (_, v) = list(anna.clone(), "Family/Inbox").await;
     assert_eq!(names(&v), ["March", "scan (1).pdf", "scan.pdf"]);
 
-    // Renaming a shared folder in NEXUS keeps it shared.
+    // Renaming a shared folder in Hearthdrive keeps it shared.
     let (s, v) = call(app, Method::PATCH, &format!("/api/v1/files/{family_id}"), Some(&owner), Some(json!({"name": "Family-2026"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let (_, v) = call(app, Method::GET, "/api/v1/shared-folders/mine", Some(&anna), None).await;

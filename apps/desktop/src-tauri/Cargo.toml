@@ -1,6 +1,6 @@
 [package]
 name = "nexus-desktop"
-description = "NEXUS Cloud app shell: desktop window on Windows, embedded node on Android"
+description = "Hearthdrive app shell: desktop window on Windows, embedded node on Android"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

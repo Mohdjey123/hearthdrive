@@ -321,7 +321,7 @@ async fn archive_file(s: &AppState, user: &AuthUser, id: &str) -> ApiResult<(Fil
     let file = s.db.get_file(id).await?;
     user.require_access(&file.root_id, &file.relative_path, Need::Read)?;
     let format = Format::of(&file.filename)
-        .ok_or_else(|| NexusError::invalid("NEXUS can open .zip, .7z, .tar and .tar.gz archives"))?;
+        .ok_or_else(|| NexusError::invalid("Hearthdrive can open .zip, .7z, .tar and .tar.gz archives"))?;
     let root = s.db.get_root(&file.root_id).await?;
     s.storage.ensure_online(&root)?;
     let path = s.storage.resolve(&root, &file.relative_path)?;
@@ -464,7 +464,7 @@ async fn check_host(url: &reqwest::Url, may_reach_lan: bool) -> Result<(), Nexus
         .map_err(|_| NexusError::invalid(format!("{host} could not be found")))?
         .collect();
     if addrs.is_empty() || addrs.iter().any(|a| blocked(a.ip(), may_reach_lan)) {
-        return Err(NexusError::PermissionDenied(format!("NEXUS does not download from {host}")));
+        return Err(NexusError::PermissionDenied(format!("Hearthdrive does not download from {host}")));
     }
     Ok(())
 }
@@ -474,7 +474,7 @@ fn client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .tls_backend_preconfigured(crate::share::tls())
-            .user_agent(concat!("NEXUS-Cloud/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Hearthdrive/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(20))
             .read_timeout(Duration::from_secs(60))
             // Redirects are followed by hand, checking each address.
@@ -586,7 +586,7 @@ async fn run_fetch(
                 .and_then(|l| url.join(l).ok())
                 .ok_or_else(|| NexusError::Unavailable("The server sent a broken redirect".into()))?;
             if !matches!(next.scheme(), "http" | "https") {
-                return Err(NexusError::invalid("The link redirects somewhere NEXUS cannot download from"));
+                return Err(NexusError::invalid("The link redirects somewhere Hearthdrive cannot download from"));
             }
             url = next;
             continue;

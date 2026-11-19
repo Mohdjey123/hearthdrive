@@ -10,7 +10,7 @@ import { Button, ErrorNote, Field, Modal, Spinner } from './ui'
 const SHOWN = 6
 
 /**
- * Files shared to NEXUS from other apps (Android's share menu) wait in the
+ * Files shared to Hearthdrive from other apps (Android's share menu) wait in the
  * app; this asks where to send them.
  */
 export function ShareInbox() {

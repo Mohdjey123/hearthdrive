@@ -453,7 +453,7 @@ pub fn explain_unreachable(error: &str, here_online: bool) -> String {
     if !here_online {
         "This computer is not connected to a network, so no other device can be reached.".into()
     } else if e.contains("no known address") {
-        "NEXUS does not know where to find this device. Open NEXUS on it once while both are online, or pair again.".into()
+        "Hearthdrive does not know where to find this device. Open Hearthdrive on it once while both are online, or pair again.".into()
     } else if e.contains("did not come from") {
         "Another device answered at its address. If it was reinstalled, remove it under Devices and pair it again.".into()
     } else if e.contains("refused") || e.contains("remote access is off") {
@@ -461,7 +461,7 @@ pub fn explain_unreachable(error: &str, here_online: bool) -> String {
     } else if e.contains("blocked") || e.contains("401") || e.contains("403") || e.contains("not paired") || e.contains("unknown device") {
         "The device no longer accepts this one. It may have removed or blocked this computer; pair again.".into()
     } else if e.contains("timed out") || e.contains("in time") || e.contains("timeout") {
-        "The device did not answer. It may be asleep or turned off, NEXUS may not be running on it, or a firewall blocks it.".into()
+        "The device did not answer. It may be asleep or turned off, Hearthdrive may not be running on it, or a firewall blocks it.".into()
     } else if e.contains("relay") {
         "The relay server that links the two devices could not be reached. Direct connections still work on the same network.".into()
     } else {
@@ -657,7 +657,7 @@ pub async fn send_pair_request(s: &SharedState, target: &Target, body: &PairRequ
     match result {
         Ok((ack, _)) => Ok(ack),
         Err(NexusError::PeerUnreachable(e)) => Err(NexusError::PeerUnreachable(format!(
-            "Could not reach {}. Make sure NEXUS is running there and both computers are online. ({e})",
+            "Could not reach {}. Make sure Hearthdrive is running there and both computers are online. ({e})",
             target.name
         ))),
         Err(e) => Err(e),

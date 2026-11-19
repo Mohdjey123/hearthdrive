@@ -131,7 +131,7 @@ function DamagedList({ root, onChanged, readOnly }: { root: RootHealth; onChange
         }
       >
         <p>
-          Choose this only if {accepting?.path} was changed on purpose by a program that keeps the file's date (some do). NEXUS will treat its
+          Choose this only if {accepting?.path} was changed on purpose by a program that keeps the file's date (some do). Hearthdrive will treat its
           current content as the right one.
         </p>
       </Modal>
@@ -196,7 +196,7 @@ function RootCard({ root, onChanged, readOnly }: { root: RootHealth; onChanged: 
           {root.last_check ? (
             <>Verified {formatRelative(root.last_check.checked_at)}: {checkText(root.last_check)}</>
           ) : (
-            'Not verified yet. NEXUS reads every file once a month to find damage.'
+            'Not verified yet. Hearthdrive reads every file once a month to find damage.'
           )}
         </div>
       </div>
@@ -261,7 +261,7 @@ function DeviceHealth({ device }: { device: Device }) {
           {!device.online
             ? 'Offline'
             : health.error
-              ? health.error.message.includes('does not support') ? `Update NEXUS on ${device.name} to see its drive health` : 'Could not ask'
+              ? health.error.message.includes('does not support') ? `Update Hearthdrive on ${device.name} to see its drive health` : 'Could not ask'
               : !h
                 ? 'Asking…'
                 : errors || warnings
@@ -272,7 +272,7 @@ function DeviceHealth({ device }: { device: Device }) {
       {open && h && (
         <div className="border-t border-line p-3">
           <HealthBody health={h} onChanged={health.reload} readOnly />
-          <p className="mt-2 text-[12px] text-subtle">To verify or repair files there, open NEXUS on {device.name}.</p>
+          <p className="mt-2 text-[12px] text-subtle">To verify or repair files there, open Hearthdrive on {device.name}.</p>
         </div>
       )}
     </li>
@@ -281,7 +281,7 @@ function DeviceHealth({ device }: { device: Device }) {
 
 /** A plain-text report of every device's drives, for keeping or sending. */
 function report(here: StorageHealth, name: string): string {
-  const lines = [`NEXUS drive health report, ${new Date().toLocaleString()}`, '', `== ${name} ==`]
+  const lines = [`Hearthdrive drive health report, ${new Date().toLocaleString()}`, '', `== ${name} ==`]
   lines.push(here.problems.length ? 'Needs attention:' : 'Nothing needs attention.')
   for (const p of here.problems) lines.push(`  [${p.level}] ${p.text}`)
   lines.push('', 'Disks:')

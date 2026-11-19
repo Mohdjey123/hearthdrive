@@ -65,7 +65,7 @@ pub struct StorageManager {
     device_id: String,
     /// System locations a root may neither be inside of nor contain.
     system_paths: Vec<PathBuf>,
-    /// Locations a root may contain but never be inside of (NEXUS data dir).
+    /// Locations a root may contain but never be inside of (Hearthdrive data dir).
     private_paths: Vec<PathBuf>,
 }
 
@@ -145,7 +145,7 @@ impl StorageManager {
         for private in &self.private_paths {
             if canonical.starts_with(private) {
                 return Err(NexusError::PermissionDenied(
-                    "NEXUS's own data folder cannot be a storage root".into(),
+                    "Hearthdrive's own data folder cannot be a storage root".into(),
                 ));
             }
         }
@@ -380,7 +380,7 @@ impl StorageManager {
         paths::validate_name(name)?;
         let parent = paths::normalize_relative(parent)?;
         if paths::is_hidden_internal(&parent) {
-            return Err(NexusError::PathRejected("That folder is reserved for NEXUS".into()));
+            return Err(NexusError::PathRejected("That folder is reserved for Hearthdrive".into()));
         }
         let parent_abs = self.resolve(&root, &parent)?;
         if make_parents && tokio::fs::symlink_metadata(&parent_abs).await.is_err() {

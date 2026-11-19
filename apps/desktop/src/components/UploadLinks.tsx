@@ -111,7 +111,7 @@ export function AskForFilesDialog({ root_id, path, name, onClose }: { root_id: s
       ) : (
         <div className="space-y-4">
           <p className="text-[12.5px] text-muted">
-            A page people without NEXUS can add files to this folder from, on your local network. Files are added as you, so it never
+            A page people without Hearthdrive can add files to this folder from, on your local network. Files are added as you, so it never
             does more than you may.
           </p>
           <Field label="Title" hint="Shown at the top of the page.">
@@ -170,7 +170,7 @@ export function UploadLinksSection() {
       <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-subtle">Upload links</h2>
       {links.error ? <ErrorNote>{links.error.message}</ErrorNote> : !links.data ? <Spinner /> : list.length === 0 ? (
         <p className="px-1 text-[12.5px] text-subtle">
-          To collect files from people without NEXUS, select a folder in Files and choose Ask for files. They add files from a page
+          To collect files from people without Hearthdrive, select a folder in Files and choose Ask for files. They add files from a page
           on your local network.
         </p>
       ) : (

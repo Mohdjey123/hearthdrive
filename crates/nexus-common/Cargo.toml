@@ -1,6 +1,6 @@
 [package]
 name = "nexus-common"
-description = "Shared types, errors and utilities for NEXUS Cloud"
+description = "Shared types, errors and utilities for Hearthdrive"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
