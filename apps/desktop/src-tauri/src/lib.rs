@@ -214,16 +214,32 @@ mod host {
     }
 
     /// The running node's address, from the file it writes when it starts,
-    /// if that process is still alive and listening.
+    /// if something is listening there.
+    ///
+    /// No check of `/proc/<pid>`: Android hides other processes' entries
+    /// from release builds of an app, even the app's own `:node` process.
     fn read_live_runtime(data_dir: &Path) -> Option<RuntimeInfo> {
         let raw = std::fs::read(data_dir.join(RUNTIME_FILE)).ok()?;
         let info: RuntimeInfo = serde_json::from_slice(&raw).ok()?;
-        if !Path::new("/proc").join(info.pid.to_string()).exists() {
-            return None;
-        }
         let addr = SocketAddr::from(([127, 0, 0, 1], info.port));
-        TcpStream::connect_timeout(&addr, Duration::from_millis(400)).ok()?;
-        Some(info)
+        is_hearthdrive(&addr).then_some(info)
+    }
+
+    /// Whether `addr` answers HearthDrive's health check. A file left from an
+    /// earlier run can name a port that another app has taken since.
+    fn is_hearthdrive(addr: &SocketAddr) -> bool {
+        use std::io::{Read, Write};
+        let Ok(mut stream) = TcpStream::connect_timeout(addr, Duration::from_millis(400)) else {
+            return false;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(800)));
+        if stream.write_all(b"GET /api/v1/health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").is_err() {
+            return false;
+        }
+        let mut reply = Vec::new();
+        let _ = stream.take(4096).read_to_end(&mut reply);
+        let reply = String::from_utf8_lossy(&reply);
+        reply.starts_with("HTTP/1.") && reply.contains("\"status\":\"ok\"")
     }
 
     fn wait_for_node(data_dir: PathBuf) -> Result<Connection, String> {
