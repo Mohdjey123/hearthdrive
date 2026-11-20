@@ -16,4 +16,6 @@
     <string name="shortcut_photos">"Photos"</string>
     <string name="shortcut_photos_long">"Photos on your computers"</string>
     <string name="open_with">"Open with"</string>
+    <string name="transfers_channel">"Transfers"</string>
+    <string name="transfers_channel_description">"Uploads, backups and files being sent, with their progress."</string>
 </resources>

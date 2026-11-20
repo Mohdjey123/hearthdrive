@@ -16,6 +16,7 @@ import android.os.Looper
 import android.os.Process
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import java.io.File
@@ -29,6 +30,10 @@ import java.io.File
  * notification, so Android keeps it running; the notification's Quit stops
  * the node, and so does force-stopping the app. The window finds the node
  * through the address file the node writes in the app's data folder.
+ *
+ * It also shows transfers in progress (uploads, backups, files sent from the
+ * share menu) as a notification with a progress bar, which the node updates
+ * through [showTransfers] (see lib.rs).
  */
 class NodeService : Service() {
   companion object {
@@ -42,6 +47,18 @@ class NodeService : Service() {
 
     /** Sent to the window when the service could not run in the foreground. */
     const val ACTION_UNAVAILABLE = "app.nexuscloud.desktop.action.NODE_UNAVAILABLE"
+
+    private const val TRANSFERS_CHANNEL = "transfers"
+    private const val TRANSFERS_ID = 2
+
+    /** [showTransfers] states. */
+    private const val TRANSFERS_NONE = 0
+    private const val TRANSFERS_RUNNING = 1
+    private const val TRANSFERS_DONE = 2
+    private const val TRANSFERS_FAILED = 3
+
+    /** The application, for [showTransfers], which the node calls without one. */
+    @Volatile private var app: Context? = null
 
     private const val PREFS = "node"
     private const val KEY_RUNNING = "running"
@@ -69,7 +86,70 @@ class NodeService : Service() {
      */
     fun startInProcess(context: Context) {
       val app = context.applicationContext
+      this.app = app
       startNode(app, dataDir(app), shareInbox(app), false)
+    }
+
+    /**
+     * Shows, updates or removes the transfers notification. Called by the
+     * node (lib.rs) whenever what it would show changes: [state] is 0 for
+     * nothing (removed), 1 running (with [done] of [total] as progress; a
+     * [total] of 0 shows a moving bar), 2 finished and 3 finished with
+     * errors.
+     */
+    @JvmStatic
+    fun showTransfers(title: String, text: String, done: Long, total: Long, state: Int) {
+      val context = app ?: return
+      val manager = NotificationManagerCompat.from(context)
+      if (state == TRANSFERS_NONE) {
+        manager.cancel(TRANSFERS_ID)
+        return
+      }
+      if (Build.VERSION.SDK_INT >= 26) {
+        val system = context.getSystemService(NotificationManager::class.java)
+        if (system.getNotificationChannel(TRANSFERS_CHANNEL) == null) {
+          system.createNotificationChannel(
+            NotificationChannel(TRANSFERS_CHANNEL, context.getString(R.string.transfers_channel), NotificationManager.IMPORTANCE_LOW).apply {
+              description = context.getString(R.string.transfers_channel_description)
+              setShowBadge(false)
+            }
+          )
+        }
+      }
+      val immutable = if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+      val open = PendingIntent.getActivity(
+        context, 3,
+        Intent(context, MainActivity::class.java)
+          .setAction(MainActivity.ACTION_SHORTCUT)
+          .putExtra(MainActivity.EXTRA_ROUTE, "transfers")
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        immutable or PendingIntent.FLAG_UPDATE_CURRENT
+      )
+      val running = state == TRANSFERS_RUNNING
+      val builder = NotificationCompat.Builder(context, TRANSFERS_CHANNEL)
+        .setSmallIcon(R.drawable.ic_stat_hearthdrive)
+        .setContentTitle(title)
+        .setContentText(text)
+        .setContentIntent(open)
+        .setOnlyAlertOnce(true)
+        .setShowWhen(!running)
+        .setOngoing(running)
+        .setAutoCancel(!running)
+        .setCategory(if (running) NotificationCompat.CATEGORY_PROGRESS else NotificationCompat.CATEGORY_STATUS)
+        .setPriority(NotificationCompat.PRIORITY_LOW)
+      if (running) {
+        // Android's progress bar takes ints; scale large byte counts down.
+        val scale = if (total > Int.MAX_VALUE) total / Int.MAX_VALUE + 1 else 1L
+        builder.setProgress((total / scale).toInt(), (done / scale).toInt(), total <= 0)
+      } else if (state == TRANSFERS_DONE) {
+        // A finished transfer needs no attention: it clears itself.
+        builder.setTimeoutAfter(15_000)
+      }
+      try {
+        manager.notify(TRANSFERS_ID, builder.build())
+      } catch (e: SecurityException) {
+        // Notifications are not allowed (Android 13 and later ask first).
+      }
     }
 
     /** Whether the node was running before the app was updated. */
@@ -88,6 +168,11 @@ class NodeService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   private var nodeStarted = false
+
+  override fun onCreate() {
+    super.onCreate()
+    app = applicationContext
+  }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (intent?.action == ACTION_QUIT) {

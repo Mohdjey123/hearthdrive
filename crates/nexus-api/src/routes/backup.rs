@@ -13,6 +13,12 @@
 //! **Share menu.** The Android app copies files shared to it into an inbox
 //! folder; the person picks a computer and folder, and they are sent from
 //! there like any copy and then removed from the inbox.
+//!
+//! **Uploads.** Files picked with Upload in the Android app are copied into
+//! a hidden batch folder in the inbox (`.uploads/<batch>`), which the share
+//! menu's list does not show, and sent the same way straight away. The node
+//! runs in the app's background service, so they keep going after the app
+//! is closed.
 
 use super::audit;
 use super::files::percent_encode;
@@ -282,6 +288,9 @@ async fn run_and_record(s: &AppState) {
 
 /// Runs the backup when it is due or asked for (phones only).
 pub fn spawn(s: SharedState) {
+    if let Some(inbox) = s.share_inbox.clone() {
+        tokio::task::spawn_blocking(move || clear_stale_uploads(&inbox));
+    }
     if s.media_dir.is_none() {
         return;
     }
@@ -480,6 +489,22 @@ fn inbox(s: &AppState) -> Result<&Path> {
     s.share_inbox.as_deref().ok_or_else(|| NexusError::NotFound("Shared files".into()))
 }
 
+/// Where the Android app puts files picked with Upload: one hidden folder
+/// per batch. Batch names are letters, digits and dashes only.
+fn upload_batch(inbox: &Path, batch: &str) -> Result<PathBuf> {
+    if batch.is_empty() || batch.len() > 64 || !batch.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(NexusError::invalid("Not an upload batch"));
+    }
+    let dir = inbox.join(UPLOADS_DIR).join(batch);
+    if !dir.is_dir() {
+        return Err(NexusError::NotFound("The files to upload".into()));
+    }
+    Ok(dir)
+}
+
+/// The hidden folder in the inbox that holds upload batches.
+const UPLOADS_DIR: &str = ".uploads";
+
 /// The files waiting in the inbox, oldest first. Files still being copied
 /// in end with `.part`.
 fn waiting(dir: &Path) -> Vec<(SharedFile, i64)> {
@@ -496,6 +521,21 @@ fn waiting(dir: &Path) -> Vec<(SharedFile, i64)> {
         .collect();
     out.sort_by_key(|(_, at)| *at);
     out
+}
+
+/// Upload batches older than this were abandoned (the app closed while it
+/// copied them in, or the job never started) and are removed.
+const STALE_UPLOAD_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Removes abandoned upload batches. Run by [`spawn`] when the node starts.
+pub fn clear_stale_uploads(inbox: &Path) {
+    let now = now_ms();
+    for entry in std::fs::read_dir(inbox.join(UPLOADS_DIR)).into_iter().flatten().flatten() {
+        let stale = entry.metadata().map(|m| now - modified_ms(&m) > STALE_UPLOAD_MS).unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 pub async fn shared(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<Vec<SharedFile>>> {
@@ -526,6 +566,10 @@ pub struct SendShared {
     root_id: String,
     #[serde(default)]
     path: String,
+    /// An upload batch (see [`upload_batch`]) the names are in, instead of
+    /// the inbox itself. Its folder is removed once the job ends.
+    #[serde(default)]
+    batch: Option<String>,
 }
 
 /// `POST /shared/send`: sends shared files to a folder on a paired device in
@@ -537,7 +581,11 @@ pub async fn send_shared(
 ) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
     user.require_person()?;
     user.require(Action::Write)?;
-    let dir = inbox(&s)?.to_path_buf();
+    let dir = match req.batch.as_deref() {
+        Some(batch) => upload_batch(inbox(&s)?, batch)?,
+        None => inbox(&s)?.to_path_buf(),
+    };
+    let batch_dir = req.batch.is_some().then(|| dir.clone());
     if req.names.is_empty() {
         return Err(NexusError::invalid("Choose something to send").into());
     }
@@ -588,6 +636,10 @@ pub async fn send_shared(
             }
         }
         finish_job(s, &job);
+        // An upload's copies are only for this job: the originals stay on the phone.
+        if let Some(dir) = batch_dir {
+            let _ = tokio::fs::remove_dir_all(dir).await;
+        }
     });
     Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id }))))
 }

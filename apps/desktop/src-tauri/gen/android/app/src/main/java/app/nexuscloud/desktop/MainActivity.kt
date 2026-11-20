@@ -150,6 +150,32 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  // -- Uploads -------------------------------------------------------------
+
+  /** Android's picker for Upload; see [Bridge.pickFiles]. */
+  private val pickLauncher = registerForActivityResult(
+    androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
+  ) { uris ->
+    if (uris.isEmpty()) {
+      notifyPage("nexus-picked", "")
+      return@registerForActivityResult
+    }
+    val batch = java.util.UUID.randomUUID().toString()
+    val dir = File(cacheDir, "shared/.uploads/$batch").apply { mkdirs() }
+    notifyPage("nexus-picking", uris.size.toString())
+    Thread {
+      val names = JSONArray()
+      for (uri in uris) {
+        try {
+          copyIn(uri, dir)?.let { names.put(it) }
+        } catch (e: Exception) {
+          Logger.warn("Could not read a file to upload: $e")
+        }
+      }
+      notifyPage("nexus-picked", org.json.JSONObject().put("batch", batch).put("names", names).toString())
+    }.start()
+  }
+
   // -- Scanning documents --------------------------------------------------
 
   /** Google's scanner screen; its PDF goes into the inbox like a share. */
@@ -295,13 +321,25 @@ class MainActivity : TauriActivity() {
       return route
     }
 
-    /** Opens this app's page in Android settings (when the prompt was turned off). */
     /** Opens Google's document scanner; see [startScan]. */
     @JavascriptInterface
     fun scanDocument() {
       runOnUiThread { startScan() }
     }
 
+    /**
+     * Opens Android's file picker for Upload. The picked files are copied
+     * into an upload batch in the inbox, which the node sends in the
+     * background; the page hears `nexus-picking` (detail: how many) as
+     * copying starts, then `nexus-picked` (detail: JSON `{batch, names}`,
+     * or '' when nothing was picked).
+     */
+    @JavascriptInterface
+    fun pickFiles() {
+      runOnUiThread { pickLauncher.launch(arrayOf("*/*")) }
+    }
+
+    /** Opens this app's page in Android settings (when the prompt was turned off). */
     @JavascriptInterface
     fun openAppSettings() {
       runOnUiThread {
@@ -361,7 +399,7 @@ class MainActivity : TauriActivity() {
   companion object {
     const val ACTION_SHORTCUT = "app.nexuscloud.desktop.action.SHORTCUT"
     const val EXTRA_ROUTE = "route"
-    private val SHORTCUT_ROUTES = setOf("backup?run=1", "scan", "files", "photos")
+    private val SHORTCUT_ROUTES = setOf("backup?run=1", "scan", "files", "photos", "transfers")
   }
 
   // -- Updates -------------------------------------------------------------
@@ -484,9 +522,9 @@ class MainActivity : TauriActivity() {
    * accepted: never `file://` paths or this app's own files, which another
    * app could otherwise trick HearthDrive into sending.
    */
-  private fun copyIn(uri: Uri, inbox: File) {
-    if (uri.scheme != ContentResolver.SCHEME_CONTENT) return
-    if (uri.authority == "$packageName.fileprovider") return
+  private fun copyIn(uri: Uri, inbox: File): String? {
+    if (uri.scheme != ContentResolver.SCHEME_CONTENT) return null
+    if (uri.authority == "$packageName.fileprovider") return null
     var name: String? = null
     contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
       if (c.moveToFirst()) name = c.getString(0)
@@ -495,8 +533,8 @@ class MainActivity : TauriActivity() {
     val partial = File(inbox, "$finalName.part")
     contentResolver.openInputStream(uri)?.use { input ->
       partial.outputStream().use { output -> input.copyTo(output, 256 * 1024) }
-    } ?: return
-    partial.renameTo(File(inbox, finalName))
+    } ?: return null
+    return if (partial.renameTo(File(inbox, finalName))) finalName else null
   }
 
   /** A plain file name: no folders, control characters or leading dots. */

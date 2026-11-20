@@ -723,6 +723,11 @@ interface AndroidBridge {
    * scanner cannot start it hears `nexus-scan-failed` with the reason.
    */
   scanDocument?(): void
+  /**
+   * Android's file picker for Upload: the page hears `nexus-picking` (detail:
+   * how many) and then `nexus-picked` (detail: JSON `{batch, names}`, or '').
+   */
+  pickFiles?(): void
   /** Opens a file fetched with `fetch_for_app` in another app the person picks. */
   openFile?(path: string): 'opened' | 'none' | 'missing'
   /** Android's share menu for files fetched with `fetch_for_app` (a JSON list of paths). */
@@ -1097,7 +1102,8 @@ export const api = {
   runBackup: () => request<void>('POST', '/backup/run'),
 
   sharedFiles: () => request<SharedFile[]>('GET', '/shared'),
-  sendShared: (b: { names: string[]; device_id: string; root_id: string; path: string }) =>
+  /** Sends shared files, or with `batch` files picked for Upload (Android), in the background. */
+  sendShared: (b: { names: string[]; device_id: string; root_id: string; path: string; batch?: string }) =>
     requestJson<{ id: string }>('POST', '/shared/send', b),
   discardShared: (names: string[] = []) => request<void>('POST', '/shared/discard', { names }),
 

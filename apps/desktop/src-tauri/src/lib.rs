@@ -211,7 +211,13 @@ mod host {
                 Ok(rt) => rt,
                 Err(e) => return fail(e.to_string()),
             };
-            if let Err(e) = runtime.block_on(nexus_core::run_with(config, None)) {
+            // On Android the node's transfers show in a notification.
+            let (ready, ready_rx) = tokio::sync::oneshot::channel();
+            #[cfg(target_os = "android")]
+            runtime.spawn(super::transfers::watch(ready_rx));
+            #[cfg(not(target_os = "android"))]
+            drop(ready_rx);
+            if let Err(e) = runtime.block_on(nexus_core::run_with(config, Some(ready))) {
                 tracing::error!(error = %format!("{e:#}"), "embedded node stopped");
                 fail(format!("{e:#}"));
             }
@@ -407,6 +413,9 @@ mod host {
 
 /// The JNI entry `NodeService` (Kotlin) starts the node through.
 #[cfg(target_os = "android")]
+mod transfers;
+
+#[cfg(target_os = "android")]
 mod android {
     use jni::JNIEnv;
     use jni::objects::{JClass, JObject, JString};
@@ -422,7 +431,7 @@ mod android {
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_app_nexuscloud_desktop_NodeService_startNode<'l>(
         mut env: JNIEnv<'l>,
-        _class: JClass<'l>,
+        class: JClass<'l>,
         context: JObject<'l>,
         data_dir: JString<'l>,
         share_inbox: JString<'l>,
@@ -432,6 +441,10 @@ mod android {
             return;
         };
         let (data_dir, share_inbox) = (PathBuf::from(String::from(data_dir)), PathBuf::from(String::from(share_inbox)));
+        // For the transfers notification, which calls back into NodeService.
+        if let (Ok(vm), Ok(class)) = (env.get_java_vm(), env.new_global_ref(&class)) {
+            super::transfers::remember(vm, class);
+        }
         if own_process != 0 {
             static CONTEXT_SET: std::sync::Once = std::sync::Once::new();
             CONTEXT_SET.call_once(|| {

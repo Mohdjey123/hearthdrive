@@ -8,7 +8,7 @@ import { AccessBadge, Comments, ShareFolderDialog } from '../components/FolderSh
 import { EncryptDialog, PluginsButton } from '../components/FolderTools'
 import { AskForFilesDialog } from '../components/UploadLinks'
 import {
-  api, ApiError, fileApi, isMobile, libraryApi, isTouch, peerPrefix, thisDevice, type Device, type FileApi, type FileEntry, type FoundItem,
+  androidBridge, api, ApiError, fileApi, isMobile, libraryApi, isTouch, peerPrefix, thisDevice, type Device, type FileApi, type FileEntry, type FoundItem,
   type FileKindFilter, type RootSummary, type SearchFilters, type SharedWithMe, type TrashItem,
 } from '../services/api'
 import { useSession } from '../stores/session'
@@ -513,6 +513,67 @@ export function Files({ route }: { route: Route }) {
   }
   const where = device ? `${device.name} · ` : ''
 
+  // On Android, Upload uses the phone's file picker and the node sends the
+  // files from the background service: they keep going when the app is
+  // closed, with a notification. (Not into folders shared by someone else,
+  // which go through the web view as before.)
+  const nativeUpload = isMobile() && !!androidBridge()?.pickFiles && !!deviceId && !share
+  const pickTarget = useRef<{ device: string; root: string; path: string; label: string } | null>(null)
+  const uploadJobs = useRef(new Set<string>())
+  const reloadListing = useRef(listing.reload)
+  reloadListing.current = listing.reload
+  useEffect(() => {
+    if (!nativeUpload) return
+    const picking = (e: Event) => {
+      const n = Number((e as CustomEvent<string>).detail) || 0
+      toast(`Preparing ${n} file${n === 1 ? '' : 's'}…`)
+    }
+    const picked = (e: Event) => {
+      const target = pickTarget.current
+      pickTarget.current = null
+      const detail = String((e as CustomEvent<string>).detail ?? '')
+      if (!target || !detail) return
+      let batch = ''
+      let names: string[] = []
+      try {
+        ;({ batch, names } = JSON.parse(detail) as { batch: string; names: string[] })
+      } catch {
+        return
+      }
+      if (names.length === 0) {
+        toast('Could not read those files', 'error')
+        return
+      }
+      api
+        .sendShared({ names, device_id: target.device, root_id: target.root, path: target.path, batch })
+        .then(({ id }) => {
+          uploadJobs.current.add(id)
+          toast(`Uploading ${names.length} file${names.length === 1 ? '' : 's'} to ${target.label}. It carries on if you close the app.`)
+        })
+        .catch(toastError)
+    }
+    // Show what arrived once the node has sent it.
+    const off = subscribe((e) => {
+      if (e.type === 'transfer.updated' && uploadJobs.current.has(e.id) && e.status !== 'running' && e.status !== 'queued') {
+        uploadJobs.current.delete(e.id)
+        void reloadListing.current()
+      }
+    })
+    window.addEventListener('nexus-picking', picking)
+    window.addEventListener('nexus-picked', picked)
+    return () => {
+      off()
+      window.removeEventListener('nexus-picking', picking)
+      window.removeEventListener('nexus-picked', picked)
+    }
+  }, [nativeUpload])
+
+  const chooseUploads = () => {
+    if (!nativeUpload || !root) return fileInput.current?.click()
+    pickTarget.current = { device: deviceId, root: root.id, path, label: `${where}${root.name}${path ? ` / ${path}` : ''}` }
+    androidBridge()?.pickFiles?.()
+  }
+
   // A phone has no storage of its own: open the first paired computer.
   useEffect(() => {
     if (!isMobile() || deviceId || peers.length === 0) return
@@ -848,7 +909,7 @@ export function Files({ route }: { route: Route }) {
           <Button size="sm" icon={<FolderPlus className="size-3.5" />} disabled={!canAdd || !!results} onClick={() => setDialog('folder')}>
             <span className="hidden sm:inline">New folder</span>
           </Button>
-          <Button size="sm" variant="primary" icon={<Upload className="size-3.5" />} disabled={!canAdd || !!results} onClick={() => fileInput.current?.click()}>
+          <Button size="sm" variant="primary" icon={<Upload className="size-3.5" />} disabled={!canAdd || !!results} onClick={chooseUploads}>
             <span className="hidden sm:inline">Upload</span>
           </Button>
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => { upload(e.target.files); e.target.value = '' }} />
@@ -882,7 +943,7 @@ export function Files({ route }: { route: Route }) {
             <EmptyState
               icon={<Upload className="size-7" />}
               title={`Add files to ${crumbs.length ? crumbs[crumbs.length - 1] : share.name}`}
-              action={<Button variant="primary" icon={<Upload className="size-3.5" />} disabled={!canAdd} onClick={() => fileInput.current?.click()}>Upload</Button>}
+              action={<Button variant="primary" icon={<Upload className="size-3.5" />} disabled={!canAdd} onClick={chooseUploads}>Upload</Button>}
             >
               {share.shared_by} shared this folder for adding files: drag files here or use Upload. What is already in it is not shown,
               and nothing is replaced: a file with the same name gets a new one.
