@@ -759,7 +759,7 @@ export function Settings() {
       <Panel title="About">
         <div className="divide-y divide-line">
           <Row label="Version">HearthDrive {info.data?.node.version ?? ''}</Row>
-          <Row label="License">MIT · free, self-hosted, no subscription, no analytics</Row>
+          <Row label="License">Apache 2.0 · free and open source, self-hosted, no subscription, no analytics</Row>
         </div>
       </Panel>
     </div>

@@ -5,9 +5,9 @@
 **Your devices. Your storage. One cloud.**
 
 A private, self-hosted personal cloud made of your own Windows computers and Android phones.<br>
-Free and source-available. No subscription, no third-party storage, nothing exposed to the public internet.
+Free and open source. No subscription, no third-party storage, nothing exposed to the public internet.
 
-![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)
+![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Platforms: Windows | Android](https://img.shields.io/badge/platforms-Windows%20%7C%20Android-informational)
 ![Rust](https://img.shields.io/badge/backend-Rust%20%2B%20Axum-orange)
 ![Tauri 2](https://img.shields.io/badge/app-Tauri%202%20%2B%20React-24c8db)
@@ -431,9 +431,6 @@ Following the product spec's phases. Each phase ships a working application.
 
 ## License
 
-HearthDrive is released under the [Functional Source License, version 1.1, with Apache 2.0 as the future license](LICENSE.md) (FSL-1.1-ALv2). In short:
+HearthDrive is open source under the [Apache License 2.0](LICENSE). You may use, copy, change and share it for any purpose, including commercially, as long as you keep the license and copyright notices ([NOTICE](NOTICE)). The license does not grant use of the HearthDrive name or logo for your own product; forks are welcome under a different name.
 
-* You may use, copy, change and run it for any purpose, including at work and for your family, except to make a product or service that competes with HearthDrive.
-* Two years after each version is released, that version is also available under the Apache License 2.0, with no such limit.
-
-This is a summary; the [license](LICENSE.md) itself is what counts.
+Versions up to 0.1.7 were published under the Functional Source License (FSL-1.1-ALv2); from this change on, the code is under Apache 2.0.

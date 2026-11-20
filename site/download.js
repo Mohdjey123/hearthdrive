@@ -39,7 +39,7 @@
       var mine = android ? apk : win;
       if (mine) {
         $('hero-button').href = mine.browser_download_url;
-        $('hero-meta').textContent = 'Version ' + version + ', ' + size(mine.size) + '. Free. ' +
+        $('hero-meta').textContent = 'Version ' + version + ', ' + size(mine.size) + '. Free and open source. ' +
           (android ? 'For Android phones.' : 'For Windows 10 and 11.');
       }
 
