@@ -255,9 +255,26 @@ pub fn preview(data_dir: &Path, file: &FileEntry, path: &Path, size: u32) -> Res
         return Ok(target);
     }
     let ext = file.extension.as_deref().unwrap_or_default().to_ascii_lowercase();
+    if ext == "pdf" {
+        // The first page, drawn by Windows, becomes the preview.
+        let png = crate::winrt::pdf_first_page(path, SIZES[SIZES.len() - 1])?;
+        let tmp = data_dir.join("tmp");
+        std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+        let page = tmp.join(format!("{}-page.png", file.id));
+        std::fs::write(&page, png).map_err(|e| e.to_string())?;
+        let made = make_previews(data_dir, file, &page, "png", None);
+        let _ = std::fs::remove_file(&page);
+        made?;
+        return Ok(target);
+    }
     let exif = Exif::read(path);
     make_previews(data_dir, file, path, &ext, exif.as_ref())?;
     Ok(target)
+}
+
+/// Whether [`preview`] can draw this kind of file.
+pub fn has_preview(ext: &str) -> bool {
+    is_photo(ext) || (cfg!(windows) && ext == "pdf")
 }
 
 // ---------------------------------------------------------------------------

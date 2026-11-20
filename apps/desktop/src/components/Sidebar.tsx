@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUpDown, Clapperboard, Copy, Folder, Images, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, Menu, MonitorSmartphone, Settings, Wand2 } from 'lucide-react'
+import { ArrowUpDown, Clapperboard, Copy, FileText, Folder, Images, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, Menu, MonitorSmartphone, Settings, Wand2 } from 'lucide-react'
 import type { Page } from '../hooks/useRoute'
 import { navigate } from '../hooks/useRoute'
 import { subscribeStatus } from '../services/events'
@@ -15,6 +15,7 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
   { page: 'files', label: 'Files', icon: Folder },
   { page: 'photos', label: 'Photos', icon: Images },
   { page: 'media', label: 'Media', icon: Clapperboard },
+  { page: 'documents', label: 'Documents', icon: FileText },
   { page: 'storage', label: 'Storage', icon: HardDrive },
   { page: 'automation', label: 'Automation', icon: Wand2 },
   { page: 'health', label: 'Drive health', icon: HeartPulse },

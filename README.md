@@ -303,6 +303,8 @@ And on **Devices**, **Block** a paired device that was lost or stolen: its reque
 * **Search inside documents.** HearthDrive reads the text of plain text and code files, PDFs, Word, Excel, PowerPoint and OpenDocument files, so search finds them by what they say. Scanned PDFs are read with Windows' own text recognition (the languages installed in Windows); reading text in pictures too can be turned on under **Settings** → **Documents** (it is slow on large photo collections).
 * **Tags.** Documents get tags from what they say (*invoice*, *receipt*, *contract*, *payslip*…). Keep, remove or add tags in a file's **Properties**; **Files** can be filtered by tag, kind, size and date.
 * **PDFs.** PDFs open in the app's own viewer, page by page, with zoom; search finds them by their text.
+* **Documents page.** PDFs, Office files and photos of paperwork in one list, newest first, with a picture of the first page. HearthDrive reads each one's date, who sent it and the amount it is for from its text; correct any of them, and add a title or a note, in the document's details. Search goes through the text of every document; filter by type (*invoice*, *receipt*, *contract*, *utility*…), year and sender. The files themselves are never changed.
+* **Scanning.** The Android app scans paper documents with Google's document scanner (it finds the page edges, straightens and cleans up the pages) into a PDF. The first scan asks which computer and folder to keep scans in; later scans go there by themselves, where they are read like any other document.
 * **Sorting.** To file documents away by their tags, use a rule (below).
 
 ## Rules and suggestions

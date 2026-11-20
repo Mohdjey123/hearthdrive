@@ -4,6 +4,7 @@ import { api, peerPrefix, type Device, type SharedFile } from '../services/api'
 import { navigate } from '../hooks/useRoute'
 import { formatBytes } from '../lib/format'
 import { PlacePicker } from '../pages/Sync'
+import { isScan } from '../lib/scans'
 import { toast, toastError } from './Toasts'
 import { Button, ErrorNote, Field, Modal, Spinner } from './ui'
 
@@ -24,7 +25,8 @@ export function ShareInbox() {
 
   const check = useCallback(async () => {
     try {
-      const list = await api.sharedFiles()
+      // Scans have their own way out (ScanInbox).
+      const list = (await api.sharedFiles()).filter((f) => !isScan(f.name))
       setFiles(list)
       if (list.length > 0) {
         setOpen(true)

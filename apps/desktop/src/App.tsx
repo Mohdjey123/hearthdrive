@@ -11,6 +11,7 @@ import { Duplicates } from './pages/Duplicates'
 import { Automation } from './pages/Automation'
 import { Photos } from './pages/Photos'
 import { Media } from './pages/Media'
+import { Documents } from './pages/Documents'
 import { Storage } from './pages/Storage'
 import { Devices } from './pages/Devices'
 import { Transfers } from './pages/Transfers'
@@ -21,6 +22,7 @@ import { Copies } from './pages/Copies'
 import { Health } from './pages/Health'
 import { Shares } from './pages/Shares'
 import { ShareInbox } from './components/ShareInbox'
+import { ScanInbox } from './components/ScanInbox'
 import { UpdateBanner } from './components/Updates'
 import { TitleBar, hasTitleBar } from './components/TitleBar'
 import { Settings } from './pages/Settings'
@@ -43,6 +45,7 @@ function Shell() {
         {page === 'automation' && <Automation />}
         {page === 'photos' && <Photos route={route} />}
         {page === 'media' && <Media route={route} />}
+        {page === 'documents' && <Documents route={route} />}
         {page === 'storage' && <Storage route={route} />}
         {page === 'devices' && <Devices />}
         {page === 'sync' && <Sync />}
@@ -56,6 +59,7 @@ function Shell() {
       </main>
       <BottomNav current={page} />
       {isMobile() && <ShareInbox />}
+      {isMobile() && <ScanInbox />}
     </div>
   )
 }

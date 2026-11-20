@@ -4,6 +4,7 @@ pub mod commands;
 pub mod library;
 pub mod photos;
 pub mod devices;
+pub mod documents;
 pub mod events;
 pub mod files;
 pub mod health;

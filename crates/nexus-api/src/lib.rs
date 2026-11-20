@@ -7,6 +7,7 @@
 mod auth;
 pub mod automation;
 mod error;
+pub mod docmeta;
 pub mod documents;
 pub mod media;
 pub mod nearby;
@@ -115,6 +116,8 @@ pub(crate) fn api_routes(state: SharedState) -> Router {
         .route("/playback/{id}", get(library::get_playback).put(library::set_playback))
         .route("/tags", get(library::tags))
         .route("/documents/settings", axum::routing::put(library::set_document_settings))
+        .route("/documents", get(routes::documents::list))
+        .route("/documents/{id}", get(routes::documents::get).patch(routes::documents::update))
         .route("/photos", get(photos::list))
         .route("/photos/months", get(photos::months))
         .route("/photos/places", get(photos::places))

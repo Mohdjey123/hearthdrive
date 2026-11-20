@@ -93,6 +93,30 @@ mod imp {
         Ok(out)
     }
 
+    /// The first page of a PDF drawn as a PNG, `width` pixels wide.
+    pub fn pdf_first_page(path: &Path, width: u32) -> Result<Vec<u8>, String> {
+        use windows::Storage::Streams::DataReader;
+        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path.as_os_str())).map_err(err)?.join().map_err(err)?;
+        let doc = PdfDocument::LoadFromFileAsync(&file).map_err(err)?.join().map_err(err)?;
+        if doc.PageCount().map_err(err)? == 0 {
+            return Err("The PDF has no pages".into());
+        }
+        let page = doc.GetPage(0).map_err(err)?;
+        let stream = InMemoryRandomAccessStream::new().map_err(err)?;
+        let options = PdfPageRenderOptions::new().map_err(err)?;
+        options.SetDestinationWidth(width).map_err(err)?;
+        // Pages without a background would come out transparent.
+        options.SetBackgroundColor(windows::UI::Color { A: 255, R: 255, G: 255, B: 255 }).map_err(err)?;
+        page.RenderWithOptionsToStreamAsync(&stream, &options).map_err(err)?.join().map_err(err)?;
+        let size = stream.Size().map_err(err)? as u32;
+        stream.Seek(0).map_err(err)?;
+        let reader = DataReader::CreateDataReader(&stream.GetInputStreamAt(0).map_err(err)?).map_err(err)?;
+        reader.LoadAsync(size).map_err(err)?.join().map_err(err)?;
+        let mut bytes = vec![0u8; size as usize];
+        reader.ReadBytes(&mut bytes).map_err(err)?;
+        Ok(bytes)
+    }
+
     /// How many faces a photo shows (from its JPEG preview).
     pub fn count_faces(jpeg: &[u8]) -> Result<u32, String> {
         let detector = FaceDetector::CreateAsync().map_err(err)?.join().map_err(err)?;
@@ -119,6 +143,9 @@ mod imp {
     }
     pub fn ocr_pdf(_: &Path, _: u32) -> Result<String, String> {
         Err(NO.into())
+    }
+    pub fn pdf_first_page(_: &Path, _: u32) -> Result<Vec<u8>, String> {
+        Err("PDF previews need Windows".into())
     }
     pub fn count_faces(_: &[u8]) -> Result<u32, String> {
         Err(NO.into())

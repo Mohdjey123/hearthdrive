@@ -31,6 +31,8 @@ import java.io.File
  *   when the notification's Quit is tapped;
  * - asks for permission to read photos and videos, for backup, through a
  *   small `window.NexusAndroid` bridge the page can call;
+ * - scans paper documents with Google's scanner into a PDF in the same
+ *   inbox as shares, which the page sends to the computer chosen for scans;
  * - receives files shared to HearthDrive from other apps (the share menu) and
  *   copies them into `<cache>/shared`, where the node sends them from once
  *   the person picks a computer and folder;
@@ -127,6 +129,59 @@ class MainActivity : TauriActivity() {
     runOnUiThread { webView?.evaluateJavascript("window.dispatchEvent(new Event('$event'))", null) }
   }
 
+  /** Like [notifyPage], with a message the page reads as `event.detail`. */
+  private fun notifyPage(event: String, detail: String) {
+    val quoted = org.json.JSONObject.quote(detail)
+    runOnUiThread {
+      webView?.evaluateJavascript("window.dispatchEvent(new CustomEvent('$event', { detail: $quoted }))", null)
+    }
+  }
+
+  // -- Scanning documents --------------------------------------------------
+
+  /** Google's scanner screen; its PDF goes into the inbox like a share. */
+  private val scanLauncher = registerForActivityResult(
+    androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
+  ) { result ->
+    if (result.resultCode != RESULT_OK) return@registerForActivityResult
+    val scan = com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+    val pdf = scan?.pdf?.uri ?: return@registerForActivityResult
+    val inbox = File(cacheDir, "shared").apply { mkdirs() }
+    Thread {
+      try {
+        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH.mm.ss", java.util.Locale.ROOT).format(java.util.Date())
+        val name = uniqueName(inbox, "Scan $stamp.pdf")
+        val partial = File(inbox, "$name.part")
+        contentResolver.openInputStream(pdf)?.use { input ->
+          partial.outputStream().use { output -> input.copyTo(output, 256 * 1024) }
+        }
+        partial.renameTo(File(inbox, name))
+        notifyPage("nexus-scanned")
+      } catch (e: Exception) {
+        Logger.warn("Could not keep a scan: $e")
+        notifyPage("nexus-scan-failed", "The scan could not be saved")
+      }
+    }.start()
+  }
+
+  private fun startScan() {
+    val options = com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.Builder()
+      .setGalleryImportAllowed(true)
+      .setPageLimit(50)
+      .setResultFormats(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
+      .setScannerMode(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+      .build()
+    com.google.mlkit.vision.documentscanner.GmsDocumentScanning.getClient(options)
+      .getStartScanIntent(this)
+      .addOnSuccessListener { sender ->
+        scanLauncher.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build())
+      }
+      .addOnFailureListener { e ->
+        Logger.warn("The scanner could not start: $e")
+        notifyPage("nexus-scan-failed", "The scanner could not start. It needs Google Play services on this phone.")
+      }
+  }
+
   // -- Photos and videos ---------------------------------------------------
 
   private fun mediaPermissions(): Array<String> =
@@ -172,6 +227,12 @@ class MainActivity : TauriActivity() {
     fun canUpdateQuietly(): Boolean = this@MainActivity.canUpdateQuietly()
 
     /** Opens this app's page in Android settings (when the prompt was turned off). */
+    /** Opens Google's document scanner; see [startScan]. */
+    @JavascriptInterface
+    fun scanDocument() {
+      runOnUiThread { startScan() }
+    }
+
     @JavascriptInterface
     fun openAppSettings() {
       runOnUiThread {

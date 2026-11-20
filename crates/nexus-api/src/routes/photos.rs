@@ -329,8 +329,8 @@ pub async fn thumbnail(
         }
     }
     let ext = file.extension.as_deref().unwrap_or_default().to_ascii_lowercase();
-    if file.is_dir || !media::is_photo(&ext) {
-        return Err(NexusError::invalid("Only photos have previews").into());
+    if file.is_dir || !media::has_preview(&ext) {
+        return Err(NexusError::invalid("Only photos and PDFs have previews").into());
     }
     let root = s.db.get_root(&file.root_id).await?;
     let data_dir = s.data_dir.clone();

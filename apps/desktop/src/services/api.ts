@@ -272,6 +272,48 @@ export function libraryApi(prefix = '') {
   }
 }
 
+/** A document in a list: the file with its date, sender and amount. */
+export interface DocItem extends FileEntry {
+  title: string | null
+  /** `YYYY-MM-DD`: typed, else found in the text, else the file's date. */
+  doc_date: string | null
+  sender: string | null
+  amount: string | null
+  has_note: boolean
+  /** Tags separated by `|`. */
+  tags: string | null
+  method: string | null
+  thumb_url: string | null
+}
+export interface DocCount { value: string; count: number }
+export interface DocMeta {
+  found_date: string | null
+  found_sender: string | null
+  found_amount: string | null
+  title: string | null
+  doc_date: string | null
+  sender: string | null
+  amount: string | null
+  note: string | null
+  edited_by: string | null
+  edited_at: number | null
+}
+export interface DocDetails { meta: DocMeta; tags: FileTag[]; text: DocText | null; can_edit: boolean }
+export type DocQuery = { q?: string; tag?: string; year?: string; sender?: string; offset?: number; limit?: number }
+export type DocEdit = { title?: string; date?: string; sender?: string; amount?: string; note?: string }
+
+/** Document calls for this computer (`''`) or a paired device's proxy prefix. */
+export function docApi(prefix = '') {
+  return {
+    list: (query: DocQuery = {}) =>
+      request<{ items: DocItem[]; more: boolean; years: DocCount[]; senders: DocCount[]; tags: DocCount[] }>('GET', `${prefix}/documents${q(query)}`),
+    get: (id: string) => request<DocDetails>('GET', `${prefix}/documents/${id}`),
+    update: (id: string, b: DocEdit) => request<DocDetails>('PATCH', `${prefix}/documents/${id}`, b),
+    /** A URL from the API, made absolute and routed to the device. */
+    url: (path: string | null | undefined) => (path ? absoluteUrl(prefix ? path.replace(/^\/api\/v1/, `/api/v1${prefix}`) : path) : null),
+  }
+}
+
 /** A HearthDrive device heard on the local network. */
 export interface NearbyDevice {
   id: string
@@ -675,6 +717,12 @@ interface AndroidBridge {
   installInBackground?(path: string): void
   /** Whether Android lets HearthDrive install updates without asking (Android 12 and later). */
   canUpdateQuietly?(): boolean
+  /**
+   * Opens Google's document scanner. The PDF lands in the share inbox as
+   * `Scan <date> <time>.pdf` and the page hears `nexus-scanned`; when the
+   * scanner cannot start it hears `nexus-scan-failed` with the reason.
+   */
+  scanDocument?(): void
 }
 
 export function androidBridge(): AndroidBridge | null {

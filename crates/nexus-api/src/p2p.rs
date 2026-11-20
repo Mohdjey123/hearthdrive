@@ -28,12 +28,15 @@ pub struct P2pPeer(pub String);
 
 /// API areas reachable over the peer-to-peer network. Everything else
 /// (sign-in, setup, device management, the event stream, relaying to other
-/// nodes) is for people on this computer only. Photos, albums, music and
-/// films apply the same per-device storage limits as files.
+/// nodes) is for people on this computer only. Photos, albums, music,
+/// films and documents apply the same per-device storage limits as files.
 const AREAS: &[&str] = &[
     "files", "search", "recent", "storage", "trash", "system", "shares", "peer", "pairing", "photos", "albums", "library",
-    "playback", "tags",
+    "playback", "tags", "documents",
 ];
+
+/// Paths inside those areas that change the computer itself, not files.
+const LOCAL_ONLY: &[&str] = &["/api/v1/documents/settings"];
 
 /// The one unsigned call: a device that is not paired yet asking to pair.
 const PAIRING_REQUEST: &str = "/api/v1/pairing/request";
@@ -53,7 +56,7 @@ fn admissible<B>(req: &Request<B>) -> bool {
     let path = req.uri().path();
     let Some(rest) = path.strip_prefix("/api/v1/") else { return false };
     let mut segments = rest.split('/');
-    let area_ok = segments.next().is_some_and(|a| AREAS.contains(&a));
+    let area_ok = segments.next().is_some_and(|a| AREAS.contains(&a)) && !LOCAL_ONLY.iter().any(|p| path.starts_with(p));
     let clean = !rest.split('/').any(|s| s.is_empty() || s == "." || s == ".." || s.to_ascii_lowercase().contains("%2e"));
     let signed = req.headers().contains_key(HDR_DEVICE);
     area_ok
@@ -154,6 +157,8 @@ mod tests {
         assert!(admissible(&req("GET", "/api/v1/albums", true, false)));
         assert!(admissible(&req("GET", "/api/v1/library/items?type=film", true, false)));
         assert!(admissible(&req("PUT", "/api/v1/playback/abc", true, false)));
+        assert!(admissible(&req("GET", "/api/v1/documents?tag=receipt", true, false)));
+        assert!(admissible(&req("PATCH", "/api/v1/documents/abc", true, false)));
         // Settings that change the computer stay local.
         assert!(!admissible(&req("PUT", "/api/v1/documents/settings", true, false)));
         // Unsigned calls other than the pairing request.

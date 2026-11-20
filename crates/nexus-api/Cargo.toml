@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 # Local time, for transfer hours.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+regex = "1"
 nexus-common = { workspace = true }
 nexus-database = { workspace = true }
 nexus-devices = { workspace = true }
@@ -68,4 +69,5 @@ windows = { version = "0.62", features = [
     "Media_Ocr",
     "Storage",
     "Storage_Streams",
+    "UI",
 ] }

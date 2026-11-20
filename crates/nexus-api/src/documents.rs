@@ -167,6 +167,7 @@ pub fn auto_tags(text: &str) -> Vec<String> {
         ("payslip", &["payslip", "pay slip", "pay stub", "gehaltsabrechnung", "lohnabrechnung"]),
         ("insurance", &["insurance policy", "policy number", "versicherungsschein", "versicherungsnummer"]),
         ("medical", &["diagnosis", "prescription", "patient name", "befund", "rezept"]),
+        ("utility", &["electricity", "kwh", "natural gas", "water bill", "utility bill", "stromrechnung", "électricité"]),
     ];
     let lower = text.chars().take(20_000).collect::<String>().to_lowercase();
     RULES
@@ -221,7 +222,7 @@ async fn run_batch(state: &SharedState) -> usize {
     for file in todo {
         read_one(state, file).await;
     }
-    n
+    n + backfill(state).await
 }
 
 async fn read_one(state: &SharedState, file: FileEntry) {
@@ -251,7 +252,29 @@ async fn read_one(state: &SharedState, file: FileEntry) {
     if !is_code {
         let tags = auto_tags(&body);
         let _ = state.db.set_file_tags(&file, &tags, true, "nexus", now).await;
+        if state.db.is_document(&file.id).await.unwrap_or(false) {
+            save_found(state, &file, &body).await;
+        }
     }
+}
+
+/// Keeps the date, sender and amount a document's text mentions.
+async fn save_found(state: &SharedState, file: &FileEntry, body: &str) {
+    let (date, sender, amount) =
+        (crate::docmeta::find_date(body), crate::docmeta::find_sender(body), crate::docmeta::find_amount(body));
+    if let Err(e) = state.db.save_doc_found(file, date.as_deref(), sender.as_deref(), amount.as_deref()).await {
+        tracing::debug!(error = %e, file = %file.relative_path, "could not save document details");
+    }
+}
+
+/// Fills in details for documents read before HearthDrive looked for them.
+async fn backfill(state: &SharedState) -> usize {
+    let Ok(todo) = state.db.doc_meta_todo(BATCH).await else { return 0 };
+    let n = todo.len();
+    for (file, body) in todo {
+        save_found(state, &file, &body).await;
+    }
+    n
 }
 
 #[cfg(test)]

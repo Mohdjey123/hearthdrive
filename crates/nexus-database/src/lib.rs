@@ -33,7 +33,7 @@ pub use pairing::NewPairingRequest;
 pub use files::{RootStats, SearchFilter, SortField, UnhashedFile};
 pub use groups::Group;
 pub use health::{DamagedFile, HashedFile, RootCheck};
-pub use docs::{DocState, FileTag, TagCount};
+pub use docs::{Count, DOCUMENT_EXTENSIONS, DOCUMENT_TAGS, DocEdit, DocFilter, DocMeta, DocRow, DocState, FileTag, TagCount};
 pub use rules::{Rule, RuleScope};
 pub use media::{Album, AlbumMember, LibraryFilter, MediaInfo, MediaItem, MonthCount, MusicAlbum, PhotoFilter, PhotoHash, Place, Playback};
 pub use security::{Passkey, SessionInfo, TotpState, UserSecurity};

@@ -3926,6 +3926,7 @@ dependencies = [
  "nexus-vdrive",
  "pdf-extract",
  "percent-encoding",
+ "regex",
  "reqwest",
  "ring",
  "rustls",
