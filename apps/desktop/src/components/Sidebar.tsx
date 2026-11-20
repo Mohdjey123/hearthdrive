@@ -8,6 +8,7 @@ import { useSession } from '../stores/session'
 import { api, isMobile } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { cx, StatusDot } from './ui'
+import { hasTitleBar } from './TitleBar'
 
 const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
   { page: 'overview', label: 'Overview', icon: LayoutGrid },
@@ -69,10 +70,13 @@ export function Sidebar({ current }: { current: Page }) {
 
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
-      <div className="flex h-14 items-center gap-2.5 px-4">
-        <Logo className="size-6 text-fg" />
-        <span className="text-[15px] font-bold">HearthDrive</span>
-      </div>
+      {/* The desktop app's title bar already shows the logo and name. */}
+      {!hasTitleBar() && (
+        <div className="flex h-14 items-center gap-2.5 px-4">
+          <Logo className="size-6 text-fg" />
+          <span className="text-[15px] font-bold">HearthDrive</span>
+        </div>
+      )}
       <nav className="flex-1 space-y-0.5 px-2 py-2">
         {NAV.filter((n) => pageAvailable(n.page)).map(({ page, label, icon: Icon }) => (
           <button

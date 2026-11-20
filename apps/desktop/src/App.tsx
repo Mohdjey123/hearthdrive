@@ -22,6 +22,7 @@ import { Health } from './pages/Health'
 import { Shares } from './pages/Shares'
 import { ShareInbox } from './components/ShareInbox'
 import { UpdateBanner } from './components/Updates'
+import { TitleBar, hasTitleBar } from './components/TitleBar'
 import { Settings } from './pages/Settings'
 import { Setup } from './pages/Setup'
 import { Login } from './pages/Login'
@@ -90,7 +91,16 @@ function Root() {
 export function App() {
   return (
     <SessionProvider>
-      <Root />
+      {hasTitleBar() ? (
+        <div className="flex h-full flex-col">
+          <TitleBar />
+          <div className="min-h-0 flex-1">
+            <Root />
+          </div>
+        </div>
+      ) : (
+        <Root />
+      )}
       <Toasts />
     </SessionProvider>
   )
