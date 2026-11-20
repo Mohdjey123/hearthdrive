@@ -10,6 +10,7 @@ import { useSession } from '../stores/session'
 import { useTheme, type ThemePref } from '../stores/theme'
 import { formatBytes, formatDuration } from '../lib/format'
 import { UpdateSettings } from '../components/Updates'
+import { PhoneStorageSettings } from '../components/PhoneStorage'
 import { notifyLevel, setNotifyLevel, type NotifyLevel } from '../services/notify'
 import { Badge, Button, ErrorNote, Field, Input, Modal, PageHeader, Panel, Spinner, cx } from '../components/ui'
 
@@ -722,6 +723,12 @@ export function Settings() {
       {!isMobile() && me?.user_id && !me.device_id && <SecurityPanel />}
 
       {!isMobile() && me && (me.role === 'owner' || me.role === 'administrator') && <People meId={me.user_id} />}
+
+      {isMobile() && me && me.role === 'owner' && (
+        <Panel title="Phone storage" className="mb-4">
+          <PhoneStorageSettings />
+        </Panel>
+      )}
 
       <Panel title="Service" className="mb-4">
         {info.data ? (

@@ -9,6 +9,7 @@ import { navigate, type Route } from '../hooks/useRoute'
 import { formatBytes, formatDate } from '../lib/format'
 import { FilePreview } from '../components/FilePreview'
 import { toast, toastError } from '../components/Toasts'
+import { PhoneStorageEmpty, usePhoneStorage } from '../components/PhoneStorage'
 import { Badge, Button, EmptyState, ErrorNote, Input, Modal, PageHeader, Spinner, cx } from '../components/ui'
 
 type Tab = 'timeline' | 'videos' | 'albums' | 'places' | 'memories' | 'similar'
@@ -521,7 +522,12 @@ function Similar({ prefix, onOpen }: { prefix: string; onOpen: (item: PhotoItem,
 
 /** Photos and videos on this device or a paired one. */
 export function Photos({ route }: { route: Route }) {
-  const deviceId = route.params.get('device') ?? (isMobile() ? null : '')
+  // On a phone, `device=here` is the phone itself; with no device it opens
+  // the phone once its storage is shown, else asks for a computer.
+  const phone = usePhoneStorage()
+  const local = !isMobile() || !!phone.data?.root_id
+  const raw = route.params.get('device')
+  const deviceId = raw === 'here' ? '' : raw ?? (local ? '' : null)
   const tab = (route.params.get('tab') as Tab) || 'timeline'
   const devices = useResource(() => api.devices().catch(() => []), [])
   const peers = (devices.data ?? []).filter((d) => !d.is_local && d.online)
@@ -531,7 +537,8 @@ export function Photos({ route }: { route: Route }) {
   const [adding, setAdding] = useState(false)
   useEffect(() => setSelected(new Set()), [prefix, tab])
 
-  const go = (t: Tab, dev = deviceId) => navigate('photos', { tab: t === 'timeline' ? undefined : t, device: dev || undefined })
+  const go = (t: Tab, dev = deviceId) =>
+    navigate('photos', { tab: t === 'timeline' ? undefined : t, device: dev || (dev === '' && isMobile() ? 'here' : undefined) })
   const openItem = (item: PhotoItem, all: PhotoItem[]) => setOpen({ item, all })
   const openId = async (fileId: string) => {
     try {
@@ -546,7 +553,7 @@ export function Photos({ route }: { route: Route }) {
     <div>
       <PageHeader
         title="Photos"
-        subtitle={deviceId ? `On ${(devices.data ?? []).find((d) => d.id === deviceId)?.name ?? 'a paired device'}` : `On this ${thisDevice()}`}
+        subtitle={deviceId ? `On ${(devices.data ?? []).find((d) => d.id === deviceId)?.name ?? 'a paired device'}` : deviceId === '' ? `On this ${thisDevice()}` : 'On your computers'}
         actions={
           <>
             {selected.size > 0 && (
@@ -559,11 +566,11 @@ export function Photos({ route }: { route: Route }) {
             {(peers.length > 0 || isMobile()) && (
               <select
                 className="h-8 rounded-md border border-line bg-panel px-2 text-[12.5px]"
-                value={deviceId ?? ''}
-                onChange={(e) => go(tab, e.target.value)}
+                value={deviceId ?? '-'}
+                onChange={(e) => e.target.value !== '-' && go(tab, e.target.value)}
               >
-                {!isMobile() && <option value="">This {thisDevice()}</option>}
-                {isMobile() && deviceId === null && <option value="">Choose a computer</option>}
+                {isMobile() && deviceId === null && <option value="-">Choose a computer</option>}
+                <option value="">This {thisDevice()}</option>
                 {peers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             )}
@@ -585,7 +592,9 @@ export function Photos({ route }: { route: Route }) {
         ))}
       </div>
       {deviceId === null ? (
-        <EmptyState icon={<Camera className="size-6" />} title="Choose a computer">Pick a paired computer above to see its photos.</EmptyState>
+        phone.loading ? <Spinner /> : <EmptyState icon={<Camera className="size-6" />} title="Choose a computer">Pick a paired computer above to see its photos.</EmptyState>
+      ) : deviceId === '' && !local ? (
+        <PhoneStorageEmpty onShown={phone.reload} />
       ) : tab === 'timeline' || tab === 'videos' ? (
         <Timeline key={`${prefix}-${tab}`} prefix={prefix} kind={tab === 'videos' ? 'video' : 'photo'} onOpen={openItem} selected={selected} setSelected={setSelected} />
       ) : tab === 'albums' ? (

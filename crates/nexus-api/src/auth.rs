@@ -319,6 +319,16 @@ pub async fn authenticate_device(state: &AppState, signed: &SignedHeaders, via: 
     if let Some(theirs) = acting_roots {
         user.shared.retain(|g| theirs.contains(&g.root_id));
     }
+    // A phone's own storage, while its owner keeps it to the phone.
+    let hidden = crate::routes::storage::hidden_from_devices(state).await;
+    if !hidden.is_empty() {
+        let roots = match user.allowed_roots.take() {
+            Some(roots) => roots,
+            None => state.db.list_roots().await?.into_iter().map(|r| r.id).collect(),
+        };
+        user.allowed_roots = Some(roots.into_iter().filter(|r| !hidden.contains(r)).collect());
+        user.shared.retain(|g| !hidden.contains(&g.root_id));
+    }
     Ok(user)
 }
 

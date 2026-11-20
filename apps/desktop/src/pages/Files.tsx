@@ -21,6 +21,7 @@ import { fileKind, formatBytes, formatDate, formatRelative, previewKind } from '
 import { FileIcon } from '../components/FileIcon'
 import { FilePreview, FolderPicker, canHandOff, downloadFile, openWithApp, saveUrl, shareWithApps, useContentUrl } from '../components/FilePreview'
 import { toast, toastError } from '../components/Toasts'
+import { PhoneStorageEmpty, usePhoneStorage } from '../components/PhoneStorage'
 import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, Spinner, cx } from '../components/ui'
 
 type Sort = 'name' | 'size' | 'modified' | 'type'
@@ -365,7 +366,13 @@ function shareAt(list: SharedWithMe[], rootId: string, path: string) {
 }
 
 export function Files({ route }: { route: Route }) {
-  const deviceId = route.params.get('device') ?? ''
+  // On a phone, `device=here` is the phone itself, chosen in the switcher.
+  const here = route.params.get('device') === 'here'
+  const deviceId = here ? '' : route.params.get('device') ?? ''
+  const phone = usePhoneStorage()
+  // Whether this device's own storage can be browsed: always on computers,
+  // on a phone once its storage is shown.
+  const local = !isMobile() || !!phone.data?.root_id
   const prefix = deviceId ? peerPrefix(deviceId) : ''
   const fapi = fileApi(prefix)
   const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'), 'devices')
@@ -468,7 +475,7 @@ export function Files({ route }: { route: Route }) {
       const run = async (): Promise<Found[]> => {
         if (!everywhere) return (await fapi.search(text, filters)).items
         const sources = [
-          ...(isMobile() ? [] : [{ id: '', name: `This ${thisDevice()}` }]),
+          ...(local ? [{ id: '', name: `This ${thisDevice()}` }] : []),
           ...peers.filter((d) => d.online).map((d) => ({ id: d.id, name: d.name })),
         ]
         const found = await Promise.allSettled(
@@ -509,7 +516,7 @@ export function Files({ route }: { route: Route }) {
     navigate('files', { device: deviceId || undefined, root: p.root ?? rootId, path: p.path })
   const switchDevice = (id: string) => {
     setQuery('')
-    navigate('files', { device: id || undefined })
+    navigate('files', { device: id || (isMobile() ? 'here' : undefined) })
   }
   const where = device ? `${device.name} · ` : ''
 
@@ -574,12 +581,13 @@ export function Files({ route }: { route: Route }) {
     androidBridge()?.pickFiles?.()
   }
 
-  // A phone has no storage of its own: open the first paired computer.
+  // A phone that does not show its own storage opens the first paired
+  // computer, unless the phone was chosen.
   useEffect(() => {
-    if (!isMobile() || deviceId || peers.length === 0) return
+    if (!isMobile() || deviceId || here || local || phone.loading || peers.length === 0) return
     const first = peers.find((d) => d.online) ?? peers[0]
     navigate('files', { device: first.id })
-  }, [deviceId, peers.map((d) => d.id + d.online).join()])
+  }, [deviceId, here, local, phone.loading, peers.map((d) => d.id + d.online).join()])
 
   const open = (f: FileEntry) => {
     if (f.is_dir) {
@@ -651,7 +659,7 @@ export function Files({ route }: { route: Route }) {
 
   if (showTrash) return <TrashView fapi={fapi} onBack={() => go({ path })} />
 
-  const deviceSwitcher = peers.length > 0 && (
+  const deviceSwitcher = (peers.length > 0 || isMobile()) && (
     <label className="flex items-center gap-1.5 border-r border-line pr-3">
       <Monitor className="size-4 text-subtle" />
       <span className="sr-only">Device</span>
@@ -660,7 +668,7 @@ export function Files({ route }: { route: Route }) {
         onChange={(e) => switchDevice(e.target.value)}
         className="h-7 rounded-md border border-line bg-elevated px-2 text-[12.5px] text-fg outline-none focus:border-accent"
       >
-        {!isMobile() && <option value="">This computer</option>}
+        <option value="">This {thisDevice()}</option>
         {peers.map((d) => (
           <option key={d.id} value={d.id}>{d.name}{d.online ? '' : ' (offline)'}</option>
         ))}
@@ -683,10 +691,25 @@ export function Files({ route }: { route: Route }) {
     )
   }
 
-  if (!prefix && isMobile()) {
-    return peers.length > 0 || devices.loading ? (
-      <div className="p-6"><Spinner /></div>
-    ) : (
+  if (!prefix && isMobile() && !local) {
+    if (phone.loading || (!here && (peers.length > 0 || devices.loading))) return <div className="p-6"><Spinner /></div>
+    if (here || phone.data?.available) {
+      return (
+        <div className="-m-4 flex h-[calc(100%+2rem)] flex-col md:-m-6 md:h-[calc(100%+3rem)]">
+          {peers.length > 0 && (
+            <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-panel px-3 py-2 md:px-4 md:py-0">{deviceSwitcher}</div>
+          )}
+          <PhoneStorageEmpty onShown={() => { phone.reload(); roots.reload() }} />
+          {peers.length === 0 && (
+            <p className="px-6 pb-6 text-center text-muted">
+              To browse a computer's files,{' '}
+              <button className="text-accent underline" onClick={() => navigate('devices', { join: '1' })}>pair with a computer</button>.
+            </p>
+          )}
+        </div>
+      )
+    }
+    return (
       <EmptyState
         icon={<Monitor className="size-8" />}
         title="Connect a computer"
@@ -1134,10 +1157,11 @@ function CopyDialog({ items, fromDevice, fromOf, devices, onClose, onDone }: {
   onClose: () => void
   onDone: () => void
 }) {
-  // Places to copy to: every other device, and this one unless it is a phone
-  // (a phone has no storage of its own).
+  // Places to copy to: every other device, and this one unless it is a
+  // phone that does not show its own storage.
+  const phone = usePhoneStorage()
   const places = [
-    ...(isMobile() ? [] : [{ id: '', name: `This ${thisDevice()}`, online: true }]),
+    ...(!isMobile() || phone.data?.root_id ? [{ id: '', name: `This ${thisDevice()}`, online: true }] : []),
     ...devices.map((d) => ({ id: d.id, name: d.name, online: d.online })),
   ]
   const [to, setTo] = useState(() => (places.find((p) => p.id !== fromDevice && p.online) ?? places[0])?.id ?? '')

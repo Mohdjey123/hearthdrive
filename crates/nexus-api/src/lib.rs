@@ -220,6 +220,7 @@ pub(crate) fn api_routes(state: SharedState) -> Router {
         .route("/storage/drives", get(storage::drives))
         .route("/storage/changes", get(routes::changes::changes))
         .route("/storage/roots", get(storage::list_roots).post(storage::add_root))
+        .route("/storage/phone", get(storage::phone_storage).put(storage::set_phone_storage))
         .route("/storage/roots/{id}", delete(storage::remove_root))
         .route("/storage/roots/{id}/stats", get(storage::root_stats))
         .route("/storage/roots/{id}/scan", post(storage::rescan_root))

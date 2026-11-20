@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Phone storage: the person may let HearthDrive show the whole phone's
+         files (here and on their computers). Asked for only when they turn it
+         on; "All files access" on Android 11 and later. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <!-- Updates: hands a verified HearthDrive package to Android's installer. The
          second lets HearthDrive update itself without asking (Android 12 and later);
          without it, or when Android wants to, Android asks first. -->
@@ -27,6 +32,7 @@
          A backup restored on another phone would clone this device. -->
     <application
         android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

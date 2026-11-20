@@ -15,6 +15,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Log
@@ -35,7 +36,8 @@ import org.json.JSONArray
  *   (asking once for permission to show its notification), and closes
  *   when the notification's Quit is tapped;
  * - asks for permission to read photos and videos, for backup, through a
- *   small `window.NexusAndroid` bridge the page can call;
+ *   small `window.NexusAndroid` bridge the page can call, and for access to
+ *   all files when the person shows the phone's storage in HearthDrive;
  * - scans paper documents with Google's scanner into a PDF in the same
  *   inbox as shares, which the page sends to the computer chosen for scans;
  * - receives files shared to HearthDrive from other apps (the share menu) and
@@ -54,6 +56,9 @@ class MainActivity : TauriActivity() {
 
   /** Where a home-screen shortcut asked to go, until the page takes it. */
   @Volatile private var launchRoute: String? = null
+
+  /** Set while Android's "All files access" setting is open for HearthDrive. */
+  @Volatile private var askingAllFiles = false
 
   /** The verified update to install once the app is in the background. */
   @Volatile private var quietUpdate: String? = null
@@ -116,6 +121,15 @@ class MainActivity : TauriActivity() {
     setIntent(intent)
     if (receiveShortcut(intent)) notifyPage("nexus-route")
     receiveShare(intent)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    // Back from the "All files access" setting: tell the page what was chosen.
+    if (askingAllFiles) {
+      askingAllFiles = false
+      notifyPage("nexus-all-files")
+    }
   }
 
   override fun onStop() {
@@ -233,7 +247,49 @@ class MainActivity : TauriActivity() {
   private fun hasMediaAccess(): Boolean =
     mediaPermissions().all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
 
+  // -- All files -----------------------------------------------------------
+
+  private fun legacyStoragePermissions(): Array<String> =
+    arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+
+  private fun hasAllFiles(): Boolean =
+    if (Build.VERSION.SDK_INT >= 30) {
+      Environment.isExternalStorageManager()
+    } else {
+      legacyStoragePermissions().all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+    }
+
+  /** Android 11 and later: opens the setting; earlier: the permission prompt. */
+  private fun requestAllFiles() {
+    if (Build.VERSION.SDK_INT < 30) {
+      requestPermissions(legacyStoragePermissions()) { notifyPage("nexus-all-files") }
+      return
+    }
+    askingAllFiles = true
+    val forApp = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.fromParts("package", packageName, null))
+    try {
+      startActivity(forApp)
+    } catch (e: Exception) {
+      try {
+        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+      } catch (e: Exception) {
+        askingAllFiles = false
+        notifyPage("nexus-all-files")
+      }
+    }
+  }
+
   inner class Bridge {
+    /** Whether HearthDrive may read and change all files on the phone. */
+    @JavascriptInterface
+    fun hasAllFiles(): Boolean = this@MainActivity.hasAllFiles()
+
+    /** Asks for access to all files; the page hears `nexus-all-files` after. */
+    @JavascriptInterface
+    fun requestAllFiles() {
+      runOnUiThread { this@MainActivity.requestAllFiles() }
+    }
+
     @JavascriptInterface
     fun hasMediaAccess(): Boolean = this@MainActivity.hasMediaAccess()
 

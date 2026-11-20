@@ -734,6 +734,21 @@ interface AndroidBridge {
   shareFiles?(pathsJson: string): 'shared' | 'missing'
   /** The page a home-screen shortcut opened the app at, once ('' for none). */
   takeLaunchRoute?(): string
+  /** Whether HearthDrive may read all files on the phone ("All files access"). */
+  hasAllFiles?(): boolean
+  /** Asks for access to all files; the page hears `nexus-all-files` once the person is back. */
+  requestAllFiles?(): void
+}
+
+/** The phone's own storage in HearthDrive (phones only). */
+export interface PhoneStorage {
+  /** Whether this device is a phone. */
+  available: boolean
+  path: string | null
+  /** The storage location for it, once shown. */
+  root_id: string | null
+  /** Kept from paired devices. */
+  private: boolean
 }
 
 export function androidBridge(): AndroidBridge | null {
@@ -1058,6 +1073,8 @@ export const api = {
   drives: () => request<Drive[]>('GET', '/storage/drives'),
   addRoot: (b: { path: string; name?: string; read_only?: boolean }) => request<StorageRoot>('POST', '/storage/roots', b),
   removeRoot: (id: string) => request<void>('DELETE', `/storage/roots/${id}`),
+  phoneStorage: () => request<PhoneStorage>('GET', '/storage/phone'),
+  setPhoneStorage: (b: { enabled?: boolean; private?: boolean }) => request<PhoneStorage>('PUT', '/storage/phone', b),
   rescanRoot: (id: string) => request<void>('POST', `/storage/roots/${id}/scan`),
 
   devices: () => request<Device[]>('GET', '/devices'),
