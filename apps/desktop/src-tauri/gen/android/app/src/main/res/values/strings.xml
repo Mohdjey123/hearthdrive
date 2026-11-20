@@ -9,11 +9,11 @@
     <string name="node_quit">"Quit"</string>
     <string name="shortcut_backup">"Back up now"</string>
     <string name="shortcut_backup_long">"Back up photos now"</string>
+    <string name="shortcut_scan">"Scan"</string>
+    <string name="shortcut_scan_long">"Scan a document"</string>
     <string name="shortcut_files">"Files"</string>
     <string name="shortcut_files_long">"Browse files"</string>
     <string name="shortcut_photos">"Photos"</string>
     <string name="shortcut_photos_long">"Photos on your computers"</string>
-    <string name="shortcut_transfers">"Transfers"</string>
-    <string name="shortcut_transfers_long">"Transfers"</string>
     <string name="open_with">"Open with"</string>
 </resources>

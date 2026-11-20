@@ -348,14 +348,20 @@ class MainActivity : TauriActivity() {
     val route = intent.getStringExtra(EXTRA_ROUTE) ?: return false
     intent.action = null
     if (route !in SHORTCUT_ROUTES) return false
-    launchRoute = route
+    if (route == "scan") {
+      // Straight into the scanner; the page shows Documents behind it.
+      launchRoute = "documents"
+      startScan()
+    } else {
+      launchRoute = route
+    }
     return true
   }
 
   companion object {
     const val ACTION_SHORTCUT = "app.nexuscloud.desktop.action.SHORTCUT"
     const val EXTRA_ROUTE = "route"
-    private val SHORTCUT_ROUTES = setOf("backup?run=1", "files", "photos", "transfers")
+    private val SHORTCUT_ROUTES = setOf("backup?run=1", "scan", "files", "photos")
   }
 
   // -- Updates -------------------------------------------------------------

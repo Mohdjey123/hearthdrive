@@ -16,6 +16,19 @@
         </intent>
     </shortcut>
     <shortcut
+        android:shortcutId="scan"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_scan"
+        android:shortcutShortLabel="@string/shortcut_scan"
+        android:shortcutLongLabel="@string/shortcut_scan_long">
+        <intent
+            android:action="app.nexuscloud.desktop.action.SHORTCUT"
+            android:targetPackage="app.nexuscloud.desktop"
+            android:targetClass="app.nexuscloud.desktop.MainActivity">
+            <extra android:name="route" android:value="scan" />
+        </intent>
+    </shortcut>
+    <shortcut
         android:shortcutId="files"
         android:enabled="true"
         android:icon="@drawable/ic_shortcut_files"
@@ -39,19 +52,6 @@
             android:targetPackage="app.nexuscloud.desktop"
             android:targetClass="app.nexuscloud.desktop.MainActivity">
             <extra android:name="route" android:value="photos" />
-        </intent>
-    </shortcut>
-    <shortcut
-        android:shortcutId="transfers"
-        android:enabled="true"
-        android:icon="@drawable/ic_shortcut_transfers"
-        android:shortcutShortLabel="@string/shortcut_transfers"
-        android:shortcutLongLabel="@string/shortcut_transfers_long">
-        <intent
-            android:action="app.nexuscloud.desktop.action.SHORTCUT"
-            android:targetPackage="app.nexuscloud.desktop"
-            android:targetClass="app.nexuscloud.desktop.MainActivity">
-            <extra android:name="route" android:value="transfers" />
         </intent>
     </shortcut>
 </shortcuts>
