@@ -202,7 +202,7 @@ How it works: every connection is QUIC with TLS 1.3, authenticated with the two 
 * **Limit what a device sees.** On **Devices**, each paired device shows **Storage it can see here**. Choose all storage or specific locations. Everything else is invisible to that device: it cannot list, search, download or upload there.
 * **People.** Under **Settings** → **People**, an owner or administrator can add accounts (administrator, editor or viewer), change roles, lock accounts and remove people. People sign in from a browser on the computer itself (see [Signing in safely](#signing-in-safely)). The only owner cannot be removed or demoted.
 * **Limit what a person sees.** Next to each editor or viewer, the storage button opens **What … can use**: all storage, or chosen locations on this computer and on your paired devices. Everything else is invisible to them, on every device, including in search, sync, transfers and the activity log. Owners and administrators always see everything. A change applies to their very next request.
-* **Start with Windows.** **Settings** → **Start with Windows** registers the storage service to start when you sign in (a per-user start-up entry; no administrator rights).
+* **Start with Windows.** **Settings** → **Start with Windows** starts HearthDrive in the system tray when you sign in, which also starts the storage service (a per-user start-up entry; no administrator rights). The tray menu shows what HearthDrive is doing and opens the HearthDrive folder, Transfers and Settings.
 
 ## Sync and versions
 

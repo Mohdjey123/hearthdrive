@@ -496,9 +496,10 @@ function AutostartRow() {
           onChange={(e) => void toggle(e.target.checked)}
         />
         <span>
-          Start the storage service when I sign in
+          Start HearthDrive when I sign in
           <span className="mt-0.5 block text-[12px] text-subtle">
-            Keeps this computer reachable from your other devices after a restart, without opening this window.
+            Opens in the system tray, without this window, so your other devices can reach this computer after a
+            restart and you get notifications.
           </span>
         </span>
       </label>

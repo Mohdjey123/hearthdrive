@@ -34,7 +34,7 @@ mod host {
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    fn read_live_runtime(data_dir: &Path) -> Option<RuntimeInfo> {
+    pub fn read_live_runtime(data_dir: &Path) -> Option<RuntimeInfo> {
         let raw = std::fs::read(data_dir.join(RUNTIME_FILE)).ok()?;
         let info: RuntimeInfo = serde_json::from_slice(&raw).ok()?;
         let addr = SocketAddr::from(([127, 0, 0, 1], info.port));
@@ -482,11 +482,28 @@ async fn fetch_for_app(app: tauri::AppHandle, url: String, filename: String) -> 
 }
 
 /// The system tray icon, closing to the tray, and one running copy.
+///
+/// Started with `--hidden` (the "Start with Windows" entry does that), the
+/// app opens straight into the tray: the window loads but stays hidden, so
+/// notifications work from sign-in on.
 #[cfg(desktop)]
 mod tray {
+    use serde_json::Value;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use std::time::Duration;
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
     use tauri::{AppHandle, Manager, Runtime, WindowEvent};
+
+    /// The argument that starts the app in the tray, without its window.
+    pub const HIDDEN_ARG: &str = "--hidden";
+
+    /// How often the tray's status line is brought up to date.
+    const STATUS_EVERY: Duration = Duration::from_secs(4);
+
+    /// The virtual drive's folder while it runs, for "Open HearthDrive folder".
+    static DRIVE_FOLDER: Mutex<Option<PathBuf>> = Mutex::new(None);
 
     /// Shows the main window, restored and in front.
     pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
@@ -497,20 +514,48 @@ mod tray {
         }
     }
 
+    /// Shows the main window at one of its pages (`transfers`, `settings`…).
+    fn show_page<R: Runtime>(app: &AppHandle<R>, page: &str) {
+        show_main(app);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.eval(format!("location.hash = '#/{page}'"));
+        }
+    }
+
+    fn open_drive_folder() {
+        let folder = DRIVE_FOLDER.lock().ok().and_then(|f| f.clone());
+        if let Some(folder) = folder {
+            let _ = std::process::Command::new("explorer.exe").arg(folder).spawn();
+        }
+    }
+
     pub fn single_instance<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
         tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app))
     }
 
     pub fn setup<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+        // The window is made hidden (see tauri.conf.json), so it never
+        // flashes when the app starts in the tray.
+        if !std::env::args().any(|a| a == HIDDEN_ARG) {
+            show_main(app.handle());
+        }
+        let status = MenuItem::with_id(app, "status", "Starting…", false, None::<&str>)?;
         let open = MenuItem::with_id(app, "open", "Open HearthDrive", true, None::<&str>)?;
+        let folder = MenuItem::with_id(app, "folder", "Open HearthDrive folder", false, None::<&str>)?;
+        let transfers = MenuItem::with_id(app, "transfers", "Transfers", true, None::<&str>)?;
+        let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
         let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+        let (sep1, sep2) = (PredefinedMenuItem::separator(app)?, PredefinedMenuItem::separator(app)?);
+        let menu = Menu::with_items(app, &[&status, &sep1, &open, &folder, &transfers, &settings, &sep2, &quit])?;
         let mut tray = TrayIconBuilder::with_id("main")
             .tooltip("HearthDrive")
             .menu(&menu)
             .show_menu_on_left_click(false)
             .on_menu_event(|app, event| match event.id().as_ref() {
                 "open" => show_main(app),
+                "folder" => open_drive_folder(),
+                "transfers" => show_page(app, "transfers"),
+                "settings" => show_page(app, "settings"),
                 // The storage service is a separate process and keeps running.
                 "quit" => app.exit(0),
                 _ => {}
@@ -524,7 +569,90 @@ mod tray {
             tray = tray.icon(icon.clone());
         }
         tray.build(app)?;
+        tauri::async_runtime::spawn(keep_status(app.handle().clone(), status, folder));
         Ok(())
+    }
+
+    /// What the tray shows: one status line, and the drive's folder if it runs.
+    struct Status {
+        line: String,
+        drive: Option<PathBuf>,
+    }
+
+    async fn get(client: &reqwest::Client, base: &str, token: &str, path: &str) -> Option<Value> {
+        let res = client.get(format!("{base}/api/v1{path}")).bearer_auth(token).send().await.ok()?;
+        res.error_for_status().ok()?.json().await.ok()
+    }
+
+    async fn read_status(client: &reqwest::Client) -> Status {
+        let data_dir = nexus_common::runtime::default_data_dir();
+        let info = tauri::async_runtime::spawn_blocking(move || super::host::read_live_runtime(&data_dir))
+            .await
+            .ok()
+            .flatten();
+        let Some(info) = info else {
+            return Status { line: "The storage service is not running".into(), drive: None };
+        };
+        let (base, token) = (info.base_url.as_str(), info.local_token.as_str());
+        let (devices, jobs, drive) = tokio::join!(
+            get(client, base, token, "/devices"),
+            get(client, base, token, "/transfers"),
+            get(client, base, token, "/vdrive"),
+        );
+        let drive = drive
+            .filter(|d| d["running"].as_bool() == Some(true))
+            .and_then(|d| d["path"].as_str().map(PathBuf::from));
+        Status { line: status_line(devices.as_ref(), jobs.as_ref()), drive }
+    }
+
+    /// "Transferring 2 items · 40%", or how many devices can be reached.
+    fn status_line(devices: Option<&Value>, jobs: Option<&Value>) -> String {
+        let running: Vec<&Value> = jobs
+            .and_then(Value::as_array)
+            .map(|all| all.iter().filter(|j| j["status"] == "running").collect())
+            .unwrap_or_default();
+        if !running.is_empty() {
+            let sum = |key: &str| running.iter().filter_map(|j| j[key].as_u64()).sum::<u64>();
+            let (done, total) = (sum("bytes_done"), sum("bytes_total"));
+            let items = if running.len() == 1 { "1 item".to_string() } else { format!("{} items", running.len()) };
+            return match (done.min(total) * 100).checked_div(total) {
+                Some(percent) => format!("Transferring {items} · {percent}%"),
+                None => format!("Transferring {items}"),
+            };
+        }
+        let others: Vec<&Value> = devices
+            .and_then(Value::as_array)
+            .map(|all| all.iter().filter(|d| d["is_local"] != true && d["blocked_at"].is_null()).collect())
+            .unwrap_or_default();
+        let online = others.iter().filter(|d| d["online"] == true).count();
+        match (others.len(), online) {
+            (0, _) => "Up to date · no other devices yet".into(),
+            (1, 1) => "Up to date · your other device is online".into(),
+            (total, online) if online == total => format!("Up to date · all {total} devices online"),
+            (total, online) => format!("Up to date · {online} of {total} devices online"),
+        }
+    }
+
+    async fn keep_status<R: Runtime>(app: AppHandle<R>, status: MenuItem<R>, folder: MenuItem<R>) {
+        let Ok(client) = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(3)).build() else {
+            return;
+        };
+        let mut shown = String::new();
+        loop {
+            let now = read_status(&client).await;
+            if now.line != shown {
+                let _ = status.set_text(&now.line);
+                if let Some(tray) = app.tray_by_id("main") {
+                    let _ = tray.set_tooltip(Some(format!("HearthDrive\n{}", now.line)));
+                }
+                shown = now.line;
+            }
+            let _ = folder.set_enabled(now.drive.is_some());
+            if let Ok(mut f) = DRIVE_FOLDER.lock() {
+                *f = now.drive;
+            }
+            tokio::time::sleep(STATUS_EVERY).await;
+        }
     }
 
     /// Closing the window hides it; the app stays in the tray.
@@ -534,6 +662,34 @@ mod tray {
         {
             api.prevent_close();
             let _ = window.hide();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::status_line;
+        use serde_json::json;
+
+        #[test]
+        fn says_what_is_transferring() {
+            let jobs = json!([
+                { "status": "running", "bytes_done": 30, "bytes_total": 100 },
+                { "status": "running", "bytes_done": 10, "bytes_total": 0 },
+                { "status": "done", "bytes_done": 5, "bytes_total": 5 },
+            ]);
+            assert_eq!(status_line(None, Some(&jobs)), "Transferring 2 items · 40%");
+        }
+
+        #[test]
+        fn counts_other_devices() {
+            let devices = json!([
+                { "is_local": true, "online": true, "blocked_at": null },
+                { "is_local": false, "online": true, "blocked_at": null },
+                { "is_local": false, "online": false, "blocked_at": null },
+                { "is_local": false, "online": false, "blocked_at": 12 },
+            ]);
+            assert_eq!(status_line(Some(&devices), Some(&json!([]))), "Up to date · 1 of 2 devices online");
+            assert_eq!(status_line(Some(&json!([{ "is_local": true }])), None), "Up to date · no other devices yet");
         }
     }
 }

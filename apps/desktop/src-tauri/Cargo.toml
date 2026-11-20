@@ -19,6 +19,8 @@ serde_json = { workspace = true }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+tokio = { workspace = true }
+reqwest = { workspace = true }
 
 # On computers the window hides to the system tray when closed, and a
 # second launch shows the window that is already running.
@@ -29,11 +31,9 @@ tauri-plugin-single-instance = "2"
 # On phones the app hosts the node itself; there is no separate service.
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 nexus-core = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true }
 tauri-plugin-barcode-scanner = "2"
 futures-util = { workspace = true }
-reqwest = { workspace = true }
 
 # Android runs the node in its own process, under a foreground service
 # (`NodeService`), which starts it through JNI.

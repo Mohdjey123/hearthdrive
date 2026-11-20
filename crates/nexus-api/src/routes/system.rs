@@ -183,6 +183,12 @@ pub async fn activity(
 
 // ---------------------------------------------------------------------------
 // Start with Windows
+//
+// The entry starts the app hidden in the system tray (`--hidden`), which
+// starts this service if it is not running. That way the tray icon and
+// notifications are there after signing in, not only the service. Without
+// the app next to this program (a bare service), the entry starts the
+// service itself.
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "NEXUS Cloud";
@@ -194,18 +200,33 @@ fn reg(args: &[&str]) -> std::io::Result<std::process::Output> {
     std::process::Command::new("reg").args(args).creation_flags(CREATE_NO_WINDOW).output()
 }
 
+/// What the entry should run: the app in the tray, or this service.
+#[cfg(windows)]
+fn autostart_command() -> std::io::Result<String> {
+    let exe = std::env::current_exe()?;
+    let app = exe.with_file_name("nexus-desktop.exe");
+    Ok(if app.is_file() { format!("\"{}\" --hidden", app.display()) } else { format!("\"{}\"", exe.display()) })
+}
+
+/// The command in the start-up entry, if there is one.
+#[cfg(windows)]
+fn autostart_entry() -> Option<String> {
+    let output = reg(&["query", RUN_KEY, "/v", RUN_VALUE]).ok().filter(|o| o.status.success())?;
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    // `    NEXUS Cloud    REG_SZ    "C:\…\nexus-service.exe"`
+    text.lines().find_map(|line| line.split_once("REG_SZ").map(|(_, value)| value.trim().to_string()))
+}
+
 /// Whether this service is registered to start when the user signs in.
 #[cfg(windows)]
 fn autostart_enabled() -> bool {
-    reg(&["query", RUN_KEY, "/v", RUN_VALUE]).map(|o| o.status.success()).unwrap_or(false)
+    autostart_entry().is_some()
 }
 
 #[cfg(windows)]
 fn write_autostart(enabled: bool) -> Result<(), NexusError> {
     let output = if enabled {
-        let exe = std::env::current_exe()?;
-        let command = format!("\"{}\"", exe.display());
-        reg(&["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &command, "/f"])?
+        reg(&["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &autostart_command()?, "/f"])?
     } else if autostart_enabled() {
         reg(&["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])?
     } else {
@@ -217,6 +238,28 @@ fn write_autostart(enabled: bool) -> Result<(), NexusError> {
         Err(NexusError::internal(format!("Windows refused the change: {}", String::from_utf8_lossy(&output.stderr).trim())))
     }
 }
+
+/// Brings an existing start-up entry up to date when the service starts:
+/// entries from before 0.1.14 start only the service, not the tray app.
+/// Only an entry for this install's folder is touched, so a copy run from
+/// elsewhere (a development build) leaves the installed one alone.
+#[cfg(windows)]
+pub fn refresh_autostart() {
+    let (Some(entry), Ok(wanted), Ok(exe)) = (autostart_entry(), autostart_command(), std::env::current_exe()) else {
+        return;
+    };
+    let Some(folder) = exe.parent() else { return };
+    let ours = entry.trim_matches('"').to_lowercase().starts_with(&folder.display().to_string().to_lowercase());
+    if ours && entry != wanted {
+        match write_autostart(true) {
+            Ok(()) => tracing::info!(command = %wanted, "start-up entry updated"),
+            Err(e) => tracing::warn!(error = %e, "could not update the start-up entry"),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn refresh_autostart() {}
 
 #[cfg(not(windows))]
 fn autostart_enabled() -> bool {

@@ -29,6 +29,7 @@ pub use routes::introductions::{introduce_now as introduce_devices, spawn as spa
 pub use routes::health::spawn as spawn_health;
 pub use routes::shares::spawn as spawn_shares;
 pub use routes::sync::spawn as spawn_sync;
+pub use routes::system::refresh_autostart;
 pub use routes::snapshots::spawn as spawn_snapshots;
 pub use routes::transfers::spawn as spawn_transfers;
 pub use routes::updates::{check as check_updates, spawn as spawn_updates};

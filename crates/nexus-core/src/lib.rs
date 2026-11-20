@@ -215,6 +215,7 @@ pub async fn run_with(
     nexus_api::spawn_updates(state.clone());
     nexus_api::spawn_introductions(state.clone());
     start_virtual_drive(&state, &app, &local_token);
+    tokio::task::spawn_blocking(nexus_api::refresh_autostart);
 
     // Keep the database's write-ahead log from growing without bound.
     let checkpoint_db = db.clone();
