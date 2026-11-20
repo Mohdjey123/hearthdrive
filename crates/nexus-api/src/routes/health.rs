@@ -89,7 +89,7 @@ fn rehash(path: &std::path::Path, size: i64, modified_at: Option<i64>) -> std::i
 /// hash. Returns `None` if it was cancelled.
 async fn verify_root(s: &SharedState, root: &StorageRoot, by: &str) -> Result<Option<RootCheck>> {
     s.storage.ensure_online(root)?;
-    let job = s.jobs.add("check", format!("Verify {}", root.name), "This computer".into(), by.to_string());
+    let job = s.jobs.add("check", format!("Verify {}", root.name), "This computer".into(), by.to_string()).about(&root.id);
     let Some(_slot) = s.jobs.start(s, &job).await else { return Ok(None) };
     let stats = s.db.root_stats(&root.id).await.unwrap_or_default();
     job.update(|i| {
@@ -652,7 +652,7 @@ pub async fn repair_damaged(State(s): State<SharedState>, user: AuthUser, Path(f
     if sources(&s, &d).await.is_empty() {
         return Err(NexusError::invalid("No extra copy or backup holds this file's right content").into());
     }
-    let job = s.jobs.add("check", format!("Repair {}", paths::split_parent(&d.relative_path).1), "→ this computer".into(), user.username.clone());
+    let job = s.jobs.add("check", format!("Repair {}", paths::split_parent(&d.relative_path).1), "→ this computer".into(), user.username.clone()).about(&file_id);
     job.update(|i| {
         i.files_total = 1;
         i.bytes_total = d.size.max(0) as u64;

@@ -6,12 +6,14 @@ import {
   type StorageRoot, type StorageRoom, type StorageSuggestion,
 } from '../services/api'
 import { useResource } from '../hooks/useResource'
+import { followJob, useJobFor } from '../hooks/useJobs'
+import { JobProgress } from '../components/JobProgress'
 import { navigate } from '../hooks/useRoute'
 import { formatBytes, formatRelative } from '../lib/format'
 import { FileIcon } from '../components/FileIcon'
 import { FolderPicker } from '../components/FilePreview'
 import { toast, toastError } from '../components/Toasts'
-import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, PageHeader, Panel, Spinner, cx } from '../components/ui'
+import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, PageHeader, Panel, Progress, Spinner, cx } from '../components/ui'
 
 const SELECT = 'h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px]'
 const KINDS: [string, string][] = [
@@ -71,6 +73,12 @@ function describe(rule: { when: RuleConditions | null; then: RuleAction | null; 
 }
 
 /** Rules that tidy files by themselves, and suggestions for where things could go. */
+/** A rule running now: its files counted as they are done. */
+function RuleProgress({ rule }: { rule: Rule }) {
+  const job = useJobFor(rule.id)
+  return job ? <JobProgress job={job} label="Running" className="mt-2" /> : <Progress label="Running" className="mt-2" />
+}
+
 export function Automation() {
   const rules = useResource(() => rulesApi.list(), [])
   const roots = useResource(() => fileApi().roots(), [])
@@ -96,6 +104,7 @@ export function Automation() {
     try {
       const r = await rulesApi.run(rule.id)
       toast(r.matched === 0 ? `${rule.name}: nothing to do` : `${rule.name}: ${r.done} of ${r.matched} files done${r.failed ? `, ${r.failed} failed` : ''}`, r.failed ? 'error' : 'success')
+      if (r.job_id) followJob(r.job_id, `${rule.name}: copying`)
       rules.reload()
     } catch (e) {
       toastError(e)
@@ -179,9 +188,10 @@ export function Automation() {
                     {rule.files_done > 0 && <Badge tone="accent">{rule.files_done} files so far</Badge>}
                   </div>
                   <p className="mt-0.5 text-[12.5px] text-muted">{describe(rule)}</p>
-                  {rule.last_run && (
+                  {rule.last_run && busy !== rule.id && (
                     <p className="mt-0.5 text-[12px] text-subtle">Last ran {formatRelative(rule.last_run)}: {rule.last_result}</p>
                   )}
+                  {busy === rule.id && <RuleProgress rule={rule} />}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <IconButton label="See what it would do" onClick={() => setPreviewing(rule)}><Eye className="size-4" /></IconButton>
@@ -290,8 +300,8 @@ function MoveModal({ s, devices, onClose, onDone }: { s: StorageSuggestion; devi
       const fapi = fileApi(isPeer ? peerPrefix(room.device_id) : '')
       const folder = `Moved from ${name}`
       try { await fapi.createFolder(rootId, '', folder) } catch { /* it may exist already */ }
-      await api.copyItems({ file_ids: s.files.map((f) => f.id), to_device: isPeer ? room.device_id : undefined, root_id: rootId, path: folder, remove_originals: true })
-      toast(`Moving ${s.files.length} files. Follow it in Transfers.`)
+      const job = await api.copyItems({ file_ids: s.files.map((f) => f.id), to_device: isPeer ? room.device_id : undefined, root_id: rootId, path: folder, remove_originals: true })
+      followJob(job.id, `Moving ${s.files.length} files`)
       onDone()
     } catch (e) {
       toastError(e)

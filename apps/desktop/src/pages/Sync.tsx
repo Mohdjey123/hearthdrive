@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowLeftRight, ArrowRight, FolderSync, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { api, fileApi, peerPrefix, type Device, type SyncMode, type SyncPair } from '../services/api'
 import { useResource } from '../hooks/useResource'
+import { JobProgress } from '../components/JobProgress'
+import { reloadJobs, useJobFor } from '../hooks/useJobs'
 import { formatRelative } from '../lib/format'
 import { FolderPicker } from '../components/FilePreview'
 import { toast, toastError } from '../components/Toasts'
@@ -27,6 +29,7 @@ function PairCard({ pair, onChanged }: { pair: SyncPair; onChanged: () => void }
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const Arrow = ARROW[pair.mode]
+  const job = useJobFor(pair.id)
   const st = status(pair)
   const act = async (fn: () => Promise<unknown>, done?: string) => {
     setBusy(true)
@@ -34,6 +37,7 @@ function PairCard({ pair, onChanged }: { pair: SyncPair; onChanged: () => void }
       await fn()
       if (done) toast(done)
       onChanged()
+      reloadJobs()
     } catch (e) {
       toastError(e)
     } finally {
@@ -75,6 +79,7 @@ function PairCard({ pair, onChanged }: { pair: SyncPair; onChanged: () => void }
           </IconButton>
         </span>
       </div>
+      {job && <JobProgress job={job} className="mt-3" />}
       {pair.last_error && <p className="mt-2 text-[12px] break-words text-danger">{pair.last_error}</p>}
       <Modal
         open={confirm}

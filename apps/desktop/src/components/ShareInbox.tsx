@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { FileIcon } from 'lucide-react'
 import { api, peerPrefix, type Device, type SharedFile } from '../services/api'
+import { followJob } from '../hooks/useJobs'
 import { navigate } from '../hooks/useRoute'
 import { formatBytes } from '../lib/format'
 import { PlacePicker } from '../pages/Sync'
 import { isScan } from '../lib/scans'
-import { toast, toastError } from './Toasts'
+import { toastError } from './Toasts'
 import { Button, ErrorNote, Field, Modal, Spinner } from './ui'
 
 const SHOWN = 6
@@ -59,12 +60,11 @@ export function ShareInbox() {
     setBusy(true)
     setError('')
     try {
-      await api.sendShared({ names: files.map((f) => f.name), device_id: device, root_id: place.root, path: place.path })
+      const job = await api.sendShared({ names: files.map((f) => f.name), device_id: device, root_id: place.root, path: place.path })
       const name = devices?.find((d) => d.id === device)?.name ?? 'the computer'
-      toast(`Sending to ${name}. Follow it in Transfers.`)
+      followJob(job.id, `${files.length === 1 ? `Sending “${files[0].name}”` : `Sending ${files.length} files`} to ${name}`)
       setOpen(false)
       setFiles([])
-      navigate('transfers')
     } catch (e) {
       setError((e as Error).message)
     } finally {

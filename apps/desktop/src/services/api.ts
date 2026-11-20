@@ -566,6 +566,8 @@ export interface Job {
   retries: number
   started_at: number | null
   finished_at: number | null
+  /** What the job works on: a sync pair, backup set, storage root or file id. */
+  subject?: string | null
 }
 
 export interface BackupSchedule {

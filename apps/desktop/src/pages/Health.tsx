@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { AlertTriangle, CheckCircle2, ClipboardCopy, HardDrive, RefreshCw, ShieldCheck, Usb, Wrench, XCircle } from 'lucide-react'
 import { api, peerPrefix, type DamagedFile, type Device, type PhysicalDisk, type RootHealth, type StorageHealth } from '../services/api'
 import { useResource } from '../hooks/useResource'
+import { JobProgress } from '../components/JobProgress'
+import { reloadJobs, useJobFor } from '../hooks/useJobs'
 import { formatBytes, formatDate, formatRelative } from '../lib/format'
 import { toast, toastError } from '../components/Toasts'
-import { Badge, Button, ErrorNote, Modal, PageHeader, Panel, ProgressBar, Spinner, StatusDot, cx } from '../components/ui'
+import { Badge, Button, ErrorNote, Modal, PageHeader, Panel, Progress, ProgressBar, Spinner, StatusDot, cx } from '../components/ui'
 
 const HEALTH: Record<PhysicalDisk['health'], { tone: 'accent' | 'warn' | 'danger' | 'neutral'; label: string }> = {
   healthy: { tone: 'accent', label: 'Healthy' },
@@ -73,6 +75,7 @@ function DamagedList({ root, onChanged, readOnly }: { root: RootHealth; onChange
       await fn()
       toast(done)
       onChanged()
+      reloadJobs()
     } catch (e) {
       toastError(e)
     } finally {
@@ -88,6 +91,7 @@ function DamagedList({ root, onChanged, readOnly }: { root: RootHealth; onChange
       <ul className="divide-y divide-line">
         {root.damaged.map((d) => (
           <li key={d.file_id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2">
+            <RepairProgress fileId={d.file_id} />
             <div className="min-w-0 flex-1">
               <div className="truncate font-medium" title={d.path}>{d.path}</div>
               <div className="text-[12px] text-subtle">
@@ -101,7 +105,7 @@ function DamagedList({ root, onChanged, readOnly }: { root: RootHealth; onChange
                   size="sm"
                   variant="primary"
                   disabled={d.repair_from.length === 0 || busy === d.file_id}
-                  onClick={() => void act(d.file_id, () => api.repairDamaged(d.file_id), 'Repairing. Follow it in Transfers.')}
+                  onClick={() => void act(d.file_id, () => api.repairDamaged(d.file_id), 'Repairing')}
                 >
                   <Wrench className="size-3.5" /> Repair
                 </Button>
@@ -139,6 +143,12 @@ function DamagedList({ root, onChanged, readOnly }: { root: RootHealth; onChange
   )
 }
 
+/** A running repair of one damaged file, on its own line. */
+function RepairProgress({ fileId }: { fileId: string }) {
+  const job = useJobFor(fileId)
+  return job ? <JobProgress job={job} label="Repairing" className="order-last w-full" /> : null
+}
+
 /** "1,204 files (3.1 GB) read, all intact" — counted afresh, as repairs lower the damaged count. */
 function checkText(c: NonNullable<RootHealth['last_check']>) {
   const files = `${c.files} file${c.files === 1 ? '' : 's'} (${formatBytes(c.bytes)}) read`
@@ -147,13 +157,15 @@ function checkText(c: NonNullable<RootHealth['last_check']>) {
 
 function RootCard({ root, onChanged, readOnly }: { root: RootHealth; onChanged: () => void; readOnly: boolean }) {
   const [busy, setBusy] = useState(false)
+  const job = useJobFor(root.id)
   const used = root.total_bytes && root.available_bytes != null ? 1 - root.available_bytes / root.total_bytes : null
   const verify = async () => {
     setBusy(true)
     try {
       await api.verifyRoot(root.id)
-      toast(`Verifying ${root.name}. It reads every file, so it can take a while; follow it in Transfers.`)
+      toast(`Verifying ${root.name}. It reads every file, so it can take a while.`)
       onChanged()
+      reloadJobs()
     } catch (e) {
       toastError(e)
     } finally {
@@ -182,7 +194,7 @@ function RootCard({ root, onChanged, readOnly }: { root: RootHealth; onChanged: 
           {root.online ? (
             used != null ? (
               <>
-                <ProgressBar value={used * 100} tone={used > 0.97 ? 'danger' : used > 0.9 ? 'warn' : 'accent'} />
+                <ProgressBar value={used} tone={used > 0.97 ? 'danger' : used > 0.9 ? 'warn' : 'accent'} />
                 <div className="mt-1 text-muted">{formatBytes(root.available_bytes)} free of {formatBytes(root.total_bytes)}</div>
               </>
             ) : (
@@ -200,6 +212,7 @@ function RootCard({ root, onChanged, readOnly }: { root: RootHealth; onChanged: 
           )}
         </div>
       </div>
+      {job && <JobProgress job={job} className="mt-3" />}
       {root.damaged.length > 0 && <DamagedList root={root} onChanged={onChanged} readOnly={readOnly} />}
     </li>
   )
@@ -344,6 +357,7 @@ export function Health() {
           </>
         }
       />
+      {refreshing && <Progress className="mb-4 max-w-md" label="Reading the disks and checking every drive…" />}
       {health.error && <div className="mb-3"><ErrorNote>{health.error.message}</ErrorNote></div>}
       {!health.data ? <Spinner /> : <HealthBody health={health.data} onChanged={health.reload} readOnly={false} />}
       {peers.length > 0 && (

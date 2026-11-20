@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, Download, ExternalLink, Share2, Tag } from 'lucide-react'
 import { androidBridge, contentUrl, fileApi, isMobile, libraryApi, type ArchiveListing, type DocText, type FileEntry, type FileTag } from '../services/api'
-import { toast, toastError } from './Toasts'
+import { startActivity, toast, toastError } from './Toasts'
 import { formatBytes, formatDate, previewKind } from '../lib/format'
 import { FileIcon } from './FileIcon'
 import { Button, IconButton, Modal, Spinner, cx } from './ui'
@@ -62,20 +62,56 @@ export async function downloadFile(file: FileEntry, prefix = '') {
 /** Whether this is the Android app, which can hand files to other apps. */
 export const canHandOff = () => isMobile() && !!androidBridge()?.openFile
 
-/** Fetches files from the node into the app's cache, for another app. */
-async function fetchForApp(files: { file: FileEntry; prefix: string }[]): Promise<string[]> {
+/** Runs one of the app's fetch commands (`save_download`, `fetch_for_app`),
+ *  passing its progress events to `onBytes`. */
+async function fetchWithProgress(command: string, url: string, filename: string, onBytes: (done: number, total: number) => void) {
   const { invoke } = await import('@tauri-apps/api/core')
+  const { listen } = await import('@tauri-apps/api/event')
+  const progress = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const unlisten = await listen<{ id: string; done: number; total: number }>('download-progress', (e) => {
+    if (e.payload.id === progress) onBytes(e.payload.done, e.payload.total)
+  })
+  try {
+    return await invoke<string>(command, { url, filename, progress })
+  } finally {
+    unlisten()
+  }
+}
+
+/** Fetches files from the node into the app's cache, for another app, with
+ *  a progress card while it runs. */
+async function fetchForApp(files: { file: FileEntry; prefix: string }[]): Promise<string[]> {
+  const many = files.length > 1
+  const bytesTotal = files.reduce((s, f) => s + (f.file.size || 0), 0)
+  const card = startActivity(many ? `Getting ${files.length} files` : `Getting ${files[0].file.filename}`, {
+    done: 0,
+    total: many ? files.length : undefined,
+    noun: many ? 'files' : undefined,
+    bytesDone: 0,
+    bytesTotal: bytesTotal || undefined,
+  })
   const paths: string[] = []
-  for (const { file, prefix } of files) {
-    const url = await contentUrl(file.id, true, prefix)
-    paths.push(await invoke<string>('fetch_for_app', { url, filename: file.filename }))
+  let before = 0
+  try {
+    for (const { file, prefix } of files) {
+      card.update({ detail: many ? file.filename : undefined })
+      const url = await contentUrl(file.id, true, prefix)
+      paths.push(
+        await fetchWithProgress('fetch_for_app', url, file.filename, (done, total) =>
+          card.update(bytesTotal ? { bytesDone: before + done } : { bytesDone: done, bytesTotal: total || undefined }),
+        ),
+      )
+      before += file.size || 0
+      card.update({ done: paths.length, bytesDone: before })
+    }
+  } finally {
+    card.end()
   }
   return paths
 }
 
 /** Opens a file in another app on the phone (Android's "Open with"). */
 export async function openWithApp(file: FileEntry, prefix = '') {
-  toast(`Getting ${file.filename}…`)
   const [path] = await fetchForApp([{ file, prefix }])
   const result = androidBridge()?.openFile?.(path)
   if (result === 'none') toast(`No app on this phone opens ${file.filename}. Download it instead.`, 'error')
@@ -85,7 +121,6 @@ export async function openWithApp(file: FileEntry, prefix = '') {
 /** Hands files to another app through Android's share menu. */
 export async function shareWithApps(files: { file: FileEntry; prefix: string }[]) {
   if (files.length === 0) return
-  toast(files.length === 1 ? `Getting ${files[0].file.filename}…` : `Getting ${files.length} files…`)
   const paths = await fetchForApp(files)
   if (androidBridge()?.shareFiles?.(JSON.stringify(paths)) !== 'shared') toast('Could not share those files', 'error')
 }
@@ -95,10 +130,15 @@ export async function saveUrl(url: string, filename: string) {
   if (isMobile()) {
     // A web view cannot save files on a phone; the app writes the file to
     // the phone's Download folder instead.
-    const { invoke } = await import('@tauri-apps/api/core')
-    toast(`Downloading ${filename}…`)
-    const saved = await invoke<string>('save_download', { url, filename })
-    toast(`Saved to ${saved}`)
+    const card = startActivity(`Downloading ${filename}`)
+    try {
+      const saved = await fetchWithProgress('save_download', url, filename, (done, total) =>
+        card.update({ bytesDone: done, bytesTotal: total || undefined }),
+      )
+      toast(`Saved to ${saved}`)
+    } finally {
+      card.end()
+    }
     return
   }
   const a = document.createElement('a')

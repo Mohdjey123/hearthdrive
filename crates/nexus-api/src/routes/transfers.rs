@@ -80,6 +80,9 @@ pub struct JobInfo {
     pub verified: u64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
+    /// What the job works on (a sync pair, a backup set, a storage root or a
+    /// file), so a page can show the progress next to it.
+    pub subject: Option<String>,
 }
 
 pub struct Job {
@@ -131,6 +134,12 @@ impl Job {
             can_retry,
             info: self.info.lock().unwrap().clone(),
         }
+    }
+
+    /// Ties the job to what it works on (see [`JobInfo::subject`]).
+    pub fn about(self: Arc<Self>, subject: &str) -> Arc<Self> {
+        self.update(|i| i.subject = Some(subject.to_string()));
+        self
     }
 
     pub fn update(&self, f: impl FnOnce(&mut JobInfo)) {

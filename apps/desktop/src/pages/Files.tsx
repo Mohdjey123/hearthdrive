@@ -22,7 +22,9 @@ import { FileIcon } from '../components/FileIcon'
 import { FilePreview, FolderPicker, canHandOff, downloadFile, openWithApp, saveUrl, shareWithApps, useContentUrl } from '../components/FilePreview'
 import { toast, toastError } from '../components/Toasts'
 import { PhoneStorageEmpty, usePhoneStorage } from '../components/PhoneStorage'
-import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, Spinner, cx } from '../components/ui'
+import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, Progress, Spinner, cx } from '../components/ui'
+import { runEach, type EachProgress } from '../lib/runEach'
+import { followJob } from '../hooks/useJobs'
 
 type Sort = 'name' | 'size' | 'modified' | 'type'
 
@@ -220,6 +222,7 @@ function Versions({ file, fapi, writable, onRestored }: { file: FileEntry; fapi:
                   </Button>
                 )}
               </div>
+              {busy === v.id && <Progress className="mt-2" label={`Restoring ${formatBytes(v.size)}`} />}
             </li>
           ))}
         </ul>
@@ -887,7 +890,11 @@ export function Files({ route }: { route: Route }) {
                   label="Extract here"
                   onClick={() =>
                     void fileApi(prefixOf(single)).extract(single.id)
-                      .then((r) => toast(`Extracting into ${r.path.split('/').pop()} — follow it under Transfers`))
+                      .then((r) =>
+                        prefixOf(single)
+                          ? toast(`Extracting into ${r.path.split('/').pop()} — follow it under Transfers on that device`)
+                          : followJob(r.job_id, `Extracting into ${r.path.split('/').pop()}`),
+                      )
                       .catch(toastError)
                   }
                 >
@@ -1187,9 +1194,10 @@ function CopyDialog({ items, fromDevice, fromOf, devices, onClose, onDone }: {
     const bySource = new Map<string, string[]>()
     for (const f of items) bySource.set(fromOf(f), [...(bySource.get(fromOf(f)) ?? []), f.id])
     const failures: string[] = []
+    const started: string[] = []
     for (const [from, ids] of bySource) {
       try {
-        await api.copyItems({ from_device: from || undefined, file_ids: ids, to_device: to || undefined, root_id: activeRoot.id, path: dest })
+        started.push((await api.copyItems({ from_device: from || undefined, file_ids: ids, to_device: to || undefined, root_id: activeRoot.id, path: dest })).id)
       } catch (e) {
         failures.push((e as Error).message)
       }
@@ -1200,7 +1208,7 @@ function CopyDialog({ items, fromDevice, fromOf, devices, onClose, onDone }: {
       return
     }
     const place = places.find((p) => p.id === to)?.name ?? 'device'
-    toast(`Copying ${what} to ${place}. Follow it in Transfers.`)
+    for (const id of started) followJob(id, `Copying ${what} to ${place}`)
     onDone()
   }
 
@@ -1275,9 +1283,11 @@ function FileDialogs({ fapi, kind, root, path, items, onClose, onDone }: {
   const [dest, setDest] = useState(path)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [progress, setProgress] = useState<EachProgress | null>(null)
   useEffect(() => {
     setError('')
     setBusy(false)
+    setProgress(null)
     setDest(path)
     setName(kind === 'rename' && items[0] ? items[0].filename : kind === 'folder' ? 'New folder' : '')
   }, [kind])
@@ -1295,17 +1305,33 @@ function FileDialogs({ fapi, kind, root, path, items, onClose, onDone }: {
   }
 
   const each = async (op: (f: FileEntry) => Promise<unknown>, verb: string) => {
-    const failures: string[] = []
-    for (const f of items) {
-      try { await op(f) } catch (e) { failures.push(`${f.filename}: ${(e as Error).message}`) }
-    }
-    if (failures.length) throw new Error(failures.join('\n'))
+    // One item is quick; more get a progress bar.
+    const r = await runEach(items, op, {
+      size: (f) => (f.is_dir ? 0 : f.size),
+      name: (f) => f.filename,
+      onProgress: items.length > 1 ? setProgress : () => {},
+    })
+    setProgress(null)
+    if (r.failed.length) throw new Error(r.failed.map((x) => `${x.item.filename}: ${x.error.message}`).join('\n'))
     return `${verb} ${items.length === 1 ? items[0].filename : `${items.length} items`}`
   }
+  const working = (label: string) =>
+    progress && (
+      <Progress
+        label={label}
+        done={progress.done}
+        total={progress.total}
+        bytesDone={progress.bytesDone}
+        bytesTotal={progress.bytesTotal}
+        noun="items"
+        detail={progress.current}
+      />
+    )
+  const close = () => (busy ? undefined : onClose())
 
   const footer = (label: string, action: () => void, danger = false) => (
     <>
-      <Button variant="ghost" onClick={onClose}>Cancel</Button>
+      <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
       <Button variant={danger ? 'danger' : 'primary'} loading={busy} onClick={action}>{label}</Button>
     </>
   )
@@ -1344,8 +1370,9 @@ function FileDialogs({ fapi, kind, root, path, items, onClose, onDone }: {
   if (kind === 'move') {
     const submit = () => run(() => each((f) => fapi.updateFile(f.id, { parent_path: dest }), `Moved`))
     return (
-      <Modal open title={`Move ${items.length === 1 ? items[0].filename : `${items.length} items`}`} onClose={onClose} footer={footer(`Move to ${dest ? dest.split('/').pop() : root.name}`, submit)}>
+      <Modal open title={`Move ${items.length === 1 ? items[0].filename : `${items.length} items`}`} onClose={close} footer={footer(`Move to ${dest ? dest.split('/').pop() : root.name}`, submit)}>
         <div className="space-y-3">
+          {working(`Moving to ${dest ? dest.split('/').pop() : root.name}`)}
           <FolderPicker rootId={root.id} value={dest} onChange={setDest} exclude={items.filter((i) => i.is_dir).map((i) => i.relative_path)} prefix={fapi.prefix} />
           <ErrorNote>{error}</ErrorNote>
         </div>
@@ -1355,8 +1382,9 @@ function FileDialogs({ fapi, kind, root, path, items, onClose, onDone }: {
   if (kind === 'delete') {
     const submit = () => run(() => each((f) => fapi.deleteFile(f.id), 'Moved to trash:'))
     return (
-      <Modal open title="Move to trash?" onClose={onClose} footer={footer('Move to trash', submit, true)}>
+      <Modal open title="Move to trash?" onClose={close} footer={footer('Move to trash', submit, true)}>
         <div className="space-y-3">
+          {working('Moving to the trash')}
           <p>
             {items.length === 1 ? <span className="font-medium">{items[0].filename}</span> : `${items.length} items`} will be moved to the
             trash on {root.name}. You can restore {items.length === 1 ? 'it' : 'them'} from Trash.
@@ -1377,8 +1405,9 @@ function FetchDialog({ fapi, rootId, path, where, onClose }: { fapi: FileApi; ro
   const submit = async () => {
     setBusy(true)
     try {
-      await fapi.fetchUrl({ root_id: rootId, path, url: url.trim(), name: name.trim() || undefined })
-      toast('Downloading — follow it under Transfers')
+      const r = await fapi.fetchUrl({ root_id: rootId, path, url: url.trim(), name: name.trim() || undefined })
+      if (fapi.prefix) toast('Downloading — follow it under Transfers on that device')
+      else followJob(r.job_id, `Downloading ${r.path.split('/').pop() || 'the link'}`)
       onClose()
     } catch (e) {
       toastError(e)

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { ImageUp, Pause, Play, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react'
 import { androidBridge, api, peerPrefix, type BackupStatus, type Device, type Job } from '../services/api'
+import { JobProgress } from '../components/JobProgress'
 import { useResource } from '../hooks/useResource'
 import { navigate, useRoute } from '../hooks/useRoute'
-import { formatBytes, formatRelative } from '../lib/format'
+import { formatRelative } from '../lib/format'
 import { toast, toastError } from '../components/Toasts'
-import { Badge, Button, EmptyState, ErrorNote, Field, Modal, PageHeader, Panel, ProgressBar, Spinner } from '../components/ui'
+import { Badge, Button, EmptyState, ErrorNote, Field, Modal, PageHeader, Panel, Progress, Spinner } from '../components/ui'
 import { PlacePicker } from './Sync'
 
 /** Whether the app may read photos and videos; `null` outside the Android app. */
@@ -235,15 +236,7 @@ export function Backup() {
               <div className="text-[12.5px] text-muted">
                 {status.data.choices.filter((c) => b.sources.includes(c.key)).map((c) => c.label).join(', ')}
               </div>
-              {job && (
-                <div className="space-y-1">
-                  <ProgressBar value={job.bytes_total ? job.bytes_done / job.bytes_total : 0} />
-                  <div className="flex justify-between gap-2 text-[12px] text-subtle">
-                    <span className="truncate">{job.current ?? 'Getting ready…'}</span>
-                    <span className="shrink-0 tabular">{job.files_done} of {job.files_total} · {formatBytes(job.bytes_done)} of {formatBytes(job.bytes_total)}</span>
-                  </div>
-                </div>
-              )}
+              {job ? <JobProgress job={job} label="Backing up" /> : running && <Progress label="Backing up" />}
               {!running && (
                 <div className="text-[12.5px]">
                   {b.last_run_at ? (

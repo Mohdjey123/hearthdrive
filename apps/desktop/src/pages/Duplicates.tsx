@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Copy, Trash2 } from 'lucide-react'
 import { api, fileApi, isMobile, peerPrefix, thisDevice, type DuplicateGroup } from '../services/api'
 import { useResource } from '../hooks/useResource'
@@ -6,7 +6,8 @@ import { navigate, type Route } from '../hooks/useRoute'
 import { formatBytes, formatDate } from '../lib/format'
 import { FileIcon } from '../components/FileIcon'
 import { toast } from '../components/Toasts'
-import { Button, EmptyState, ErrorNote, Modal, PageHeader, Spinner, cx } from '../components/ui'
+import { Button, EmptyState, ErrorNote, Modal, PageHeader, Progress, Spinner, cx } from '../components/ui'
+import { runEach, type EachProgress } from '../lib/runEach'
 
 const SIZES: [number, string][] = [[0, 'Any size'], [1 << 20, '1 MB or more'], [10 << 20, '10 MB or more'], [100 << 20, '100 MB or more']]
 
@@ -27,7 +28,10 @@ export function Duplicates({ route }: { route: Route }) {
   const [unpicked, setUnpicked] = useState<Set<string>>(new Set())
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [confirm, setConfirm] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<EachProgress | null>(null)
+  const stop = useRef(false)
+  const [stopping, setStopping] = useState(false)
+  const busy = progress !== null
 
   const chosen = useMemo(() => {
     const out = new Set<string>()
@@ -48,20 +52,25 @@ export function Duplicates({ route }: { route: Route }) {
   }
 
   const trash = async () => {
-    setBusy(true)
-    let done = 0
-    let failed = 0
-    for (const id of chosen) {
-      try {
-        await fapi.deleteFile(id)
-        done++
-      } catch {
-        failed++
-      }
-    }
-    setBusy(false)
+    const items = (groups.data ?? []).flatMap((g) =>
+      g.files.filter((f) => chosen.has(f.id)).map((f) => ({ id: f.id, size: g.size, name: f.relative_path })),
+    )
+    stop.current = false
+    setStopping(false)
+    const r = await runEach(items, (f) => fapi.deleteFile(f.id), {
+      size: (f) => f.size,
+      name: (f) => f.name,
+      onProgress: setProgress,
+      shouldStop: () => stop.current,
+    })
+    setProgress(null)
     setConfirm(false)
-    toast(`${done} file${done === 1 ? '' : 's'} moved to the trash${failed ? `, ${failed} could not be` : ''}`, failed ? 'error' : 'success')
+    const done = r.ok.length
+    const failed = r.failed.length
+    toast(
+      `${done} file${done === 1 ? '' : 's'} moved to the trash${failed ? `, ${failed} could not be` : ''}${r.stopped ? ' (stopped)' : ''}`,
+      failed ? 'error' : 'success',
+    )
     setPicked(new Set())
     setUnpicked(new Set())
     groups.reload()
@@ -131,17 +140,34 @@ export function Duplicates({ route }: { route: Route }) {
       )}
       <Modal
         open={confirm}
-        onClose={() => setConfirm(false)}
-        title="Move duplicates to the trash?"
+        onClose={() => (busy ? undefined : setConfirm(false))}
+        title={busy ? 'Moving duplicates to the trash' : 'Move duplicates to the trash?'}
         footer={
-          <>
-            <Button onClick={() => setConfirm(false)}>Cancel</Button>
-            <Button variant="danger" disabled={busy} onClick={trash}>Move {chosen.size} to trash</Button>
-          </>
+          busy ? (
+            <Button disabled={stopping} onClick={() => { stop.current = true; setStopping(true) }}>Stop</Button>
+          ) : (
+            <>
+              <Button onClick={() => setConfirm(false)}>Cancel</Button>
+              <Button variant="danger" onClick={() => void trash()}>Move {chosen.size} to trash</Button>
+            </>
+          )
         }
       >
-        {chosen.size} file{chosen.size === 1 ? '' : 's'} ({formatBytes(freed)}) go to the trash, where they can be restored. At least one
-        copy of each file is always kept.
+        {progress ? (
+          <Progress
+            label={stopping ? 'Stopping after the files in progress…' : 'Moving to the trash'}
+            done={progress.done}
+            total={progress.total}
+            bytesDone={progress.bytesDone}
+            bytesTotal={progress.bytesTotal}
+            detail={progress.current}
+          />
+        ) : (
+          <>
+            {chosen.size} file{chosen.size === 1 ? '' : 's'} ({formatBytes(freed)}) go to the trash, where they can be restored. At least one
+            copy of each file is always kept.
+          </>
+        )}
       </Modal>
     </div>
   )

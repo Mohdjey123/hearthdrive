@@ -8,7 +8,7 @@
 //! never deals with the same file twice.
 
 use crate::auth::AuthUser;
-use crate::routes::transfers::start_copy;
+use crate::routes::transfers::{Job, start_copy};
 use crate::state::SharedState;
 use nexus_common::events::Event;
 use nexus_common::time::now_ms;
@@ -268,8 +268,9 @@ impl RunReport {
 static RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Runs a rule now. `new_only`: only files that arrived since the rule was
-/// made (the "when added" trigger); otherwise every matching file.
-pub async fn run(s: &SharedState, rule: &Rule, new_only: bool) -> Result<RunReport> {
+/// made (the "when added" trigger); otherwise every matching file. With a
+/// `job`, it counts the files there as it goes, for a progress bar.
+pub async fn run(s: &SharedState, rule: &Rule, new_only: bool, job: Option<&Job>) -> Result<RunReport> {
     let _one_at_a_time = RUNNING.lock().await;
     let (cond, action) = parse(rule)?;
     let now = now_ms();
@@ -281,9 +282,23 @@ pub async fn run(s: &SharedState, rule: &Rule, new_only: bool) -> Result<RunRepo
     s.storage.ensure_online(&root)?;
     let files = s.db.rule_files(&sc, RUN_LIMIT).await?;
     let mut report = RunReport { matched: files.len(), ..Default::default() };
+    if let Some(job) = job {
+        let bytes: u64 = files.iter().map(|f| f.size.max(0) as u64).sum();
+        job.update(|i| {
+            i.files_total = files.len() as u64;
+            i.bytes_total = bytes;
+        });
+    }
     let by = format!("rule:{}", rule.name);
     let mut copies = Vec::new();
+    let mut bytes_done = 0u64;
     for file in files {
+        if let Some(job) = job {
+            if job.is_cancelled() {
+                break;
+            }
+            job.update(|i| i.current = Some(file.relative_path.clone()));
+        }
         let result = match &action {
             RuleAction::Tag { tags } => {
                 let tags: Vec<String> = tags.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
@@ -312,10 +327,18 @@ pub async fn run(s: &SharedState, rule: &Rule, new_only: bool) -> Result<RunRepo
             }
             Err(e) => {
                 report.failed += 1;
+                if let Some(job) = job {
+                    job.fail_file(&file.filename, &e);
+                }
                 if report.errors.len() < 5 {
                     report.errors.push(format!("{}: {}", file.filename, e));
                 }
             }
+        }
+        if let Some(job) = job {
+            bytes_done += file.size.max(0) as u64;
+            job.set_bytes(bytes_done);
+            job.update(|i| i.files_done += 1);
         }
     }
     if let (RuleAction::Copy { device_id, root_id, folder }, false) = (&action, copies.is_empty()) {
@@ -377,7 +400,7 @@ async fn run_all(s: &SharedState, added: bool) {
         if !go {
             continue;
         }
-        if let Err(e) = run(s, &rule, added).await {
+        if let Err(e) = run(s, &rule, added, None).await {
             tracing::debug!(rule = %rule.name, error = %e, "rule did not run");
             let _ = s.db.rule_ran(&rule.id, now, &e.to_string(), 0).await;
         }

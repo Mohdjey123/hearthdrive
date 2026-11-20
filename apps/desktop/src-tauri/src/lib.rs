@@ -152,12 +152,12 @@ mod host {
     }
 
     /// Desktop web views save downloads themselves.
-    pub async fn save_download(_app: tauri::AppHandle, _url: String, _filename: String) -> Result<String, String> {
+    pub async fn save_download(_app: tauri::AppHandle, _url: String, _filename: String, _progress: Option<String>) -> Result<String, String> {
         Err("Downloads are saved by the browser on this platform".into())
     }
 
     /// Phones only: computers open files from their own folders.
-    pub async fn fetch_for_app(_app: tauri::AppHandle, _url: String, _filename: String) -> Result<String, String> {
+    pub async fn fetch_for_app(_app: tauri::AppHandle, _url: String, _filename: String, _progress: Option<String>) -> Result<String, String> {
         Err("Only the phone app hands files to other apps".into())
     }
 }
@@ -312,8 +312,11 @@ mod host {
         candidate
     }
 
-    async fn fetch_to(url: &str, path: &std::path::Path) -> Result<(), String> {
+    /// Streams `url` into `path`. With a `progress` id, the page hears
+    /// `download-progress` events (`{ id, done, total }`, a few a second).
+    async fn fetch_to(app: &tauri::AppHandle, url: &str, path: &std::path::Path, progress: Option<&str>) -> Result<(), String> {
         use futures_util::StreamExt;
+        use tauri::Emitter;
         use tokio::io::AsyncWriteExt;
         let res = reqwest::Client::builder()
             .no_proxy()
@@ -326,19 +329,34 @@ mod host {
         if !res.status().is_success() {
             return Err(format!("The download failed (HTTP {})", res.status().as_u16()));
         }
+        let total = res.content_length().unwrap_or(0);
         let mut file = tokio::fs::File::create(path).await.map_err(|e| e.to_string())?;
         let mut stream = res.bytes_stream();
+        let mut done = 0u64;
+        let mut last = std::time::Instant::now();
+        let tell = |done: u64| {
+            if let Some(id) = progress {
+                let _ = app.emit("download-progress", serde_json::json!({ "id": id, "done": done, "total": total }));
+            }
+        };
+        tell(0);
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("The download was interrupted: {e}"))?;
             file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            done += chunk.len() as u64;
+            if last.elapsed() >= Duration::from_millis(200) {
+                last = std::time::Instant::now();
+                tell(done);
+            }
         }
+        tell(done);
         file.flush().await.map_err(|e| e.to_string())
     }
 
     /// Streams a file from this app's own node into the phone's Download
     /// folder (`Download/HearthDrive`), or the app's own folder if that is not
     /// writable. Returns where it was saved, for display.
-    pub async fn save_download(app: tauri::AppHandle, url: String, filename: String) -> Result<String, String> {
+    pub async fn save_download(app: tauri::AppHandle, url: String, filename: String, progress: Option<String>) -> Result<String, String> {
         // Only this app's node may be the source.
         let node = connection(app.clone()).await?;
         if !url.starts_with(&format!("{}/api/v1/", node.base_url)) {
@@ -354,7 +372,7 @@ mod host {
                 continue;
             }
             let path = free_path(&dir, &name);
-            match fetch_to(&url, &path).await {
+            match fetch_to(&app, &url, &path, progress.as_deref()).await {
                 Ok(()) => {
                     let saved = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(name);
                     return Ok(format!("{label}/{saved}"));
@@ -376,7 +394,7 @@ mod host {
     /// (`<cache>/open/<n>/<name>`, keeping its name, which other apps show),
     /// for Android to hand to another app. Returns its full path. Earlier
     /// ones older than a day are cleared first.
-    pub async fn fetch_for_app(app: tauri::AppHandle, url: String, filename: String) -> Result<String, String> {
+    pub async fn fetch_for_app(app: tauri::AppHandle, url: String, filename: String, progress: Option<String>) -> Result<String, String> {
         let node = connection(app.clone()).await?;
         if !url.starts_with(&format!("{}/api/v1/", node.base_url)) {
             return Err("Files must come from this app's own node".into());
@@ -403,7 +421,7 @@ mod host {
         let dir = root.join(stamp.to_string());
         tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
         let path = dir.join(safe_name(&filename));
-        if let Err(e) = fetch_to(&url, &path).await {
+        if let Err(e) = fetch_to(&app, &url, &path, progress.as_deref()).await {
             let _ = tokio::fs::remove_dir_all(&dir).await;
             return Err(e);
         }
@@ -470,15 +488,15 @@ async fn service_connection(app: tauri::AppHandle) -> Result<Connection, String>
 
 /// Saves a file from the node to the phone's storage (phones only).
 #[tauri::command]
-async fn save_download(app: tauri::AppHandle, url: String, filename: String) -> Result<String, String> {
-    host::save_download(app, url, filename).await
+async fn save_download(app: tauri::AppHandle, url: String, filename: String, progress: Option<String>) -> Result<String, String> {
+    host::save_download(app, url, filename, progress).await
 }
 
 /// Fetches a file from the node into the app's cache, for Android to hand to
 /// another app ("Open with", the share menu). Returns its path (phones only).
 #[tauri::command]
-async fn fetch_for_app(app: tauri::AppHandle, url: String, filename: String) -> Result<String, String> {
-    host::fetch_for_app(app, url, filename).await
+async fn fetch_for_app(app: tauri::AppHandle, url: String, filename: String, progress: Option<String>) -> Result<String, String> {
+    host::fetch_for_app(app, url, filename, progress).await
 }
 
 /// The system tray icon, closing to the tray, and one running copy.

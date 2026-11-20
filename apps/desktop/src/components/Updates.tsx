@@ -4,7 +4,7 @@ import { androidBridge, api, isMobile, type UpdateStatus } from '../services/api
 import { useResource } from '../hooks/useResource'
 import { formatBytes, formatRelative } from '../lib/format'
 import { toast, toastError } from './Toasts'
-import { Badge, Button, Spinner } from './ui'
+import { Badge, Button, Progress, Spinner } from './ui'
 
 const PLATFORM_NAMES: Record<string, string> = {
   'windows-x86_64': 'Windows',
@@ -174,7 +174,11 @@ export function UpdateSettings() {
           Check now
         </Button>
       </div>
-      <div className="text-[12px] text-subtle">{state}</div>
+      {s.downloading || s.checking ? (
+        <Progress label={state} className="max-w-md" />
+      ) : (
+        <div className="text-[12px] text-subtle">{state}</div>
+      )}
       {s.install_note && <div className="text-[12.5px] text-muted">{s.install_note}</div>}
       {s.available?.notes && (
         <div className="whitespace-pre-wrap rounded-md border border-line bg-elevated px-3 py-2 text-[12.5px]">{s.available.notes}</div>

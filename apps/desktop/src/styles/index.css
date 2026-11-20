@@ -143,6 +143,17 @@ body {
   .sheet-up { animation: none; }
 }
 
+/* A progress bar that does not know how far along it is: a short piece
+   slides across. With reduced motion it pulses in place instead. */
+@keyframes progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+.progress-indeterminate { width: 40%; animation: progress-slide 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate { width: 100%; transform: none; animation: pulse 2s ease-in-out infinite; opacity: 0.6; }
+}
+
 @media (pointer: coarse) {
   /* Only the content area scrolls, never the page around the bars. */
   html, body { overflow: hidden; }

@@ -10,7 +10,8 @@ import { formatBytes, formatDate } from '../lib/format'
 import { FilePreview } from '../components/FilePreview'
 import { toast, toastError } from '../components/Toasts'
 import { PhoneStorageEmpty, usePhoneStorage } from '../components/PhoneStorage'
-import { Badge, Button, EmptyState, ErrorNote, Input, Modal, PageHeader, Spinner, cx } from '../components/ui'
+import { Badge, Button, EmptyState, ErrorNote, Input, Modal, PageHeader, Progress, Spinner, cx } from '../components/ui'
+import { runEach, type EachProgress } from '../lib/runEach'
 
 type Tab = 'timeline' | 'videos' | 'albums' | 'places' | 'memories' | 'similar'
 const TABS: { id: Tab; label: string; icon: typeof Images }[] = [
@@ -474,21 +475,20 @@ function Similar({ prefix, onOpen }: { prefix: string; onOpen: (item: PhotoItem,
   const papi = photoApi(prefix)
   const groups = useResource(() => papi.similar(), [prefix])
   const [busy, setBusy] = useState<string | null>(null)
+  const [progress, setProgress] = useState<EachProgress | null>(null)
   const keepFirst = async (g: PhotoItem[]) => {
     setBusy(g[0].id)
-    let done = 0
-    try {
-      for (const it of g.slice(1)) {
-        await fileApi(prefix).deleteFile(it.id)
-        done++
-      }
-      toast(`Moved ${done} look-alike${done === 1 ? '' : 's'} to the trash`)
-      groups.reload()
-    } catch (e) {
-      toastError(e)
-    } finally {
-      setBusy(null)
-    }
+    const r = await runEach(g.slice(1), (it) => fileApi(prefix).deleteFile(it.id), {
+      size: (it) => it.size,
+      name: (it) => it.filename,
+      onProgress: setProgress,
+    })
+    setBusy(null)
+    setProgress(null)
+    const done = r.ok.length
+    if (r.failed.length) toastError(r.failed[0].error)
+    if (done) toast(`Moved ${done} look-alike${done === 1 ? '' : 's'} to the trash`)
+    groups.reload()
   }
   if (groups.loading && !groups.data) return <Spinner />
   if (!groups.data?.length) {
@@ -502,8 +502,11 @@ function Similar({ prefix, onOpen }: { prefix: string; onOpen: (item: PhotoItem,
           <div className="mb-2 flex items-center gap-2 text-[12.5px]">
             <span className="font-medium">{g.length} photos</span>
             <span className="text-subtle">{formatDate(g[0].media.taken_at ?? g[0].modified_at)}</span>
-            <Button size="sm" className="ml-auto" variant="ghost" loading={busy === g[0].id} onClick={() => void keepFirst(g)}>Keep the first, trash the rest</Button>
+            <Button size="sm" className="ml-auto" variant="ghost" loading={busy === g[0].id} disabled={busy !== null} onClick={() => void keepFirst(g)}>Keep the first, trash the rest</Button>
           </div>
+          {busy === g[0].id && progress && (
+            <Progress className="mb-2" label="Moving to the trash" done={progress.done} total={progress.total} bytesDone={progress.bytesDone} bytesTotal={progress.bytesTotal} noun="photos" />
+          )}
           <div className="flex gap-1.5 overflow-x-auto">
             {g.map((it, i) => (
               <div key={it.id} className="w-28 shrink-0">

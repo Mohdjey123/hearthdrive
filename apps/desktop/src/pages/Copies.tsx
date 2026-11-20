@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { ArchiveRestore, Copy, Pause, Play, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { api, peerPrefix, type Device, type HeldFile, type SyncPair } from '../services/api'
 import { useResource } from '../hooks/useResource'
+import { JobProgress } from '../components/JobProgress'
+import { followJob, reloadJobs, useJobFor } from '../hooks/useJobs'
 import { formatBytes, formatDate, formatRelative } from '../lib/format'
 import { toast, toastError } from '../components/Toasts'
 import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Modal, PageHeader, Spinner, StatusDot, cx } from '../components/ui'
@@ -60,8 +62,8 @@ function KeptFiles({ copy, onClose }: { copy: SyncPair; onClose: () => void }) {
   const bringBack = async () => {
     setBusy(true)
     try {
-      await api.bringBack(copy.id, [...picked])
-      toast(`Bringing back ${picked.size} item${picked.size === 1 ? '' : 's'} from ${copy.device_name}. Follow it in Transfers.`)
+      const r = await api.bringBack(copy.id, [...picked])
+      followJob(r.job_id, `Bringing back ${picked.size} item${picked.size === 1 ? '' : 's'} from ${copy.device_name}`)
       onClose()
     } catch (e) {
       toastError(e)
@@ -120,6 +122,7 @@ function CopyRow({ copy, onChanged }: { copy: SyncPair; onChanged: () => void })
   const [busy, setBusy] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [showKept, setShowKept] = useState(false)
+  const job = useJobFor(copy.id)
   const st = status(copy)
   const act = async (fn: () => Promise<unknown>, done?: string) => {
     setBusy(true)
@@ -127,6 +130,7 @@ function CopyRow({ copy, onChanged }: { copy: SyncPair; onChanged: () => void })
       await fn()
       if (done) toast(done)
       onChanged()
+      reloadJobs()
     } catch (e) {
       toastError(e)
     } finally {
@@ -190,6 +194,7 @@ function CopyRow({ copy, onChanged }: { copy: SyncPair; onChanged: () => void })
           </button>
         )}
       </div>
+      {job && <JobProgress job={job} className="mt-2.5" />}
       {copy.last_error && <p className="mt-2 text-[12px] break-words text-danger">{copy.last_error}</p>}
       {showKept && <KeptFiles copy={copy} onClose={() => setShowKept(false)} />}
       <Modal

@@ -417,7 +417,7 @@ async fn run_set(s: &SharedState, set: &SnapshotSet) -> Result<String> {
     let files: Vec<TreeItem> = tree_of(s, &root.id, &set.local_path).await?.into_iter().filter(|i| !i.is_dir).collect();
     let present = store.objects().await?;
 
-    let job = s.jobs.add("backup", format!("Back up {}", set.name), format!("This computer → {}", device.name), user.username.clone());
+    let job = s.jobs.add("backup", format!("Back up {}", set.name), format!("This computer → {}", device.name), user.username.clone()).about(&set.id);
     let Some(_slot) = s.jobs.start(s, &job).await else { return Ok("Cancelled".into()) };
 
     // Every file needs its BLAKE3: the indexer has most; the rest are read now.
@@ -636,7 +636,7 @@ async fn check_inner(s: &SharedState, set: &SnapshotSet, user: &AuthUser, budget
         order.rotate_left(start);
     }
     let full = budget.is_none();
-    let job = full.then(|| s.jobs.add("backup", format!("Check {}", set.name), format!("{} → this computer", device.name), user.username.clone()));
+    let job = full.then(|| s.jobs.add("backup", format!("Check {}", set.name), format!("{} → this computer", device.name), user.username.clone()).about(&set.id));
     let _slot = match &job {
         Some(job) => match s.jobs.start(s, job).await {
             Some(slot) => Some(slot),
@@ -685,7 +685,7 @@ async fn check_inner(s: &SharedState, set: &SnapshotSet, user: &AuthUser, budget
             .into_iter()
             .filter_map(|i| Some((i.content_hash.clone()?, i)))
             .collect();
-        let fix = s.jobs.add("backup", format!("Repair {}", set.name), format!("This computer → {}", device.name), user.username.clone());
+        let fix = s.jobs.add("backup", format!("Repair {}", set.name), format!("This computer → {}", device.name), user.username.clone()).about(&set.id);
         if let Some(_slot) = s.jobs.start(s, &fix).await {
             for hash in &bad {
                 match here.get(hash) {
@@ -1344,7 +1344,7 @@ pub async fn start_restore(
         let made = Mover { s: &s, user: &user }.mkdir_free(&Side::Local, &set.local_root_id, &parent, &file_name_safe(&label)).await?;
         paths::join(&parent, &made)
     };
-    let job = s.jobs.add("backup", format!("Restore {}", set.name), "Backup → this computer".into(), user.username.clone());
+    let job = s.jobs.add("backup", format!("Restore {}", set.name), "Backup → this computer".into(), user.username.clone()).about(&set.id);
     let started = RestoreStarted { job_id: job.id.clone(), folder: dest.clone() };
     let state = s.clone();
     tokio::spawn(async move { restore(&state, &user, &job, &set, files, dest, over).await });

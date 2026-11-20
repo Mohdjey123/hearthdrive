@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FileText } from 'lucide-react'
 import { api, peerPrefix, type Device } from '../services/api'
+import { followJob } from '../hooks/useJobs'
 import { navigate } from '../hooks/useRoute'
 import { isScan, scanTarget, setScanTarget } from '../lib/scans'
 import { PlacePicker } from '../pages/Sync'
@@ -40,8 +41,8 @@ export function ScanInbox() {
         return
       }
       sending.current = true
-      await api.sendShared({ names: scans, device_id: target.device_id, root_id: target.root_id, path: target.path })
-      toast(`${scans.length === 1 ? 'Scan' : `${scans.length} scans`} sent to ${target.device_name}${target.path ? ` › ${target.path}` : ''}.`)
+      const job = await api.sendShared({ names: scans, device_id: target.device_id, root_id: target.root_id, path: target.path })
+      followJob(job.id, `Sending ${scans.length === 1 ? 'the scan' : `${scans.length} scans`} to ${target.device_name}`)
     } catch (e) {
       toastError(e)
     } finally {
@@ -72,9 +73,10 @@ export function ScanInbox() {
     setError('')
     try {
       const name = devices?.find((d) => d.id === device)?.name ?? 'the computer'
-      await api.sendShared({ names: ask, device_id: device, root_id: place.root, path: place.path })
+      const job = await api.sendShared({ names: ask, device_id: device, root_id: place.root, path: place.path })
       setScanTarget({ device_id: device, device_name: name, root_id: place.root, path: place.path })
-      toast(`Scan sent to ${name}${place.path ? ` › ${place.path}` : ''}. Later scans go there too.`)
+      followJob(job.id, `Sending the scan to ${name}`)
+      toast(`Later scans go to ${name}${place.path ? ` › ${place.path}` : ''} too.`)
       setAsk(null)
     } catch (e) {
       setError((e as Error).message)

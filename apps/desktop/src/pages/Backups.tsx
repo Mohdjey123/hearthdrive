@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { ArrowRight, ChevronRight, Copy, File, Folder, FolderOpen, History, KeyRound, Lock, Pause, Play, RefreshCw, RotateCcw, Settings2, ShieldCheck, Trash2 } from 'lucide-react'
 import { api, type BackupSchedule, type Device, type SnapshotSet } from '../services/api'
 import { useResource } from '../hooks/useResource'
+import { JobProgress } from '../components/JobProgress'
+import { followJob, reloadJobs, useJobFor } from '../hooks/useJobs'
 import { formatBytes, formatRelative } from '../lib/format'
 import { PlacePicker } from './Sync'
 import { toast, toastError } from '../components/Toasts'
@@ -152,7 +154,7 @@ function SnapshotBrowser({ set, onClose }: { set: SnapshotSet; onClose: () => vo
     setBusy(true)
     try {
       const r = await api.restoreSnapshot(set.id, current, { paths: chosen, to })
-      toast(to === 'beside' ? `Restoring into "${r.folder}". Progress is under Transfers.` : 'Restoring over the original folder. Progress is under Transfers.')
+      followJob(r.job_id, to === 'beside' ? `Restoring into "${r.folder}"` : 'Restoring over the original folder')
       onClose()
     } catch (e) {
       toastError(e)
@@ -252,12 +254,14 @@ function BackupCard({ set, onChanged }: { set: SnapshotSet; onChanged: () => voi
   const [showKey, setShowKey] = useState(false)
   const [busy, setBusy] = useState(false)
   const st = status(set)
+  const job = useJobFor(set.id)
   const act = async (fn: () => Promise<unknown>, done?: string) => {
     setBusy(true)
     try {
       await fn()
       if (done) toast(done)
       onChanged()
+      reloadJobs()
     } catch (e) {
       toastError(e)
     } finally {
@@ -298,7 +302,7 @@ function BackupCard({ set, onChanged }: { set: SnapshotSet; onChanged: () => voi
           <Button size="sm" variant="ghost" disabled={set.snapshots === 0} onClick={() => setBrowsing(true)}>
             <History className="size-3.5" /> Snapshots ({set.snapshots})
           </Button>
-          <IconButton label="Check the backup" disabled={busy || set.running || set.snapshots === 0} onClick={() => void act(() => api.checkSnapshotSet(set.id), 'Checking: every stored file is read back. Progress is under Transfers.')}>
+          <IconButton label="Check the backup" disabled={busy || set.running || set.snapshots === 0} onClick={() => void act(() => api.checkSnapshotSet(set.id), 'Checking: every stored file is read back')}>
             <ShieldCheck className="size-4" />
           </IconButton>
           {set.encrypted && (
@@ -321,6 +325,7 @@ function BackupCard({ set, onChanged }: { set: SnapshotSet; onChanged: () => voi
           </IconButton>
         </span>
       </div>
+      {job && <JobProgress job={job} className="mt-3" />}
       <div className="mt-2 space-y-0.5 text-[12px] text-subtle">
         <div>
           {every} · keeps {set.keep_last} latest, {set.keep_daily} daily, {set.keep_weekly} weekly, {set.keep_monthly} monthly

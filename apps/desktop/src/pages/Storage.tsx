@@ -6,7 +6,7 @@ import { navigate, type Route } from '../hooks/useRoute'
 import { formatBytes, formatCount, formatRelative } from '../lib/format'
 import { AddStorageForm } from '../components/AddStorage'
 import { toast, toastError } from '../components/Toasts'
-import { Badge, Button, EmptyState, IconButton, Modal, PageHeader, ProgressBar, Spinner, StatusDot } from '../components/ui'
+import { Badge, Button, EmptyState, IconButton, Modal, PageHeader, Progress, ProgressBar, Spinner, StatusDot } from '../components/ui'
 import { rootStatusText, rootTone } from './Overview'
 
 export function Storage({ route }: { route: Route }) {
@@ -107,6 +107,15 @@ export function Storage({ route }: { route: Route }) {
                     <div className="mt-3 pl-6">
                       <ProgressBar value={r.disk ? used / r.disk.total_bytes : 0} tone={r.online ? 'accent' : 'muted'} />
                     </div>
+                    {r.scanning && r.online && (
+                      <Progress
+                        className="mt-3 pl-6"
+                        label="Indexing"
+                        done={r.scan?.files_seen}
+                        bytesDone={r.scan?.bytes_seen}
+                        noun="items found"
+                      />
+                    )}
                     {r.scan?.error && r.online && (
                       <div className="mt-2 pl-6 text-[12px] text-warn">
                         {r.scan.error}

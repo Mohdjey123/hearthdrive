@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Lock, LockOpen, Puzzle } from 'lucide-react'
 import { toolsApi, type EncryptionState, type FileEntry, type PluginCommand, type PluginInfo, type PluginRun } from '../services/api'
+import { followJob } from '../hooks/useJobs'
 import { useResource } from '../hooks/useResource'
-import { toast, toastError } from './Toasts'
+import { startActivity, toast, toastError } from './Toasts'
 import { Badge, Button, ErrorNote, Field, IconButton, Input, Modal, Panel, Spinner } from './ui'
 
 /** Encrypts a folder's files with a password, or decrypts them again. */
@@ -21,8 +22,8 @@ export function EncryptDialog({ folder, onClose }: { folder: FileEntry; onClose:
     setBusy(true)
     setError(null)
     try {
-      await (lock ? toolsApi.lockFolder(folder.id, password) : toolsApi.unlockFolder(folder.id, password))
-      toast(`${lock ? 'Encrypting' : 'Decrypting'} ${folder.filename}. Follow it under Transfers.`)
+      const job = await (lock ? toolsApi.lockFolder(folder.id, password) : toolsApi.unlockFolder(folder.id, password))
+      followJob(job.id, `${lock ? 'Encrypting' : 'Decrypting'} ${folder.filename}`)
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -97,6 +98,7 @@ export function PluginsButton({ entry }: { entry: FileEntry }) {
   const run = async (c: PluginCommand) => {
     setOpen(false)
     setRunning(c.label)
+    const card = startActivity(`${c.label}: ${entry.filename}`)
     try {
       const r = await toolsApi.runPlugin(c.plugin, c.id, entry.id)
       if (r.exit_code === 0 && !r.output.trim()) toast(`${c.label}: done`)
@@ -104,6 +106,7 @@ export function PluginsButton({ entry }: { entry: FileEntry }) {
     } catch (e) {
       toastError(e)
     } finally {
+      card.end()
       setRunning(null)
     }
   }

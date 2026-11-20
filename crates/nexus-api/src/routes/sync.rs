@@ -422,7 +422,7 @@ async fn run_pair(s: &SharedState, pair: &SyncPair, confirmed: bool) -> Result<S
         "download" => "←",
         _ => "⇄",
     };
-    let job = s.jobs.add(if copy { "copy" } else { "sync" }, title, format!("This computer {arrow} {}", device.name), user.username.clone());
+    let job = s.jobs.add(if copy { "copy" } else { "sync" }, title, format!("This computer {arrow} {}", device.name), user.username.clone()).about(&pair.id);
     let Some(_slot) = s.jobs.start(s, &job).await else {
         return Ok("Cancelled".into());
     };
@@ -644,7 +644,7 @@ async fn check_copy(s: &SharedState, pair: &SyncPair, budget: Option<u64>) -> Re
         order.rotate_left(start);
     }
     let job = budget.is_none().then(|| {
-        s.jobs.add("check", format!("Check the copy on {}", device.name), format!("{} → this computer", device.name), user.username.clone())
+        s.jobs.add("check", format!("Check the copy on {}", device.name), format!("{} → this computer", device.name), user.username.clone()).about(&pair.id)
     });
     let _slot = match &job {
         Some(job) => match s.jobs.start(s, job).await {
@@ -700,7 +700,7 @@ async fn check_copy(s: &SharedState, pair: &SyncPair, budget: Option<u64>) -> Re
     // Send the files again whose copies are wrong.
     let mut repaired = 0;
     if !bad.is_empty() {
-        let fix = s.jobs.add("copy", format!("Repair the copy on {}", device.name), format!("This computer → {}", device.name), user.username.clone());
+        let fix = s.jobs.add("copy", format!("Repair the copy on {}", device.name), format!("This computer → {}", device.name), user.username.clone()).about(&pair.id);
         if let Some(_slot) = s.jobs.start(s, &fix).await {
             let mut changes: Vec<StateChange> = Vec::new();
             for key in &bad {
@@ -1159,7 +1159,7 @@ pub async fn bring_back(
         return Err(NexusError::invalid("Choose files the copy keeps").into());
     }
     let device = peer_target(&s, &pair.device_id).await?;
-    let job = s.jobs.add("sync", "Bring back from the copy".into(), format!("{} → this computer", device.name), user.username.clone());
+    let job = s.jobs.add("sync", "Bring back from the copy".into(), format!("{} → this computer", device.name), user.username.clone()).about(&pair.id);
     let job_id = job.id.clone();
     tokio::spawn(async move {
         let Some(_slot) = s.jobs.start(&s, &job).await else { return };

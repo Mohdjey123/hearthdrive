@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
 import { Loader2, X } from 'lucide-react'
+import { formatBytes } from '../lib/format'
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ')
 export { cx }
@@ -143,6 +144,82 @@ export function ProgressBar({ value, tone = 'accent', className }: { value: numb
         )}
         style={{ width: `${pct}%` }}
       />
+    </div>
+  )
+}
+
+/** "120 of 253 · 14.2 GB of 28.0 GB", leaving out what is not known. */
+export function progressText({ done, total, bytesDone, bytesTotal, noun }: {
+  done?: number
+  total?: number
+  bytesDone?: number
+  bytesTotal?: number
+  noun?: string
+}): string {
+  const parts: string[] = []
+  const n = (x: number) => new Intl.NumberFormat().format(x)
+  if (total) parts.push(`${n(Math.min(done ?? 0, total))} of ${n(total)}${noun ? ` ${noun}` : ''}`)
+  else if (done) parts.push(`${n(done)}${noun ? ` ${noun}` : ''}`)
+  if (bytesTotal) parts.push(`${formatBytes(Math.min(bytesDone ?? 0, bytesTotal))} of ${formatBytes(bytesTotal)}`)
+  else if (bytesDone) parts.push(formatBytes(bytesDone))
+  return parts.join(' · ')
+}
+
+/**
+ * Progress of a long action, with a line of text under the bar. It fills by
+ * bytes when they are known, else by items; with neither total it shows a
+ * moving bar. `label` says what is happening ("Moving to the trash"),
+ * `detail` what is being worked on right now (a file name).
+ */
+export function Progress({ done, total, bytesDone, bytesTotal, noun, label, detail, tone = 'accent', className }: {
+  done?: number
+  total?: number
+  bytesDone?: number
+  bytesTotal?: number
+  /** "files", "photos"; after the counts. */
+  noun?: string
+  label?: ReactNode
+  detail?: ReactNode
+  tone?: 'accent' | 'warn' | 'danger'
+  className?: string
+}) {
+  const fraction = bytesTotal ? (bytesDone ?? 0) / bytesTotal : total ? (done ?? 0) / total : null
+  const text = progressText({ done, total, bytesDone, bytesTotal, noun })
+  const pct = fraction == null ? undefined : Math.round(Math.max(0, Math.min(1, fraction)) * 100)
+  return (
+    <div className={cx('min-w-0 space-y-1', className)}>
+      {(label || pct != null) && (
+        <div className="flex items-baseline justify-between gap-2 text-[12.5px]">
+          <span className="min-w-0 truncate font-medium">{label}</span>
+          {pct != null && <span className="shrink-0 text-muted tabular">{pct}%</span>}
+        </div>
+      )}
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        aria-valuetext={text || undefined}
+        aria-label={typeof label === 'string' ? label : undefined}
+        className="h-1.5 w-full overflow-hidden rounded-full bg-elevated"
+      >
+        <div
+          className={cx(
+            'h-full rounded-full',
+            pct == null ? 'progress-indeterminate' : 'transition-[width] duration-300',
+            tone === 'accent' && 'bg-accent',
+            tone === 'warn' && 'bg-warn',
+            tone === 'danger' && 'bg-danger',
+          )}
+          style={pct == null ? undefined : { width: `${pct}%` }}
+        />
+      </div>
+      {(text || detail) && (
+        <div className="flex min-w-0 flex-wrap justify-between gap-x-3 text-[12px] text-subtle">
+          <span className="min-w-0 flex-1 truncate">{detail}</span>
+          {text && <span className="shrink-0 tabular">{text}</span>}
+        </div>
+      )}
     </div>
   )
 }

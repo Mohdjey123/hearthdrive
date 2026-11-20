@@ -4,6 +4,7 @@ use super::audit;
 use crate::auth::AuthUser;
 use crate::automation::{self, Conditions, PreviewItem, RuleAction, RunReport};
 use crate::error::ApiResult;
+use crate::routes::transfers::{finish_job, set_status};
 use crate::state::SharedState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -139,7 +140,15 @@ pub async fn remove(State(s): State<SharedState>, user: AuthUser, Path(id): Path
 pub async fn run(State(s): State<SharedState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<RunReport>> {
     allowed(&user)?;
     let rule = s.db.get_rule(&id).await?;
-    let report = automation::run(&s, &rule, false).await?;
+    // A job only for its progress bar: it runs right here, not in a turn.
+    let job = s.jobs.add("rule", format!("Run {}", rule.name), "This computer".into(), user.username.clone()).about(&rule.id);
+    set_status(&s, &job, "running");
+    let report = automation::run(&s, &rule, false, Some(&job)).await;
+    if let Err(e) = &report {
+        job.fail_file(&rule.name, e);
+    }
+    finish_job(&s, &job);
+    let report = report?;
     audit(&s, &user, "rule.run", Some(&rule.name)).await;
     Ok(Json(report))
 }
