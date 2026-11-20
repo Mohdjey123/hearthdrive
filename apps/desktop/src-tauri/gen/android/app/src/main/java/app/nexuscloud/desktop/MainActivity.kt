@@ -116,6 +116,9 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
+    // Android 12+ stretches the whole view when a list is pulled past its
+    // end, which moved the bottom bar with it. The page scrolls its own lists.
+    webView.overScrollMode = android.view.View.OVER_SCROLL_NEVER
     webView.addJavascriptInterface(Bridge(), "NexusAndroid")
   }
 

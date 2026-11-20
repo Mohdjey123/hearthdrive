@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpDown, Clapperboard, Copy, Folder, Images, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, MonitorSmartphone, Settings, Wand2 } from 'lucide-react'
+import { ArrowUpDown, Clapperboard, Copy, Folder, Images, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, Menu, MonitorSmartphone, Settings, Wand2 } from 'lucide-react'
 import type { Page } from '../hooks/useRoute'
 import { navigate } from '../hooks/useRoute'
 import { subscribeStatus } from '../services/events'
@@ -108,29 +108,107 @@ export function Sidebar({ current }: { current: Page }) {
   )
 }
 
-/** Navigation for narrow screens: a tab bar along the bottom edge. */
+/** The bottom bar's own tabs; every other page this device has is under More. */
+const TABS: Page[] = ['files', 'photos', 'devices']
+
+/** Navigation for narrow screens: four tabs along the bottom edge, and a
+ *  sheet with the rest behind More. Material's guidance is three to five
+ *  destinations in a bottom bar; a phone has eight pages. */
 export function BottomNav({ current }: { current: Page }) {
   const active = useActiveTransfers()
+  const [open, setOpen] = useState(false)
   // A phone has no storage of its own, so nothing to show storage or sync for.
-  const items = NAV.filter((n) => pageAvailable(n.page))
+  const tabs = NAV.filter((n) => TABS.includes(n.page) && pageAvailable(n.page))
+  const more = NAV.filter((n) => !TABS.includes(n.page) && pageAvailable(n.page))
+  const inMore = more.some((n) => n.page === current)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
+  const go = (page: Page) => {
+    setOpen(false)
+    navigate(page)
+  }
+
   return (
-    <nav className="flex shrink-0 border-t border-line bg-panel md:hidden">
-      {items.map(({ page, label, icon: Icon }) => (
-        <button
-          key={page}
-          onClick={() => navigate(page)}
-          className={cx(
-            'relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10.5px]',
-            current === page ? 'font-medium text-fg' : 'text-muted',
-          )}
-        >
-          <Icon className={cx('size-5', current === page && 'text-accent')} />
-          <span className="max-w-full truncate">{label}</span>
-          {page === 'transfers' && active > 0 && (
-            <span className="absolute top-1 left-1/2 ml-2 rounded bg-accent px-1 text-[10px] font-semibold text-accent-fg tabular">{active}</span>
-          )}
-        </button>
-      ))}
-    </nav>
+    <>
+      <nav aria-label="Main" className="flex shrink-0 border-t border-line bg-panel px-1 md:hidden">
+        {tabs.map(({ page, label, icon }) => (
+          <Tab key={page} label={label} icon={icon} selected={current === page && !open} onClick={() => go(page)} />
+        ))}
+        <Tab
+          label="More"
+          icon={Menu}
+          selected={open || inMore}
+          onClick={() => setOpen(!open)}
+          expanded={open}
+          dot={active > 0}
+        />
+      </nav>
+      {open && (
+        <div className="fixed inset-0 z-40 md:hidden" role="presentation">
+          <button aria-label="Close" className="absolute inset-0 bg-black/45" onClick={() => setOpen(false)} />
+          <div
+            role="dialog"
+            aria-label="More"
+            className="sheet-up safe-bottom absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-line bg-panel px-3 pt-2 pb-3"
+          >
+            <div className="mx-auto mb-2 h-1 w-9 rounded-full bg-line-strong" aria-hidden />
+            <ul>
+              {more.map(({ page, label, icon: Icon }) => (
+                <li key={page}>
+                  <button
+                    onClick={() => go(page)}
+                    className={cx(
+                      'flex min-h-[52px] w-full items-center gap-4 rounded-xl px-3 text-left text-[15px]',
+                      page === 'settings' && 'mt-1 border-t border-line rounded-t-none',
+                      current === page ? 'bg-accent-soft font-medium text-fg' : 'text-fg active:bg-hover',
+                    )}
+                    aria-current={current === page ? 'page' : undefined}
+                  >
+                    <Icon className={cx('size-5 shrink-0', current === page ? 'text-accent' : 'text-muted')} />
+                    <span className="flex-1">{label}</span>
+                    {page === 'transfers' && active > 0 && (
+                      <span className="text-[13px] text-muted tabular">{active} running</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+function Tab({ label, icon: Icon, selected, onClick, expanded, dot }: {
+  label: string
+  icon: typeof Folder
+  selected: boolean
+  onClick: () => void
+  expanded?: boolean
+  dot?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-current={selected && expanded === undefined ? 'page' : undefined}
+      aria-expanded={expanded}
+      className={cx(
+        'flex min-h-[60px] min-w-0 flex-1 flex-col items-center justify-center gap-1 text-[12px]',
+        selected ? 'font-semibold text-fg' : 'text-muted',
+      )}
+    >
+      <span className={cx('relative flex h-7 w-14 items-center justify-center rounded-full transition-colors', selected && 'bg-accent-soft')}>
+        <Icon className={cx('size-[22px]', selected && 'text-accent')} strokeWidth={selected ? 2.25 : 1.75} />
+        {dot && <span className="absolute top-0.5 right-3 size-2 rounded-full bg-accent ring-2 ring-panel" aria-label="Transfers running" />}
+      </span>
+      <span className="max-w-full truncate">{label}</span>
+    </button>
   )
 }

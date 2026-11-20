@@ -35,7 +35,7 @@ function Shell() {
   return (
     <div className="safe-area flex h-full flex-col md:flex-row">
       <Sidebar current={page} />
-      <main className="min-h-0 min-w-0 flex-1 overflow-auto p-4 md:p-6">
+      <main className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain p-4 md:p-6">
         <UpdateBanner />
         {page === 'overview' && <Overview />}
         {page === 'files' && <Files route={route} />}
