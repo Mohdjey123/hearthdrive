@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowUpDown, Clapperboard, Copy, Folder, Images, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, Menu, MonitorSmartphone, Settings, Wand2 } from 'lucide-react'
 import type { Page } from '../hooks/useRoute'
 import { navigate } from '../hooks/useRoute'
@@ -122,17 +122,43 @@ export function BottomNav({ current }: { current: Page }) {
   const more = NAV.filter((n) => !TABS.includes(n.page) && pageAvailable(n.page))
   const inMore = more.some((n) => n.page === current)
 
+  // The open sheet has its own history entry, so Android's Back button
+  // (which steps back through the web view's history) closes it first.
+  // Closing it any other way steps back over that entry, then runs `after`.
+  const after = useRef<(() => void) | null>(null)
+  const openSheet = () => {
+    history.pushState({ moreSheet: true }, '')
+    setOpen(true)
+  }
+  const closeSheet = (then?: () => void) => {
+    if (history.state?.moreSheet) {
+      after.current = then ?? null
+      history.back()
+    } else {
+      setOpen(false)
+      then?.()
+    }
+  }
+
+  useEffect(() => {
+    const onPop = () => {
+      setOpen(false)
+      const then = after.current
+      after.current = null
+      then?.()
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeSheet()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
-  const go = (page: Page) => {
-    setOpen(false)
-    navigate(page)
-  }
+  const go = (page: Page) => (open ? closeSheet(() => navigate(page)) : navigate(page))
 
   return (
     <>
@@ -144,14 +170,14 @@ export function BottomNav({ current }: { current: Page }) {
           label="More"
           icon={Menu}
           selected={open || inMore}
-          onClick={() => setOpen(!open)}
+          onClick={() => (open ? closeSheet() : openSheet())}
           expanded={open}
           dot={active > 0}
         />
       </nav>
       {open && (
         <div className="fixed inset-0 z-40 md:hidden" role="presentation">
-          <button aria-label="Close" className="absolute inset-0 bg-black/45" onClick={() => setOpen(false)} />
+          <button aria-label="Close More" className="absolute inset-0 bg-black/45" onClick={() => closeSheet()} />
           <div
             role="dialog"
             aria-label="More"
