@@ -30,7 +30,7 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
 ]
 
 /** Pages that need storage on this device. */
-export const PHONELESS: Page[] = ['overview', 'storage', 'automation', 'health', 'sync', 'copies', 'backups']
+export const PHONELESS: Page[] = ['automation', 'sync', 'copies', 'backups']
 /** Pages only phones have. */
 export const PHONE_ONLY: Page[] = ['backup']
 

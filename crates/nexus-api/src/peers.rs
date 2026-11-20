@@ -473,7 +473,7 @@ pub fn explain_unreachable(error: &str, here_online: bool) -> String {
 // Proxy
 
 /// API areas another node's files can be browsed through.
-const PROXY_AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "shared-folders", "commands", "photos", "albums", "library", "playback", "tags"];
+const PROXY_AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "shared-folders", "commands", "photos", "albums", "library", "playback", "tags", "documents"];
 
 const REQUEST_HEADERS: &[HeaderName] = &[
     header::CONTENT_TYPE,

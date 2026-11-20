@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { AlertTriangle, CheckCircle2, ClipboardCopy, HardDrive, RefreshCw, ShieldCheck, Usb, Wrench, XCircle } from 'lucide-react'
-import { api, peerPrefix, type DamagedFile, type Device, type PhysicalDisk, type RootHealth, type StorageHealth } from '../services/api'
+import { api, isMobile, peerPrefix, type DamagedFile, type Device, type PhysicalDisk, type RootHealth, type StorageHealth } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { JobProgress } from '../components/JobProgress'
 import { reloadJobs, useJobFor } from '../hooks/useJobs'
@@ -254,8 +254,8 @@ function HealthBody({ health, onChanged, readOnly }: { health: StorageHealth; on
   )
 }
 
-function DeviceHealth({ device }: { device: Device }) {
-  const [open, setOpen] = useState(false)
+export function DeviceHealth({ device, defaultOpen = false }: { device: Device; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
   const health = useResource(
     async () => (device.online ? api.storageHealth(peerPrefix(device.id)) : null),
     [device.id, device.online],
@@ -313,6 +313,31 @@ function report(here: StorageHealth, name: string): string {
 }
 
 export function Health() {
+  if (isMobile()) return <PhoneHealth />
+  return <ComputerHealth />
+}
+
+/** Phones have no drives of their own here: they show each computer's. */
+function PhoneHealth() {
+  const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'), 'devices')
+  const computers = (devices.data ?? []).filter((d) => !d.is_local && d.public_key && d.device_type !== 'android')
+  return (
+    <div>
+      <PageHeader title="Drive health" subtitle="Disks, free space and damaged files on your computers" />
+      {!devices.data ? (
+        <Spinner />
+      ) : computers.length === 0 ? (
+        <p className="text-muted">Pair this phone with a computer to see the health of its drives.</p>
+      ) : (
+        <ul className="space-y-2">
+          {computers.map((d) => <DeviceHealth key={d.id} device={d} defaultOpen={computers.length === 1} />)}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function ComputerHealth() {
   const health = useResource(
     () => api.storageHealth(),
     [],

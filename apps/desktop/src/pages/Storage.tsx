@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Copy, FolderOpen, HardDrive, Plus, RefreshCw, Trash2, Usb } from 'lucide-react'
-import { api, type StorageRoot } from '../services/api'
+import { api, fileApi, isMobile, peerPrefix, thisDevice, type StorageRoot } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { navigate, type Route } from '../hooks/useRoute'
 import { formatBytes, formatCount, formatRelative } from '../lib/format'
@@ -10,8 +10,21 @@ import { Badge, Button, EmptyState, IconButton, Modal, PageHeader, Progress, Pro
 import { rootStatusText, rootTone } from './Overview'
 
 export function Storage({ route }: { route: Route }) {
-  const roots = useResource(() => api.roots(), [], (e) => e.type.startsWith('storage.'), 'roots:')
-  const adding = route.params.get('add') === '1'
+  // Phones keep no storage of their own: they show a paired computer's.
+  const deviceId = route.params.get('device') ?? (isMobile() ? null : '')
+  const devices = useResource(() => api.devices().catch(() => []), [], (e) => e.type.startsWith('device.'), 'devices')
+  const peers = (devices.data ?? []).filter((d) => !d.is_local)
+  const device = peers.find((d) => d.id === deviceId)
+  const remote = !!deviceId
+  const prefix = deviceId ? peerPrefix(deviceId) : ''
+  const roots = useResource(
+    () => (deviceId === null ? Promise.resolve([] as StorageRoot[]) : fileApi(prefix).roots()),
+    [prefix, deviceId],
+    (e) => e.type.startsWith('storage.') || e.type.startsWith('device.'),
+    `roots:${prefix}`,
+  )
+  const adding = !remote && route.params.get('add') === '1'
+  const here: Record<string, string> = deviceId ? { device: deviceId } : {}
   const [removing, setRemoving] = useState<StorageRoot | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -45,26 +58,55 @@ export function Storage({ route }: { route: Route }) {
     <div>
       <PageHeader
         title="Storage"
-        subtitle="Folders and drives this computer contributes to your cloud"
+        subtitle={remote ? `Folders and drives ${device?.name ?? 'that computer'} contributes to your cloud` : deviceId === null ? 'Folders and drives your computers contribute to your cloud' : `Folders and drives this ${thisDevice()} contributes to your cloud`}
         actions={
           <>
-            <Button icon={<Copy className="size-3.5" />} onClick={() => navigate('duplicates')}>Find duplicates</Button>
-            <Button variant="primary" icon={<Plus className="size-3.5" />} onClick={() => navigate('storage', { add: '1' })}>
-              Add storage
-            </Button>
+            {(peers.length > 0 || isMobile()) && (
+              <select
+                className="h-8 rounded-md border border-line bg-surface px-2 text-[13px]"
+                value={deviceId ?? ''}
+                onChange={(e) => navigate('storage', { device: e.target.value || undefined })}
+                aria-label="Device"
+              >
+                {!isMobile() && <option value="">This {thisDevice()}</option>}
+                {isMobile() && deviceId === null && <option value="">Choose a computer</option>}
+                {peers.map((d) => <option key={d.id} value={d.id} disabled={!d.online}>{d.name}{d.online ? '' : ' (offline)'}</option>)}
+              </select>
+            )}
+            {deviceId !== null && (
+              <Button icon={<Copy className="size-3.5" />} onClick={() => navigate('duplicates', here)}>Find duplicates</Button>
+            )}
+            {!remote && deviceId !== null && (
+              <Button variant="primary" icon={<Plus className="size-3.5" />} onClick={() => navigate('storage', { add: '1' })}>
+                Add storage
+              </Button>
+            )}
           </>
         }
       />
+      {remote && (
+        <p className="mb-3 text-[12.5px] text-muted">
+          To add, remove or rescan storage, open HearthDrive on {device?.name ?? 'that computer'}. You can browse it, find duplicates and move files to the trash from here.
+        </p>
+      )}
       <div className="rounded-lg border border-line bg-panel">
-        {roots.loading && !roots.data ? (
+        {deviceId === null ? (
+          <EmptyState icon={<HardDrive className="size-8" />} title="Choose a computer">
+            {peers.length ? 'Pick a paired computer above to see its folders and drives.' : 'Pair this phone with a computer to see its storage here.'}
+          </EmptyState>
+        ) : roots.error ? (
+          <div className="p-4 text-[13px] text-danger">{roots.error.message}</div>
+        ) : roots.loading && !roots.data ? (
           <div className="p-6"><Spinner /></div>
         ) : list.length === 0 ? (
           <EmptyState
             icon={<HardDrive className="size-8" />}
             title="No storage locations"
-            action={<Button variant="primary" onClick={() => navigate('storage', { add: '1' })}>Add a folder or drive</Button>}
+            action={remote ? undefined : <Button variant="primary" onClick={() => navigate('storage', { add: '1' })}>Add a folder or drive</Button>}
           >
-            Register existing folders or whole drives. HearthDrive indexes them in place and never moves your files.
+            {remote
+              ? `${device?.name ?? 'That computer'} has no folders or drives in HearthDrive yet.`
+              : 'Register existing folders or whole drives. HearthDrive indexes them in place and never moves your files.'}
           </EmptyState>
         ) : (
           <ul className="divide-y divide-line">
@@ -124,15 +166,19 @@ export function Storage({ route }: { route: Route }) {
                     )}
                   </div>
                   <div className="flex items-start gap-1">
-                    <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => navigate('files', { root: r.id })}>
+                    <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => navigate('files', { ...here, root: r.id })}>
                       Browse
                     </Button>
-                    <IconButton label="Rescan" disabled={!r.online || r.scanning} onClick={() => void rescan(r)}>
-                      <RefreshCw className={r.scanning ? 'size-4 animate-spin' : 'size-4'} />
-                    </IconButton>
-                    <IconButton label="Remove from HearthDrive" className="hover:text-danger" onClick={() => setRemoving(r)}>
-                      <Trash2 className="size-4" />
-                    </IconButton>
+                    {!remote && (
+                      <>
+                        <IconButton label="Rescan" disabled={!r.online || r.scanning} onClick={() => void rescan(r)}>
+                          <RefreshCw className={r.scanning ? 'size-4 animate-spin' : 'size-4'} />
+                        </IconButton>
+                        <IconButton label="Remove from HearthDrive" className="hover:text-danger" onClick={() => setRemoving(r)}>
+                          <Trash2 className="size-4" />
+                        </IconButton>
+                      </>
+                    )}
                   </div>
                 </li>
               )

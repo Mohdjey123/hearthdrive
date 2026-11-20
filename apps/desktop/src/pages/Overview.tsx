@@ -1,15 +1,15 @@
 import { ArrowUpDown, Clock, HardDrive, Monitor, Plus } from 'lucide-react'
-import { api, fileApi, peerPrefix, thisDevice, type StorageRoot } from '../services/api'
+import { api, fileApi, isMobile, peerPrefix, thisDevice, type StorageRoot } from '../services/api'
 import { useResource } from '../hooks/useResource'
 import { navigate } from '../hooks/useRoute'
 import { pageAvailable } from '../components/Sidebar'
-import { HealthAlert } from './Health'
+import { DeviceHealth, HealthAlert } from './Health'
 import { useTransfers } from '../stores/transfers'
 import { useSession } from '../stores/session'
 import { formatBytes, formatCount, formatRelative } from '../lib/format'
 import { FileIcon } from '../components/FileIcon'
 import { ACTIONS } from '../lib/activity'
-import { Button, EmptyState, PageHeader, Panel, ProgressBar, Spinner, StatusDot } from '../components/ui'
+import { Button, EmptyState, PageHeader, Panel, ProgressBar, Spinner, StatusDot, cx } from '../components/ui'
 
 export function rootTone(r: StorageRoot): 'online' | 'offline' | 'busy' | 'error' {
   if (!r.online) return 'offline'
@@ -78,17 +78,23 @@ function useCloudStorage(local: StorageRoot[] | undefined) {
   const reached = (remote.data ?? []).filter((d): d is DeviceStorage => !!d)
   const all = [...(here ? [here] : []), ...reached].filter((d) => d.locations > 0)
   const missing = peers.length - reached.length
-  return { all, missing, loading: devices.loading || remote.loading }
+  return { all, missing, loading: devices.loading || remote.loading, peers }
 }
 
-function CloudStorage({ local }: { local: StorageRoot[] | undefined }) {
+function CloudStorage({ local, phone = false }: { local: StorageRoot[] | undefined; phone?: boolean }) {
   const { all, missing, loading } = useCloudStorage(local)
   const capacity = all.reduce((s, d) => s + d.capacity, 0)
   const free = all.reduce((s, d) => s + d.free, 0)
   const used = capacity - free
   const indexed = all.reduce((s, d) => s + d.indexed, 0)
   const files = all.reduce((s, d) => s + d.files, 0)
-  if (!all.length) return null
+  if (!all.length) {
+    return phone && !loading ? (
+      <Panel className="mb-4" title="Your cloud">
+        <p className="text-muted">{missing ? 'Your computers are offline.' : 'Pair this phone with a computer to see its storage here.'}</p>
+      </Panel>
+    ) : null
+  }
   return (
     <Panel className="mb-4" title="Your cloud">
       <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-2">
@@ -106,10 +112,14 @@ function CloudStorage({ local }: { local: StorageRoot[] | undefined }) {
       <div title={`${formatBytes(used)} used of ${formatBytes(capacity)}`}>
         <ProgressBar className="mt-4" value={capacity ? used / capacity : 0} />
       </div>
-      {all.length > 1 && (
+      {(all.length > 1 || phone) && (
         <ul className="mt-4 space-y-2.5">
           {all.map((d) => (
-            <li key={d.id} className="grid grid-cols-[minmax(0,9rem)_1fr_auto] items-center gap-3 text-[12.5px]">
+            <li
+              key={d.id}
+              className={cx('grid grid-cols-[minmax(0,9rem)_1fr_auto] items-center gap-3 text-[12.5px]', d.id && '-mx-2 cursor-pointer rounded-md px-2 py-1 hover:bg-hover')}
+              onClick={d.id ? () => navigate('storage', { device: d.id }) : undefined}
+            >
               <span className="flex min-w-0 items-center gap-1.5">
                 <Monitor className="size-3.5 shrink-0 text-subtle" />
                 <span className="truncate">{d.name}</span>
@@ -143,7 +153,51 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   )
 }
 
+/** A phone keeps no storage itself: its overview is the computers'. */
+function PhoneOverview() {
+  const devices = useResource(() => api.devices(), [], (e) => e.type.startsWith('device.'), 'devices')
+  const computers = (devices.data ?? []).filter((d) => !d.is_local && d.public_key && d.device_type !== 'android')
+  const transfers = useTransfers()
+  const active = transfers.filter((t) => t.status === 'uploading' || t.status === 'queued')
+  return (
+    <div>
+      <PageHeader title="Overview" subtitle="Your computers' storage, at a glance" />
+      <CloudStorage local={undefined} phone />
+      {computers.length > 0 && (
+        <section className="mb-4">
+          <h2 className="mb-2 text-[13px] font-medium text-muted">Drive health</h2>
+          <ul className="space-y-2">
+            {computers.map((d) => <DeviceHealth key={d.id} device={d} />)}
+          </ul>
+        </section>
+      )}
+      <Panel title="Transfers" actions={<Button size="sm" variant="ghost" onClick={() => navigate('transfers')}>View all</Button>}>
+        {active.length === 0 ? (
+          <div className="flex items-center gap-2 text-muted"><ArrowUpDown className="size-4" /> No active transfers</div>
+        ) : (
+          <ul className="space-y-3">
+            {active.slice(0, 4).map((t) => (
+              <li key={t.id}>
+                <div className="flex justify-between gap-2 text-[12.5px]">
+                  <span className="truncate">{t.name}</span>
+                  <span className="shrink-0 text-subtle tabular">{Math.round((t.loaded / (t.size || 1)) * 100)}%</span>
+                </div>
+                <ProgressBar className="mt-1.5" value={t.loaded / (t.size || 1)} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+    </div>
+  )
+}
+
 export function Overview() {
+  if (isMobile()) return <PhoneOverview />
+  return <ComputerOverview />
+}
+
+function ComputerOverview() {
   const { phase } = useSession()
   const roots = useResource(() => api.roots(), [], (e) => e.type.startsWith('storage.'), 'roots:')
   const recent = useResource(() => api.recent(8), [], (e) => e.type.startsWith('file.') || e.type === 'storage.scan.completed')
