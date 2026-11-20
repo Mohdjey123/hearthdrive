@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://mohdjey123.github.io/hearthdrive/sitemap.xml

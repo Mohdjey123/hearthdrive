@@ -1,4 +1,5 @@
-# Publishes site/ to GitHub Pages whenever it changes on main.
+# Publishes site/ (the page, sitemap.xml and robots.txt) to GitHub Pages
+# whenever it changes on main.
 name: Website
 
 on:
