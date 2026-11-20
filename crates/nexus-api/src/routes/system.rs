@@ -240,7 +240,7 @@ fn write_autostart(enabled: bool) -> Result<(), NexusError> {
 }
 
 /// Brings an existing start-up entry up to date when the service starts:
-/// entries from before 0.1.14 start only the service, not the tray app.
+/// entries from before 0.1.16 start only the service, not the tray app.
 /// Only an entry for this install's folder is touched, so a copy run from
 /// elsewhere (a development build) leaves the installed one alone.
 #[cfg(windows)]
