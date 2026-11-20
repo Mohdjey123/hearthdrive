@@ -1,8 +1,9 @@
+import { useEffect } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { useRoute } from './hooks/useRoute'
 import { SessionProvider, useSession } from './stores/session'
 import { BottomNav, Sidebar, Logo, pageAvailable } from './components/Sidebar'
-import { isMobile } from './services/api'
+import { androidBridge, isMobile } from './services/api'
 import { Toasts } from './components/Toasts'
 import { Button, Spinner } from './components/ui'
 import { Overview } from './pages/Overview'
@@ -29,8 +30,24 @@ import { Settings } from './pages/Settings'
 import { Setup } from './pages/Setup'
 import { Login } from './pages/Login'
 
+/** Opens the page a home-screen shortcut points at (Android app). */
+function useLaunchRoute() {
+  useEffect(() => {
+    const bridge = androidBridge()
+    if (!bridge?.takeLaunchRoute) return
+    const go = () => {
+      const route = bridge.takeLaunchRoute?.()
+      if (route) window.location.hash = `/${route}`
+    }
+    go()
+    window.addEventListener('nexus-route', go)
+    return () => window.removeEventListener('nexus-route', go)
+  }, [])
+}
+
 function Shell() {
   const route = useRoute()
+  useLaunchRoute()
   // A phone holds no storage of its own: it opens on the files of the
   // computers it is paired with.
   const page = pageAvailable(route.page) ? route.page : isMobile() ? 'files' : 'overview'

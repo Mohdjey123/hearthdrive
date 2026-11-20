@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ImageUp, Pause, Play, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react'
 import { androidBridge, api, peerPrefix, type BackupStatus, type Device, type Job } from '../services/api'
 import { useResource } from '../hooks/useResource'
-import { navigate } from '../hooks/useRoute'
+import { navigate, useRoute } from '../hooks/useRoute'
 import { formatBytes, formatRelative } from '../lib/format'
 import { toast, toastError } from '../components/Toasts'
 import { Badge, Button, EmptyState, ErrorNote, Field, Modal, PageHeader, Panel, ProgressBar, Spinner } from '../components/ui'
@@ -153,6 +153,15 @@ export function Backup() {
   const [removing, setRemoving] = useState(false)
   const [job, setJob] = useState<Job | null>(null)
   const running = status.data?.running ?? false
+
+  // The "Back up now" home-screen shortcut opens this page with `run=1`.
+  const route = useRoute()
+  const runNow = route.params.get('run') === '1'
+  useEffect(() => {
+    if (!runNow) return
+    navigate('backup')
+    api.runBackup().then(() => toast('Backing up now')).catch(toastError)
+  }, [runNow])
 
   // Progress of the run in progress, polled while it lasts.
   useEffect(() => {

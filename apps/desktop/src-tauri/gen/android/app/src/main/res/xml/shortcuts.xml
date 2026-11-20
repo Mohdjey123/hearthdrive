@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press shortcuts on the home screen. Each opens the app at a page;
+     MainActivity accepts only the routes it lists. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="backup"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_backup"
+        android:shortcutShortLabel="@string/shortcut_backup"
+        android:shortcutLongLabel="@string/shortcut_backup_long">
+        <intent
+            android:action="app.nexuscloud.desktop.action.SHORTCUT"
+            android:targetPackage="app.nexuscloud.desktop"
+            android:targetClass="app.nexuscloud.desktop.MainActivity">
+            <extra android:name="route" android:value="backup?run=1" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="files"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_files"
+        android:shortcutShortLabel="@string/shortcut_files"
+        android:shortcutLongLabel="@string/shortcut_files_long">
+        <intent
+            android:action="app.nexuscloud.desktop.action.SHORTCUT"
+            android:targetPackage="app.nexuscloud.desktop"
+            android:targetClass="app.nexuscloud.desktop.MainActivity">
+            <extra android:name="route" android:value="files" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="photos"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_photos"
+        android:shortcutShortLabel="@string/shortcut_photos"
+        android:shortcutLongLabel="@string/shortcut_photos_long">
+        <intent
+            android:action="app.nexuscloud.desktop.action.SHORTCUT"
+            android:targetPackage="app.nexuscloud.desktop"
+            android:targetClass="app.nexuscloud.desktop.MainActivity">
+            <extra android:name="route" android:value="photos" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="transfers"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_transfers"
+        android:shortcutShortLabel="@string/shortcut_transfers"
+        android:shortcutLongLabel="@string/shortcut_transfers_long">
+        <intent
+            android:action="app.nexuscloud.desktop.action.SHORTCUT"
+            android:targetPackage="app.nexuscloud.desktop"
+            android:targetClass="app.nexuscloud.desktop.MainActivity">
+            <extra android:name="route" android:value="transfers" />
+        </intent>
+    </shortcut>
+</shortcuts>

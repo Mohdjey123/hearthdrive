@@ -155,6 +155,11 @@ mod host {
     pub async fn save_download(_app: tauri::AppHandle, _url: String, _filename: String) -> Result<String, String> {
         Err("Downloads are saved by the browser on this platform".into())
     }
+
+    /// Phones only: computers open files from their own folders.
+    pub async fn fetch_for_app(_app: tauri::AppHandle, _url: String, _filename: String) -> Result<String, String> {
+        Err("Only the phone app hands files to other apps".into())
+    }
 }
 
 #[cfg(mobile)]
@@ -356,6 +361,48 @@ mod host {
         }
         Err(last_error)
     }
+
+    /// Files fetched for another app to open or for the share menu are kept
+    /// this long, then cleared.
+    const HANDOFF_KEEP: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+    /// Streams a file from this app's own node into the app's cache
+    /// (`<cache>/open/<n>/<name>`, keeping its name, which other apps show),
+    /// for Android to hand to another app. Returns its full path. Earlier
+    /// ones older than a day are cleared first.
+    pub async fn fetch_for_app(app: tauri::AppHandle, url: String, filename: String) -> Result<String, String> {
+        let node = connection(app.clone()).await?;
+        if !url.starts_with(&format!("{}/api/v1/", node.base_url)) {
+            return Err("Files must come from this app's own node".into());
+        }
+        let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("open");
+        if let Ok(mut entries) = tokio::fs::read_dir(&root).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let old = entry
+                    .metadata()
+                    .await
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age > HANDOFF_KEEP);
+                if old {
+                    let _ = tokio::fs::remove_dir_all(entry.path()).await;
+                }
+            }
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let dir = root.join(stamp.to_string());
+        tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
+        let path = dir.join(safe_name(&filename));
+        if let Err(e) = fetch_to(&url, &path).await {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+            return Err(e);
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }
 }
 
 /// The JNI entry `NodeService` (Kotlin) starts the node through.
@@ -412,6 +459,13 @@ async fn service_connection(app: tauri::AppHandle) -> Result<Connection, String>
 #[tauri::command]
 async fn save_download(app: tauri::AppHandle, url: String, filename: String) -> Result<String, String> {
     host::save_download(app, url, filename).await
+}
+
+/// Fetches a file from the node into the app's cache, for Android to hand to
+/// another app ("Open with", the share menu). Returns its path (phones only).
+#[tauri::command]
+async fn fetch_for_app(app: tauri::AppHandle, url: String, filename: String) -> Result<String, String> {
+    host::fetch_for_app(app, url, filename).await
 }
 
 /// The system tray icon, closing to the tray, and one running copy.
@@ -486,7 +540,7 @@ pub fn run() {
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     builder
-        .invoke_handler(tauri::generate_handler![service_connection, save_download])
+        .invoke_handler(tauri::generate_handler![service_connection, save_download, fetch_for_app])
         .run(tauri::generate_context!())
         .expect("error while running HearthDrive");
 }

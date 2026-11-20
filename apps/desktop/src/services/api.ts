@@ -723,6 +723,12 @@ interface AndroidBridge {
    * scanner cannot start it hears `nexus-scan-failed` with the reason.
    */
   scanDocument?(): void
+  /** Opens a file fetched with `fetch_for_app` in another app the person picks. */
+  openFile?(path: string): 'opened' | 'none' | 'missing'
+  /** Android's share menu for files fetched with `fetch_for_app` (a JSON list of paths). */
+  shareFiles?(pathsJson: string): 'shared' | 'missing'
+  /** The page a home-screen shortcut opened the app at, once ('' for none). */
+  takeLaunchRoute?(): string
 }
 
 export function androidBridge(): AndroidBridge | null {

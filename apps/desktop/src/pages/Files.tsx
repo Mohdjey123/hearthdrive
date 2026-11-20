@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, ChevronRight, CopyPlus, Download, Eye, FileArchive, FolderInput, FolderPlus, Globe, HardDrive, History, Info,
-  Inbox, LayoutGrid, Link2, List, Lock, Monitor, Pencil, RotateCcw, Search, SlidersHorizontal, Trash2, Upload, Users, WifiOff, X,
+  ArrowDown, ArrowUp, ChevronRight, CopyPlus, Download, ExternalLink, Eye, FileArchive, FolderInput, FolderPlus, Globe, HardDrive, History, Info,
+  Inbox, LayoutGrid, Link2, List, Lock, Monitor, Pencil, RotateCcw, Search, Share2, SlidersHorizontal, Trash2, Upload, Users, WifiOff, X,
 } from 'lucide-react'
 import { ShareDialog } from '../components/ShareDialog'
 import { AccessBadge, Comments, ShareFolderDialog } from '../components/FolderSharing'
@@ -19,7 +19,7 @@ import { navigate, type Route } from '../hooks/useRoute'
 import { enqueueUploads, onUploadComplete } from '../stores/transfers'
 import { fileKind, formatBytes, formatDate, formatRelative, previewKind } from '../lib/format'
 import { FileIcon } from '../components/FileIcon'
-import { FilePreview, FolderPicker, downloadFile, saveUrl, useContentUrl } from '../components/FilePreview'
+import { FilePreview, FolderPicker, canHandOff, downloadFile, openWithApp, saveUrl, shareWithApps, useContentUrl } from '../components/FilePreview'
 import { toast, toastError } from '../components/Toasts'
 import { Badge, Button, EmptyState, ErrorNote, Field, IconButton, Input, Modal, Spinner, cx } from '../components/ui'
 
@@ -782,7 +782,18 @@ export function Files({ route }: { route: Route }) {
                 <>
                   <IconButton label="Preview" onClick={() => setPreview(single)}><Eye className="size-4" /></IconButton>
                   <IconButton label="Download" onClick={() => void downloadFile(single, prefixOf(single)).catch(toastError)}><Download className="size-4" /></IconButton>
+                  {canHandOff() && (
+                    <IconButton label="Open in another app" onClick={() => void openWithApp(single, prefixOf(single)).catch(toastError)}><ExternalLink className="size-4" /></IconButton>
+                  )}
                 </>
+              )}
+              {canHandOff() && selectedItems.every((f) => !f.is_dir) && selectedItems.length <= 20 && (
+                <IconButton
+                  label="Share"
+                  onClick={() => void shareWithApps(selectedItems.map((f) => ({ file: f, prefix: prefixOf(f) }))).catch(toastError)}
+                >
+                  <Share2 className="size-4" />
+                </IconButton>
               )}
               {single && single.availability === 'online' && (
                 <IconButton label="Share a link" onClick={() => setSharing(single)}><Link2 className="size-4" /></IconButton>

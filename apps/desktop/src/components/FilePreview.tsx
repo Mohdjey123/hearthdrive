@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, Download, Tag } from 'lucide-react'
-import { contentUrl, fileApi, isMobile, libraryApi, type ArchiveListing, type DocText, type FileEntry, type FileTag } from '../services/api'
+import { ChevronLeft, ChevronRight, Download, ExternalLink, Share2, Tag } from 'lucide-react'
+import { androidBridge, contentUrl, fileApi, isMobile, libraryApi, type ArchiveListing, type DocText, type FileEntry, type FileTag } from '../services/api'
 import { toast, toastError } from './Toasts'
 import { formatBytes, formatDate, previewKind } from '../lib/format'
 import { FileIcon } from './FileIcon'
@@ -57,6 +57,37 @@ export async function cachedContentUrl(id: string, prefix = '') {
 
 export async function downloadFile(file: FileEntry, prefix = '') {
   await saveUrl(await contentUrl(file.id, true, prefix), file.filename)
+}
+
+/** Whether this is the Android app, which can hand files to other apps. */
+export const canHandOff = () => isMobile() && !!androidBridge()?.openFile
+
+/** Fetches files from the node into the app's cache, for another app. */
+async function fetchForApp(files: { file: FileEntry; prefix: string }[]): Promise<string[]> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  const paths: string[] = []
+  for (const { file, prefix } of files) {
+    const url = await contentUrl(file.id, true, prefix)
+    paths.push(await invoke<string>('fetch_for_app', { url, filename: file.filename }))
+  }
+  return paths
+}
+
+/** Opens a file in another app on the phone (Android's "Open with"). */
+export async function openWithApp(file: FileEntry, prefix = '') {
+  toast(`Getting ${file.filename}…`)
+  const [path] = await fetchForApp([{ file, prefix }])
+  const result = androidBridge()?.openFile?.(path)
+  if (result === 'none') toast(`No app on this phone opens ${file.filename}. Download it instead.`, 'error')
+  else if (result !== 'opened') toast(`Could not open ${file.filename}`, 'error')
+}
+
+/** Hands files to another app through Android's share menu. */
+export async function shareWithApps(files: { file: FileEntry; prefix: string }[]) {
+  if (files.length === 0) return
+  toast(files.length === 1 ? `Getting ${files[0].file.filename}…` : `Getting ${files.length} files…`)
+  const paths = await fetchForApp(files)
+  if (androidBridge()?.shareFiles?.(JSON.stringify(paths)) !== 'shared') toast('Could not share those files', 'error')
 }
 
 /** Saves what a signed URL serves as a file named `filename`. */
@@ -217,9 +248,21 @@ export function FilePreview({ file, siblings, onNavigate, onClose, prefix = '' }
                 <ChevronRight className="size-4" />
               </IconButton>
             </div>
-            <Button icon={<Download className="size-3.5" />} onClick={() => void downloadFile(file, prefix).catch(toastError)}>
-              Download
-            </Button>
+            <div className="flex gap-1">
+              {canHandOff() && (
+                <>
+                  <IconButton label="Share" onClick={() => void shareWithApps([{ file, prefix }]).catch(toastError)}>
+                    <Share2 className="size-4" />
+                  </IconButton>
+                  <IconButton label="Open in another app" onClick={() => void openWithApp(file, prefix).catch(toastError)}>
+                    <ExternalLink className="size-4" />
+                  </IconButton>
+                </>
+              )}
+              <Button icon={<Download className="size-3.5" />} onClick={() => void downloadFile(file, prefix).catch(toastError)}>
+                Download
+              </Button>
+            </div>
           </div>
           </div>
         )

@@ -3,6 +3,8 @@ package app.nexuscloud.desktop
 import android.Manifest
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ComponentName
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
@@ -17,11 +19,14 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.MimeTypeMap
 import android.webkit.WebView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import java.io.File
+import org.json.JSONArray
 
 /**
  * The app's only screen. Besides hosting the web view it:
@@ -36,6 +41,9 @@ import java.io.File
  * - receives files shared to HearthDrive from other apps (the share menu) and
  *   copies them into `<cache>/shared`, where the node sends them from once
  *   the person picks a computer and folder;
+ * - hands files fetched from the node to other apps ("Open with" and
+ *   Android's share menu), and opens the page a home-screen shortcut
+ *   points at;
  * - hands an update the node received and verified to Android's package
  *   installer: when the person taps Install, or by itself once the app goes
  *   to the background (Android 12 and later lets an app update itself
@@ -43,6 +51,9 @@ import java.io.File
  */
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
+
+  /** Where a home-screen shortcut asked to go, until the page takes it. */
+  @Volatile private var launchRoute: String? = null
 
   /** The verified update to install once the app is in the background. */
   @Volatile private var quietUpdate: String? = null
@@ -75,6 +86,7 @@ class MainActivity : TauriActivity() {
     if (!NodeService.start(this)) NodeService.startInProcess(this)
     // A recreated activity (after rotation, say) already took its share.
     if (savedInstanceState == null) {
+      receiveShortcut(intent)
       receiveShare(intent)
       askForNotifications()
     }
@@ -102,6 +114,7 @@ class MainActivity : TauriActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    if (receiveShortcut(intent)) notifyPage("nexus-route")
     receiveShare(intent)
   }
 
@@ -226,6 +239,62 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun canUpdateQuietly(): Boolean = this@MainActivity.canUpdateQuietly()
 
+    /**
+     * Opens a file the page fetched into the cache (see `fetch_for_app`)
+     * with another app, letting the person choose which. Returns `opened`,
+     * `none` (no app opens this kind of file) or `missing`.
+     */
+    @JavascriptInterface
+    fun openFile(path: String): String {
+      val file = handoffFile(path) ?: return "missing"
+      val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
+      val view = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(uri, mimeOf(file.name))
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      if (packageManager.queryIntentActivities(view, 0).none { it.activityInfo.packageName != packageName }) return "none"
+      runOnUiThread { startActivity(withoutSelf(Intent.createChooser(view, getString(R.string.open_with)))) }
+      return "opened"
+    }
+
+    /**
+     * Opens Android's share menu for files the page fetched into the cache.
+     * [pathsJson] is a JSON list of paths. Returns `shared` or `missing`.
+     */
+    @JavascriptInterface
+    fun shareFiles(pathsJson: String): String {
+      val list = try { JSONArray(pathsJson) } catch (e: Exception) { return "missing" }
+      val files = (0 until list.length()).mapNotNull { handoffFile(list.optString(it)) }
+      if (files.isEmpty() || files.size != list.length()) return "missing"
+      val uris = files.map { FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", it) }
+      val types = files.map { mimeOf(it.name) }.distinct()
+      val type = when {
+        types.size == 1 -> types[0]
+        types.all { it.substringBefore('/') == types[0].substringBefore('/') } -> types[0].substringBefore('/') + "/*"
+        else -> "*/*"
+      }
+      val send = if (uris.size == 1) {
+        Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris[0])
+      } else {
+        Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+      }
+      send.type = type
+      send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      // Lets the receiving app read every file, and the share menu preview them.
+      send.clipData = ClipData.newUri(contentResolver, files[0].name, uris[0]).apply {
+        uris.drop(1).forEach { addItem(ClipData.Item(it)) }
+      }
+      runOnUiThread { startActivity(withoutSelf(Intent.createChooser(send, null))) }
+      return "shared"
+    }
+
+    /** The page a home-screen shortcut opened the app at, once ('' for none). */
+    @JavascriptInterface
+    fun takeLaunchRoute(): String {
+      val route = launchRoute ?: return ""
+      launchRoute = null
+      return route
+    }
+
     /** Opens this app's page in Android settings (when the prompt was turned off). */
     /** Opens Google's document scanner; see [startScan]. */
     @JavascriptInterface
@@ -239,6 +308,54 @@ class MainActivity : TauriActivity() {
         startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
       }
     }
+  }
+
+  // -- Handing files to other apps ------------------------------------------
+
+  /**
+   * A file the page fetched for another app: only files under
+   * `<cache>/open`, so the page cannot hand out anything else of the app's.
+   */
+  private fun handoffFile(path: String): File? {
+    val file = try { File(path).canonicalFile } catch (e: Exception) { return null }
+    val root = try { File(cacheDir, "open").canonicalFile } catch (e: Exception) { return null }
+    if (!file.path.startsWith(root.path + File.separator) || !file.isFile) return null
+    return file
+  }
+
+  private fun mimeOf(name: String): String {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+  }
+
+  /** Leaves HearthDrive itself out of a chooser (sharing to itself sends it back). */
+  private fun withoutSelf(chooser: Intent): Intent {
+    if (Build.VERSION.SDK_INT >= 24) {
+      chooser.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(ComponentName(this, MainActivity::class.java)))
+    }
+    return chooser
+  }
+
+  // -- Home-screen shortcuts -------------------------------------------------
+
+  /**
+   * Home-screen shortcuts (res/xml/shortcuts.xml) open the app with
+   * [EXTRA_ROUTE], a page of the app like `backup?run=1`. Only the pages
+   * listed here are accepted. True if [intent] was one.
+   */
+  private fun receiveShortcut(intent: Intent?): Boolean {
+    if (intent?.action != ACTION_SHORTCUT) return false
+    val route = intent.getStringExtra(EXTRA_ROUTE) ?: return false
+    intent.action = null
+    if (route !in SHORTCUT_ROUTES) return false
+    launchRoute = route
+    return true
+  }
+
+  companion object {
+    const val ACTION_SHORTCUT = "app.nexuscloud.desktop.action.SHORTCUT"
+    const val EXTRA_ROUTE = "route"
+    private val SHORTCUT_ROUTES = setOf("backup?run=1", "files", "photos", "transfers")
   }
 
   // -- Updates -------------------------------------------------------------
