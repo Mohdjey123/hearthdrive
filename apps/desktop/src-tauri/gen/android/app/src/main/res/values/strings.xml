@@ -2,4 +2,9 @@
     <string name="app_name">"HearthDrive"</string>
     <string name="main_activity_title">"HearthDrive"</string>
     <string name="share_label">"HearthDrive"</string>
+    <string name="node_channel">"Running in the background"</string>
+    <string name="node_channel_description">"Shown while HearthDrive keeps this phone reachable from your other devices."</string>
+    <string name="node_running">"HearthDrive is running"</string>
+    <string name="node_running_text">"Your other devices can reach this phone. Tap Quit to stop."</string>
+    <string name="node_quit">"Quit"</string>
 </resources>

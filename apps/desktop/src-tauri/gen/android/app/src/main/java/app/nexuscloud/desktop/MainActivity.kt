@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -25,6 +26,9 @@ import java.io.File
 /**
  * The app's only screen. Besides hosting the web view it:
  *
+ * - starts [NodeService], which runs this phone's node in the background
+ *   (asking once for permission to show its notification), and closes
+ *   when the notification's Quit is tapped;
  * - asks for permission to read photos and videos, for backup, through a
  *   small `window.NexusAndroid` bridge the page can call;
  * - receives files shared to HearthDrive from other apps (the share menu) and
@@ -41,6 +45,16 @@ class MainActivity : TauriActivity() {
   /** The verified update to install once the app is in the background. */
   @Volatile private var quietUpdate: String? = null
 
+  /** Hears the background service quitting, or not being allowed to run. */
+  private val nodeEvents = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+      when (intent.action) {
+        NodeService.ACTION_QUITTING -> finishAndRemoveTask()
+        NodeService.ACTION_UNAVAILABLE -> NodeService.startInProcess(this@MainActivity)
+      }
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // The app draws its own dark background under the system bars, so the
     // status and navigation bar icons are always light.
@@ -49,8 +63,38 @@ class MainActivity : TauriActivity() {
       navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
     )
     super.onCreate(savedInstanceState)
+    val filter = IntentFilter().apply {
+      addAction(NodeService.ACTION_QUITTING)
+      addAction(NodeService.ACTION_UNAVAILABLE)
+    }
+    ContextCompat.registerReceiver(this, nodeEvents, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+    // The node runs in the background service. If Android will not start
+    // it, it runs in this process instead, while the app is open.
+    if (!NodeService.start(this)) NodeService.startInProcess(this)
     // A recreated activity (after rotation, say) already took its share.
-    if (savedInstanceState == null) receiveShare(intent)
+    if (savedInstanceState == null) {
+      receiveShare(intent)
+      askForNotifications()
+    }
+  }
+
+  override fun onDestroy() {
+    try { unregisterReceiver(nodeEvents) } catch (_: Exception) {}
+    super.onDestroy()
+  }
+
+  /**
+   * Android 13 and later hide the background service's notification (with
+   * its Quit button) and HearthDrive's other notifications until allowed.
+   * Asked once; it can be turned on later in Android's settings.
+   */
+  private fun askForNotifications() {
+    if (Build.VERSION.SDK_INT < 33) return
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+    val prefs = getSharedPreferences("app", MODE_PRIVATE)
+    if (prefs.getBoolean("askedNotifications", false)) return
+    prefs.edit().putBoolean("askedNotifications", true).apply()
+    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) { }
   }
 
   override fun onNewIntent(intent: Intent) {

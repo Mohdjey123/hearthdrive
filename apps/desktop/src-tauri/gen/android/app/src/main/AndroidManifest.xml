@@ -11,6 +11,14 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
+    <!-- The node keeps running in a foreground service (with a notification)
+         after the app is closed. "specialUse": it serves this phone's files to
+         the person's other devices, which no other type describes, and unlike
+         dataSync it has no daily time limit (Android 15). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -45,6 +53,26 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!-- Runs the node in its own process, so it outlives the window's. -->
+        <service
+          android:name=".NodeService"
+          android:process=":node"
+          android:exported="false"
+          android:foregroundServiceType="specialUse">
+          <property
+            android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+            android:value="Personal storage node: keeps this phone's files reachable from the user's own paired devices, and receives backups and transfers from them, while the app is closed." />
+        </service>
+
+        <!-- Starts the node again after the app updates itself. -->
+        <receiver
+          android:name=".PackageReplacedReceiver"
+          android:exported="false">
+          <intent-filter>
+            <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+          </intent-filter>
+        </receiver>
 
         <!-- Hears how an update install went (from Android's installer only). -->
         <receiver

@@ -3,11 +3,16 @@
 //! **Desktop.** The window is only a client: storage, indexing and the API
 //! live in the separate `nexus-service` process, which keeps running when
 //! the window closes. The shell finds (or starts) that service and hands the
-//! UI its connection details.
+//! UI its connection details. Closing the window hides it to the system
+//! tray, so the app (and its notifications) keep going; Quit in the tray's
+//! menu really exits. Opening the app again shows the window already
+//! running instead of starting another.
 //!
 //! **Phones.** There is no separate service, so the app hosts the same node
-//! in its own process, with its data in the app's private directory. The
-//! node runs while the app is open.
+//! in its own process, with its data in the app's private directory. On
+//! Android a foreground service (`NodeService`, with a notification) keeps
+//! that process, and so the node, running after the app is left or swiped
+//! away, until the person taps Quit or Android force-stops the app.
 
 use serde::Serialize;
 
@@ -155,65 +160,101 @@ mod host {
 #[cfg(mobile)]
 mod host {
     use super::Connection;
+    use nexus_common::runtime::{RUNTIME_FILE, RuntimeInfo};
     use nexus_core::Config;
-    use std::path::PathBuf;
+    use std::net::{SocketAddr, TcpStream};
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
     use tauri::Manager;
-    use tokio::sync::OnceCell;
-
-    /// The node embedded in this app, started on first use.
-    static NODE: OnceCell<Result<Connection, String>> = OnceCell::const_new();
 
     /// The phone's shared storage, where the camera and other apps keep
     /// photos and videos.
     const SHARED_STORAGE: &str = "/storage/emulated/0";
 
-    async fn start(data_dir: PathBuf, share_inbox: PathBuf) -> Result<Connection, String> {
-        std::fs::create_dir_all(&data_dir).map_err(|e| format!("Could not create the app's data folder: {e}"))?;
-        // The guard must outlive the node; the node lives as long as the app.
-        if let Ok(guard) = nexus_core::init_logging(&data_dir) {
-            std::mem::forget(guard);
-        }
-        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        let (failed_tx, failed_rx) = tokio::sync::oneshot::channel::<String>();
-        let mut config = Config::embedded(data_dir.clone(), "My phone");
-        config.media_dir = Some(PathBuf::from(SHARED_STORAGE));
-        // MainActivity copies files shared to the app into `<cache>/shared`.
-        config.share_inbox = Some(share_inbox);
-        std::thread::Builder::new()
-            .name("nexus-node".into())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().thread_name("nexus").build() {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        let _ = failed_tx.send(e.to_string());
-                        return;
-                    }
-                };
-                if let Err(e) = runtime.block_on(nexus_core::run_with(config, Some(ready_tx))) {
-                    tracing::error!(error = %format!("{e:#}"), "embedded node stopped");
-                    let _ = failed_tx.send(format!("{e:#}"));
-                }
-            })
-            .map_err(|e| e.to_string())?;
+    /// Written to the data folder when the node fails to start, so the
+    /// app (possibly in another process) can say why.
+    const START_ERROR_FILE: &str = "start-error.txt";
 
-        match ready_rx.await {
-            Ok(info) => Ok(Connection {
-                base_url: info.base_url,
-                token: info.local_token,
-                data_dir: data_dir.to_string_lossy().into_owned(),
-                shell: "mobile",
-            }),
-            Err(_) => Err(match failed_rx.await {
-                Ok(e) => format!("HearthDrive could not start: {e}"),
-                Err(_) => "HearthDrive could not start".into(),
-            }),
+    static STARTED: AtomicBool = AtomicBool::new(false);
+
+    /// Starts the node in this process, on its own thread, once. On Android
+    /// this runs in `NodeService`'s process (see [`super::android`]); the
+    /// app's window then finds it like any other process would.
+    pub fn start_node(data_dir: PathBuf, share_inbox: PathBuf) {
+        if STARTED.swap(true, Ordering::SeqCst) {
+            return;
         }
+        let _ = std::thread::Builder::new().name("nexus-node".into()).spawn(move || {
+            let error_file = data_dir.join(START_ERROR_FILE);
+            let _ = std::fs::remove_file(&error_file);
+            let fail = |e: String| {
+                let _ = std::fs::write(&error_file, &e);
+            };
+            if let Err(e) = std::fs::create_dir_all(&data_dir) {
+                return fail(format!("Could not create the app's data folder: {e}"));
+            }
+            // The guard must outlive the node; the node lives as long as the process.
+            if let Ok(guard) = nexus_core::init_logging(&data_dir) {
+                std::mem::forget(guard);
+            }
+            let mut config = Config::embedded(data_dir.clone(), "My phone");
+            config.media_dir = Some(PathBuf::from(SHARED_STORAGE));
+            // MainActivity copies files shared to the app into `<cache>/shared`.
+            config.share_inbox = Some(share_inbox);
+            let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().thread_name("nexus").build() {
+                Ok(rt) => rt,
+                Err(e) => return fail(e.to_string()),
+            };
+            if let Err(e) = runtime.block_on(nexus_core::run_with(config, None)) {
+                tracing::error!(error = %format!("{e:#}"), "embedded node stopped");
+                fail(format!("{e:#}"));
+            }
+        });
+    }
+
+    /// The running node's address, from the file it writes when it starts,
+    /// if that process is still alive and listening.
+    fn read_live_runtime(data_dir: &Path) -> Option<RuntimeInfo> {
+        let raw = std::fs::read(data_dir.join(RUNTIME_FILE)).ok()?;
+        let info: RuntimeInfo = serde_json::from_slice(&raw).ok()?;
+        if !Path::new("/proc").join(info.pid.to_string()).exists() {
+            return None;
+        }
+        let addr = SocketAddr::from(([127, 0, 0, 1], info.port));
+        TcpStream::connect_timeout(&addr, Duration::from_millis(400)).ok()?;
+        Some(info)
+    }
+
+    fn wait_for_node(data_dir: PathBuf) -> Result<Connection, String> {
+        let error_file = data_dir.join(START_ERROR_FILE);
+        let since = std::time::SystemTime::now();
+        // A first start sets up the database, which can take a while on a slow phone.
+        for _ in 0..240 {
+            if let Some(info) = read_live_runtime(&data_dir) {
+                return Ok(Connection {
+                    base_url: info.base_url,
+                    token: info.local_token,
+                    data_dir: data_dir.to_string_lossy().into_owned(),
+                    shell: "mobile",
+                });
+            }
+            let fresh_error = std::fs::metadata(&error_file).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
+            if fresh_error && let Ok(e) = std::fs::read_to_string(&error_file) {
+                return Err(format!("HearthDrive could not start: {}", e.trim()));
+            }
+            std::thread::sleep(Duration::from_millis(125));
+        }
+        Err("HearthDrive did not start in time".into())
     }
 
     pub async fn connection(app: tauri::AppHandle) -> Result<Connection, String> {
         let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        let inbox = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("shared");
-        NODE.get_or_init(|| start(data_dir, inbox)).await.clone()
+        // On Android, MainActivity has already started the node (in
+        // NodeService's process). Elsewhere it runs inside the app.
+        #[cfg(not(target_os = "android"))]
+        start_node(data_dir.clone(), app.path().app_cache_dir().map_err(|e| e.to_string())?.join("shared"));
+        tauri::async_runtime::spawn_blocking(move || wait_for_node(data_dir)).await.map_err(|e| e.to_string())?
     }
 
     /// The phone's shared Download folder, where other apps can see files.
@@ -301,6 +342,49 @@ mod host {
     }
 }
 
+/// The JNI entry `NodeService` (Kotlin) starts the node through.
+#[cfg(target_os = "android")]
+mod android {
+    use jni::JNIEnv;
+    use jni::objects::{JClass, JObject, JString};
+    use jni::sys::jboolean;
+    use std::path::PathBuf;
+
+    /// `NodeService.startNode(context, dataDir, shareInbox, ownProcess)`.
+    ///
+    /// `ownProcess` is true in the service's own process, where nothing
+    /// else has set up the Android context the node's networking reads
+    /// (DNS servers, network interfaces); the app's window process already
+    /// has it. Returns at once; the node starts on its own thread.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_app_nexuscloud_desktop_NodeService_startNode<'l>(
+        mut env: JNIEnv<'l>,
+        _class: JClass<'l>,
+        context: JObject<'l>,
+        data_dir: JString<'l>,
+        share_inbox: JString<'l>,
+        own_process: jboolean,
+    ) {
+        let (Ok(data_dir), Ok(share_inbox)) = (env.get_string(&data_dir), env.get_string(&share_inbox)) else {
+            return;
+        };
+        let (data_dir, share_inbox) = (PathBuf::from(String::from(data_dir)), PathBuf::from(String::from(share_inbox)));
+        if own_process != 0 {
+            static CONTEXT_SET: std::sync::Once = std::sync::Once::new();
+            CONTEXT_SET.call_once(|| {
+                let (Ok(vm), Ok(context)) = (env.get_java_vm(), env.new_global_ref(&context)) else { return };
+                let raw = context.as_obj().as_raw();
+                // The context lives as long as the process.
+                std::mem::forget(context);
+                // SAFETY: the VM and a global reference to the application
+                // context, both valid for the rest of the process.
+                unsafe { ndk_context::initialize_android_context(vm.get_java_vm_pointer().cast(), raw.cast()) };
+            });
+        }
+        super::host::start_node(data_dir, share_inbox);
+    }
+}
+
 /// Returns the node's address and local owner token, starting the node
 /// first if needed.
 #[tauri::command]
@@ -314,9 +398,73 @@ async fn save_download(app: tauri::AppHandle, url: String, filename: String) -> 
     host::save_download(app, url, filename).await
 }
 
+/// The system tray icon, closing to the tray, and one running copy.
+#[cfg(desktop)]
+mod tray {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::{AppHandle, Manager, Runtime, WindowEvent};
+
+    /// Shows the main window, restored and in front.
+    pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }
+
+    pub fn single_instance<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
+        tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app))
+    }
+
+    pub fn setup<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+        let open = MenuItem::with_id(app, "open", "Open HearthDrive", true, None::<&str>)?;
+        let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+        let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+        let mut tray = TrayIconBuilder::with_id("main")
+            .tooltip("HearthDrive")
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .on_menu_event(|app, event| match event.id().as_ref() {
+                "open" => show_main(app),
+                // The storage service is a separate process and keeps running.
+                "quit" => app.exit(0),
+                _ => {}
+            })
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                    show_main(tray.app_handle());
+                }
+            });
+        if let Some(icon) = app.default_window_icon() {
+            tray = tray.icon(icon.clone());
+        }
+        tray.build(app)?;
+        Ok(())
+    }
+
+    /// Closing the window hides it; the app stays in the tray.
+    pub fn on_window_event<R: Runtime>(window: &tauri::Window<R>, event: &WindowEvent) {
+        if let WindowEvent::CloseRequested { api, .. } = event
+            && window.label() == "main"
+        {
+            api.prevent_close();
+            let _ = window.hide();
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Registered first, so a second copy hands over before doing anything.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tray::single_instance())
+        .setup(|app| Ok(tray::setup(app)?))
+        .on_window_event(tray::on_window_event);
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init());
     #[cfg(mobile)]
