@@ -157,11 +157,15 @@ export function Backup() {
   // The "Back up now" home-screen shortcut opens this page with `run=1`.
   const route = useRoute()
   const runNow = route.params.get('run') === '1'
+  // Waits for the status: without a backup set up it only opens the page.
+  const loaded = !!status.data
   useEffect(() => {
-    if (!runNow) return
+    if (!runNow || !status.data) return
     navigate('backup')
-    api.runBackup().then(() => toast('Backing up now')).catch(toastError)
-  }, [runNow])
+    if (!status.data.backup) toast('Set up backup first, then Back up now runs it')
+    else if (status.data.running) toast('Already backing up')
+    else api.runBackup().then(() => toast('Backing up now')).catch(toastError)
+  }, [runNow, loaded])
 
   // Progress of the run in progress, polled while it lasts.
   useEffect(() => {
