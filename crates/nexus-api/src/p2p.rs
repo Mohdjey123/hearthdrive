@@ -28,8 +28,12 @@ pub struct P2pPeer(pub String);
 
 /// API areas reachable over the peer-to-peer network. Everything else
 /// (sign-in, setup, device management, the event stream, relaying to other
-/// nodes) is for people on this computer only.
-const AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "peer", "pairing"];
+/// nodes) is for people on this computer only. Photos, albums, music and
+/// films apply the same per-device storage limits as files.
+const AREAS: &[&str] = &[
+    "files", "search", "recent", "storage", "trash", "system", "shares", "peer", "pairing", "photos", "albums", "library",
+    "playback", "tags",
+];
 
 /// The one unsigned call: a device that is not paired yet asking to pair.
 const PAIRING_REQUEST: &str = "/api/v1/pairing/request";
@@ -145,6 +149,13 @@ mod tests {
         assert!(admissible(&req("POST", "/api/v1/pairing/request", false, false)));
         assert!(admissible(&req("GET", "/api/v1/files?root_id=1", true, false)));
         assert!(admissible(&req("GET", "/api/v1/peer/hello", true, false)));
+        // Another device's photos, albums, music and films.
+        assert!(admissible(&req("GET", "/api/v1/photos/months", true, false)));
+        assert!(admissible(&req("GET", "/api/v1/albums", true, false)));
+        assert!(admissible(&req("GET", "/api/v1/library/items?type=film", true, false)));
+        assert!(admissible(&req("PUT", "/api/v1/playback/abc", true, false)));
+        // Settings that change the computer stay local.
+        assert!(!admissible(&req("PUT", "/api/v1/documents/settings", true, false)));
         // Unsigned calls other than the pairing request.
         assert!(!admissible(&req("GET", "/api/v1/files", false, false)));
         assert!(!admissible(&req("POST", "/api/v1/auth/login", false, false)));
