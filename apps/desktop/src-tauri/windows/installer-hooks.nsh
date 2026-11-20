@@ -64,6 +64,14 @@ Var NewNameFolder
   ; Start the service as the signed-in person (never elevated). It has no
   ; window. A failure here is harmless: the app starts it when opened.
   nsis_tauri_utils::RunAsUser "$INSTDIR\nexus-service.exe" ""
+  ; With "Start with Windows" on, the app belongs in the system tray, and
+  ; the installer has just closed it to replace its files: bring it back,
+  ; without its window. (After an update started from the app, the app
+  ; also opens its window; it is one app, so that simply shows it.)
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NEXUS Cloud"
+  ${If} $0 != ""
+    nsis_tauri_utils::RunAsUser "$INSTDIR\nexus-desktop.exe" "--hidden"
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

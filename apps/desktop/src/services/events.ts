@@ -1,6 +1,6 @@
 // Live updates from nexus-service over a WebSocket.
 
-import { connection } from './api'
+import { connection, isTauri, isMobile } from './api'
 
 export type NexusEvent =
   | { type: 'ready' | 'resync' }
@@ -50,6 +50,7 @@ function open() {
     if (event.type === 'ready') {
       retry = 0
       setConnected(true)
+      void tellWindow()
     }
     handlers.forEach((h) => h(event))
   }
@@ -62,9 +63,33 @@ function open() {
   }
 }
 
+/**
+ * Tells the service whether this window is showing. On computers the window
+ * hides in the system tray, and updates install only while no window shows.
+ * The app shell fires `hearthdrive-window` when it shows or hides the window.
+ */
+async function tellWindow() {
+  if (!isTauri() || isMobile()) return
+  let visible = true
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    visible = await getCurrentWindow().isVisible()
+  } catch {
+    // Counted as showing: updates wait, as they always did.
+  }
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'window', visible }))
+}
+
+let watchingWindow = false
+
 export function startEvents() {
   if (!stopped) return
   stopped = false
+  if (!watchingWindow) {
+    watchingWindow = true
+    window.addEventListener('hearthdrive-window', () => void tellWindow())
+    window.addEventListener('focus', () => void tellWindow())
+  }
   open()
 }
 

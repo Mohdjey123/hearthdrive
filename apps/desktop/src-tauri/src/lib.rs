@@ -511,7 +511,14 @@ mod tray {
             let _ = window.show();
             let _ = window.unminimize();
             let _ = window.set_focus();
+            tell_page(&window);
         }
+    }
+
+    /// Lets the page know the window was shown or hidden: it tells the
+    /// service, which installs updates only while no window shows.
+    fn tell_page<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+        let _ = window.eval("dispatchEvent(new Event('hearthdrive-window'))");
     }
 
     /// Shows the main window at one of its pages (`transfers`, `settings`…).
@@ -662,6 +669,9 @@ mod tray {
         {
             api.prevent_close();
             let _ = window.hide();
+            if let Some(webview) = window.app_handle().get_webview_window("main") {
+                tell_page(&webview);
+            }
         }
     }
 

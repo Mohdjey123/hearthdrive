@@ -16,6 +16,14 @@ struct AuthMessage {
     token: String,
 }
 
+/// Whether the app's window is showing: `{"type":"window","visible":true}`.
+#[derive(Deserialize)]
+struct WindowMessage {
+    #[serde(rename = "type")]
+    kind: String,
+    visible: bool,
+}
+
 /// Live events. Browsers cannot set headers on WebSocket connections, so the
 /// client authenticates with its first message: `{"type":"auth","token":"…"}`.
 ///
@@ -71,8 +79,10 @@ async fn handle(s: SharedState, mut socket: WebSocket) {
 
     let token = token.unwrap_or_default();
     let mut rx = s.events.subscribe();
-    // An open app window: updates wait until it is closed.
-    let _viewer = s.updates.viewer();
+    // An open app window: updates wait until it is closed. The desktop app
+    // says when its window is hidden in the tray (`{"type":"window",
+    // "visible":false}`); a hidden window does not hold updates back.
+    let mut viewer = Some(s.updates.viewer());
     // Signing out, a removed account or changed limits take effect here too.
     let mut recheck = tokio::time::interval(Duration::from_secs(30));
     recheck.tick().await;
@@ -106,6 +116,23 @@ async fn handle(s: SharedState, mut socket: WebSocket) {
             },
             incoming = socket.recv() => match incoming {
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                Some(Ok(Message::Text(text))) => {
+                    if let Ok(WindowMessage { kind, visible }) = serde_json::from_str(&text)
+                        && kind == "window"
+                    {
+                        match (visible, viewer.is_some()) {
+                            (true, false) => {
+                                viewer = Some(s.updates.viewer());
+                                tracing::info!("app window shown: updates wait");
+                            }
+                            (false, true) => {
+                                viewer = None;
+                                tracing::info!("app window hidden in the tray");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             },
         }
