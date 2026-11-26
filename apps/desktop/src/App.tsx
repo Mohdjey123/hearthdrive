@@ -10,6 +10,7 @@ import { Overview } from './pages/Overview'
 import { Files } from './pages/Files'
 import { Duplicates } from './pages/Duplicates'
 import { Automation } from './pages/Automation'
+import { Plugins } from './pages/Plugins'
 import { Photos } from './pages/Photos'
 import { Media } from './pages/Media'
 import { Documents } from './pages/Documents'
@@ -60,6 +61,7 @@ function Shell() {
         {page === 'files' && <Files route={route} />}
         {page === 'duplicates' && <Duplicates route={route} />}
         {page === 'automation' && <Automation />}
+        {page === 'plugins' && <Plugins />}
         {page === 'photos' && <Photos route={route} />}
         {page === 'media' && <Media route={route} />}
         {page === 'documents' && <Documents route={route} />}

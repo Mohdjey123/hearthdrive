@@ -14,6 +14,7 @@ pub mod nearby;
 pub mod net;
 pub mod p2p;
 pub mod peers;
+pub mod plugin_store;
 pub mod plugins;
 pub mod power;
 pub mod programs;
@@ -130,6 +131,8 @@ pub(crate) fn api_routes(state: SharedState) -> Router {
         .route("/plugins", get(plugins::get_all))
         .route("/plugins/commands", get(plugins::commands))
         .route("/plugins/{id}", axum::routing::put(plugins::set_enabled))
+        .route("/plugins/store/{id}", post(plugin_store::install).patch(plugin_store::change).delete(plugin_store::remove))
+        .route("/plugins/store/{id}/commands/{command}", post(plugin_store::run))
         .route("/plugins/{id}/commands/{command}", post(plugins::run))
         .route("/files/{id}/encryption", get(vault::state))
         .route("/files/{id}/encryption/lock", post(vault::lock))

@@ -127,10 +127,14 @@ fn owner_or_admin(user: &AuthUser) -> Result<()> {
     Ok(())
 }
 
-/// `GET /plugins`
+/// `GET /plugins`: the store's plugins and the ones in the plugins folder.
 pub async fn get_all(State(s): State<SharedState>, user: AuthUser) -> ApiResult<Json<serde_json::Value>> {
     owner_or_admin(&user)?;
-    Ok(Json(serde_json::json!({ "folder": dir(&s).to_string_lossy(), "plugins": list(&s).await })))
+    Ok(Json(serde_json::json!({
+        "folder": dir(&s).to_string_lossy(),
+        "plugins": list(&s).await,
+        "store": crate::plugin_store::entries(&s).await,
+    })))
 }
 
 #[derive(Deserialize)]
@@ -189,8 +193,9 @@ fn applies(c: &Command, file: Option<&nexus_common::types::FileEntry>) -> bool {
     }
 }
 
-/// `GET /plugins/commands?file_id=`: what can run on this file or folder.
-pub async fn commands(State(s): State<SharedState>, user: AuthUser, Query(q): Query<ForQuery>) -> ApiResult<Json<Vec<Available>>> {
+/// `GET /plugins/commands?file_id=`: what can run on this file or folder,
+/// from the store's plugins first.
+pub async fn commands(State(s): State<SharedState>, user: AuthUser, Query(q): Query<ForQuery>) -> ApiResult<Json<Vec<serde_json::Value>>> {
     if owner_or_admin(&user).is_err() {
         return Ok(Json(Vec::new()));
     }
@@ -198,12 +203,13 @@ pub async fn commands(State(s): State<SharedState>, user: AuthUser, Query(q): Qu
         Some(id) => Some(s.db.get_file(id).await?),
         None => None,
     };
-    let mut out = Vec::new();
+    let mut out: Vec<serde_json::Value> =
+        crate::plugin_store::commands_for(&s, file.as_ref()).await.into_iter().filter_map(|a| serde_json::to_value(a).ok()).collect();
     for p in list(&s).await.into_iter().filter(|p| p.enabled) {
         let Some(m) = p.manifest else { continue };
         for c in m.commands {
             if applies(&c, file.as_ref()) {
-                out.push(Available { plugin: p.id.clone(), plugin_name: m.name.clone(), command: c });
+                out.extend(serde_json::to_value(Available { plugin: p.id.clone(), plugin_name: m.name.clone(), command: c }).ok());
             }
         }
     }
@@ -212,10 +218,10 @@ pub async fn commands(State(s): State<SharedState>, user: AuthUser, Query(q): Qu
 
 #[derive(Serialize)]
 pub struct RunResult {
-    exit_code: Option<i32>,
-    output: String,
-    took_ms: u64,
-    timed_out: bool,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) output: String,
+    pub(crate) took_ms: u64,
+    pub(crate) timed_out: bool,
 }
 
 #[derive(Deserialize)]
@@ -273,7 +279,7 @@ pub async fn run(
     owner_or_admin(&user)?;
     let plugin = list(&s).await.into_iter().find(|p| p.id == id).ok_or_else(|| NexusError::NotFound("plugin".into()))?;
     if !plugin.enabled {
-        return Err(NexusError::PermissionDenied("Turn this plugin on in Settings first".into()).into());
+        return Err(NexusError::PermissionDenied("Turn this plugin on in Plugins first".into()).into());
     }
     let manifest = plugin.manifest.ok_or_else(|| NexusError::invalid("The plugin cannot be read"))?;
     let cmd = manifest.commands.into_iter().find(|c| c.id == command).ok_or_else(|| NexusError::NotFound("command".into()))?;

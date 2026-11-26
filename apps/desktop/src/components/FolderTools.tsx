@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Lock, LockOpen, Puzzle } from 'lucide-react'
-import { toolsApi, type EncryptionState, type FileEntry, type PluginCommand, type PluginInfo, type PluginRun } from '../services/api'
+import { toolsApi, type EncryptionState, type FileEntry, type PluginCommand, type PluginRun } from '../services/api'
 import { followJob } from '../hooks/useJobs'
-import { useResource } from '../hooks/useResource'
+import { navigate } from '../hooks/useRoute'
 import { startActivity, toast, toastError } from './Toasts'
-import { Badge, Button, ErrorNote, Field, IconButton, Input, Modal, Panel, Spinner } from './ui'
+import { Button, ErrorNote, Field, IconButton, Input, Modal, Spinner } from './ui'
 
 /** Encrypts a folder's files with a password, or decrypts them again. */
 export function EncryptDialog({ folder, onClose }: { folder: FileEntry; onClose: () => void }) {
@@ -100,7 +100,7 @@ export function PluginsButton({ entry }: { entry: FileEntry }) {
     setRunning(c.label)
     const card = startActivity(`${c.label}: ${entry.filename}`)
     try {
-      const r = await toolsApi.runPlugin(c.plugin, c.id, entry.id)
+      const r = await toolsApi.runPlugin(c, entry.id)
       if (r.exit_code === 0 && !r.output.trim()) toast(`${c.label}: done`)
       else setResult({ label: c.label, run: r })
     } catch (e) {
@@ -119,7 +119,10 @@ export function PluginsButton({ entry }: { entry: FileEntry }) {
       {open && (
         <div className="absolute right-0 z-30 mt-1 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg">
           {commands === null ? <div className="p-3"><Spinner /></div> : commands.length === 0 ? (
-            <p className="px-3 py-2 text-[12.5px] text-muted">No plugin works on this. Plugins are set up in Settings.</p>
+            <p className="px-3 py-2 text-[12.5px] text-muted">
+              No plugin works on this.{' '}
+              <button className="text-accent hover:underline" onClick={() => navigate('plugins')}>Find plugins</button>
+            </p>
           ) : commands.map((c) => (
             <button key={`${c.plugin}/${c.id}`} className="block w-full px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={() => void run(c)}>
               {c.label}
@@ -138,68 +141,5 @@ export function PluginsButton({ entry }: { entry: FileEntry }) {
         </Modal>
       )}
     </div>
-  )
-}
-
-/** Plugins: small programs that add commands to files and folders. */
-export function PluginsPanel({ owner }: { owner: boolean }) {
-  const list = useResource(() => toolsApi.plugins(), [])
-  const [busy, setBusy] = useState<string | null>(null)
-
-  const toggle = async (p: PluginInfo) => {
-    if (!p.enabled && !confirm(`Turn on “${p.manifest?.name ?? p.id}”? Its commands run programs on this computer with your rights.`)) return
-    setBusy(p.id)
-    try {
-      await toolsApi.setPlugin(p.id, !p.enabled)
-      list.reload()
-    } catch (e) {
-      toastError(e)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  return (
-    <Panel title="Plugins" className="mb-4" actions={<Button variant="ghost" onClick={list.reload}>Look again</Button>}>
-      {list.error ? <ErrorNote>{list.error.message}</ErrorNote> : !list.data ? <Spinner /> : (
-        <div className="space-y-3 text-[13px]">
-          <p className="text-muted">
-            A plugin is a folder with a <code>plugin.json</code> describing commands; they show up under the puzzle button in Files.
-            Put plugins in <code className="break-all">{list.data.folder}</code>.
-          </p>
-          {list.data.plugins.length === 0 && <p className="text-subtle">No plugins yet.</p>}
-          {list.data.plugins.map((p) => (
-            <div key={p.id} className="rounded-md border border-line p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-medium">
-                    {p.manifest?.name ?? p.id} {p.manifest?.version && <span className="mr-2 text-subtle">{p.manifest.version}</span>}
-                    {p.enabled ? <Badge tone="accent">On</Badge> : <Badge>Off</Badge>}
-                  </div>
-                  {p.manifest?.description && <p className="text-muted">{p.manifest.description}</p>}
-                </div>
-                {owner && p.manifest && (
-                  <Button loading={busy === p.id} variant={p.enabled ? 'ghost' : 'primary'} onClick={() => void toggle(p)}>
-                    {p.enabled ? 'Turn off' : 'Turn on'}
-                  </Button>
-                )}
-              </div>
-              {p.error && <ErrorNote>{p.error}</ErrorNote>}
-              {p.changed && <p className="mt-1 text-warn">Its plugin.json changed since it was turned on, so it is off until you turn it on again.</p>}
-              {p.manifest && p.manifest.commands.length > 0 && (
-                <ul className="mt-2 space-y-1">
-                  {p.manifest.commands.map((c) => (
-                    <li key={c.id}>
-                      {c.label} <span className="text-subtle">({c.for === 'none' ? 'anywhere' : c.for}{c.extensions.length ? `: ${c.extensions.join(', ')}` : ''})</span>
-                      <code className="block truncate text-[11.5px] text-subtle">{[c.program, ...c.args].join(' ')}</code>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </Panel>
   )
 }

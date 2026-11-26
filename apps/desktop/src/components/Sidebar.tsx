@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUpDown, Clapperboard, Copy, FileText, Folder, Images, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, Menu, MonitorSmartphone, Settings, Wand2 } from 'lucide-react'
+import { ArrowUpDown, Clapperboard, Copy, FileText, Folder, Images, FolderSync, HardDrive, HeartPulse, History, ImageUp, LayoutGrid, Link2, Menu, MonitorSmartphone, Puzzle, Settings, Wand2 } from 'lucide-react'
 import type { Page } from '../hooks/useRoute'
 import { navigate } from '../hooks/useRoute'
 import { subscribeStatus } from '../services/events'
@@ -18,6 +18,7 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
   { page: 'documents', label: 'Documents', icon: FileText },
   { page: 'storage', label: 'Storage', icon: HardDrive },
   { page: 'automation', label: 'Automation', icon: Wand2 },
+  { page: 'plugins', label: 'Plugins', icon: Puzzle },
   { page: 'health', label: 'Drive health', icon: HeartPulse },
   { page: 'devices', label: 'Devices', icon: MonitorSmartphone },
   { page: 'sync', label: 'Sync', icon: FolderSync },
@@ -29,8 +30,10 @@ const NAV: { page: Page; label: string; icon: typeof Folder }[] = [
   { page: 'settings', label: 'Settings', icon: Settings },
 ]
 
-/** Pages that need storage on this device. */
-export const PHONELESS: Page[] = ['automation', 'sync', 'copies', 'backups']
+/** Pages that need storage on this device. Plugins too: they are installed
+ *  on, and run against, the storage of the computer that has them, and
+ *  paired devices may not install them on a computer. */
+export const PHONELESS: Page[] = ['automation', 'plugins', 'sync', 'copies', 'backups']
 /** Pages only phones have. */
 export const PHONE_ONLY: Page[] = ['backup']
 

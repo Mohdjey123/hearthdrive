@@ -171,6 +171,10 @@ mod tests {
         assert!(!admissible(&req("GET", "/api/v1/devices", true, false)));
         assert!(!admissible(&req("GET", "/api/v1/peers/x/proxy/files", true, false)));
         assert!(!admissible(&req("GET", "/api/v1/events", true, false)));
+        // Plugins are installed and run only by people on the computer.
+        assert!(!admissible(&req("GET", "/api/v1/plugins", true, false)));
+        assert!(!admissible(&req("POST", "/api/v1/plugins/store/checksums", true, false)));
+        assert!(!admissible(&req("POST", "/api/v1/plugins/store/checksums/commands/write", true, false)));
         assert!(!admissible(&req("GET", "/api/v1/files/../devices", true, false)));
         assert!(!admissible(&req("GET", "/", true, false)));
         assert_ne!(synthetic_addr("a").ip(), synthetic_addr("b").ip());

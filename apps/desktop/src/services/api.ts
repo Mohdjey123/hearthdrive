@@ -1491,13 +1491,15 @@ export interface EncryptionState { encrypted: boolean; locked_files: number; ope
 export interface PluginCommand {
   plugin: string
   plugin_name: string
+  /** From the plugin store (runs inside HearthDrive) rather than the plugins folder. */
+  store?: boolean
   id: string
   label: string
   description: string
   for: 'file' | 'folder' | 'none'
   extensions: string[]
-  program: string
-  args: string[]
+  program?: string
+  args?: string[]
 }
 export interface PluginInfo {
   id: string
@@ -1508,16 +1510,48 @@ export interface PluginInfo {
   manifest: { name: string; description: string; version: string; commands: Omit<PluginCommand, 'plugin' | 'plugin_name'>[] } | null
 }
 export interface PluginRun { exit_code: number | null; output: string; took_ms: number; timed_out: boolean }
+export type PluginAccess = 'read' | 'add' | 'rename'
+export type PluginSetting = { key: string; label: string; help: string } & (
+  | { type: 'number'; min: number; max: number; default: number; unit: string }
+  | { type: 'choice'; options: { value: string; label: string }[]; default: string }
+  | { type: 'toggle'; default: boolean }
+)
+export type PluginSettingValue = string | number | boolean
+/** A plugin in the store, and how it is installed on this computer. */
+export interface StorePlugin {
+  id: string
+  name: string
+  summary: string
+  description: string
+  category: string
+  version: string
+  needs: PluginAccess[]
+  needs_text: string[]
+  commands: { id: string; label: string; description: string; for: 'file' | 'folder'; extensions: string[] }[]
+  settings: PluginSetting[]
+  installed: null | {
+    enabled: boolean
+    /** An update made it need more than it was given: off until allowed again. */
+    needs_more: boolean
+    roots: string[] | null
+    settings: Record<string, PluginSettingValue>
+    installed_at: number
+  }
+}
 
 export const toolsApi = {
   encryption: (id: string) => request<EncryptionState>('GET', `/files/${id}/encryption`),
   lockFolder: (id: string, password: string) => request<Job>('POST', `/files/${id}/encryption/lock`, { password }),
   unlockFolder: (id: string, password: string) => request<Job>('POST', `/files/${id}/encryption/unlock`, { password }),
-  plugins: () => request<{ folder: string; plugins: PluginInfo[] }>('GET', '/plugins'),
+  plugins: () => request<{ folder: string; plugins: PluginInfo[]; store: StorePlugin[] }>('GET', '/plugins'),
+  installPlugin: (id: string, roots: string[] | null) => request<StorePlugin>('POST', `/plugins/store/${encodeURIComponent(id)}`, { roots }),
+  changePlugin: (id: string, change: { enabled?: boolean; roots?: string[] | null; settings?: Record<string, PluginSettingValue> }) =>
+    request<StorePlugin>('PATCH', `/plugins/store/${encodeURIComponent(id)}`, change),
+  removePlugin: (id: string) => request<StorePlugin>('DELETE', `/plugins/store/${encodeURIComponent(id)}`),
   setPlugin: (id: string, enabled: boolean) => request<PluginInfo>('PUT', `/plugins/${encodeURIComponent(id)}`, { enabled }),
   pluginCommands: (file_id?: string) => request<PluginCommand[]>('GET', `/plugins/commands${file_id ? `?file_id=${encodeURIComponent(file_id)}` : ''}`),
-  runPlugin: (plugin: string, command: string, file_id?: string) =>
-    request<PluginRun>('POST', `/plugins/${encodeURIComponent(plugin)}/commands/${encodeURIComponent(command)}`, { file_id }),
+  runPlugin: (c: Pick<PluginCommand, 'plugin' | 'id' | 'store'>, file_id?: string) =>
+    request<PluginRun>('POST', `/plugins/${c.store ? 'store/' : ''}${encodeURIComponent(c.plugin)}/commands/${encodeURIComponent(c.id)}`, { file_id }),
 }
 
 /* ---------- Upload links (file requests) ---------- */

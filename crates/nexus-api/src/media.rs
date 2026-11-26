@@ -133,6 +133,17 @@ impl Exif {
     }
 }
 
+/// When a photo was taken, from its EXIF (local time stored as if it were UTC).
+pub(crate) fn photo_taken_at(path: &Path) -> Option<i64> {
+    Exif::read(path)?.taken_at()
+}
+
+/// Decodes a photo (or a raw photo's embedded preview), turned upright.
+pub(crate) fn decode_photo(path: &Path, ext: &str) -> Result<DynamicImage, String> {
+    let exif = Exif::read(path);
+    decode(path, ext, exif.as_ref())
+}
+
 // ---------------------------------------------------------------------------
 // Previews
 
@@ -176,7 +187,7 @@ fn decode(path: &Path, ext: &str, exif: Option<&Exif>) -> Result<DynamicImage, S
     Ok(orient(img, orientation))
 }
 
-fn jpeg_bytes(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, String> {
+pub(crate) fn jpeg_bytes(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     let rgb = img.to_rgb8();
     image::codecs::jpeg::JpegEncoder::new_with_quality(Cursor::new(&mut out), quality)

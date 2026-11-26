@@ -890,3 +890,119 @@ async fn upload_links_take_files_from_anyone_with_the_link() {
     let (s, _) = up("late.txt", b"late".to_vec()).await;
     assert_eq!(s, StatusCode::GONE);
 }
+
+#[tokio::test]
+async fn plugin_store_installs_runs_and_keeps_to_what_was_allowed() {
+    let h = harness([127, 0, 0, 1]).await;
+    let app = &h.app;
+    let base = h.storage.path();
+    std::fs::create_dir(base.join("Docs")).unwrap();
+    std::fs::write(base.join("Docs").join("a.txt"), b"alpha").unwrap();
+    std::fs::write(base.join("Docs").join("b.txt"), b"beta").unwrap();
+    let other = tempfile::tempdir().unwrap();
+    std::fs::create_dir(other.path().join("Elsewhere")).unwrap();
+    std::fs::write(other.path().join("Elsewhere").join("c.txt"), b"gamma").unwrap();
+
+    let (s, _) = call(app, Method::POST, "/api/v1/setup", None,
+        Some(json!({"node_name": "Desk", "username": "owner", "password": "correct horse"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let owner = sign_in(app, "owner", "correct horse").await;
+    let (s, v) = call(app, Method::POST, "/api/v1/storage/roots", Some(&owner), Some(json!({"path": base.to_string_lossy()}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let root = v["id"].as_str().unwrap().to_string();
+    let (s, v) = call(app, Method::POST, "/api/v1/storage/roots", Some(&owner), Some(json!({"path": other.path().to_string_lossy()}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let root_b = v["id"].as_str().unwrap().to_string();
+    wait_for_scan(app, &owner, &root).await;
+    wait_for_scan(app, &owner, &root_b).await;
+    let folder_id = |v: &Value, name: &str| {
+        v["items"].as_array().unwrap().iter().find(|i| i["filename"] == name).unwrap()["id"].as_str().unwrap().to_string()
+    };
+    let (_, v) = call(app, Method::GET, &format!("/api/v1/files?root_id={root}"), Some(&owner), None).await;
+    let docs = folder_id(&v, "Docs");
+    let (_, v) = call(app, Method::GET, &format!("/api/v1/files?root_id={root_b}"), Some(&owner), None).await;
+    let elsewhere = folder_id(&v, "Elsewhere");
+
+    // The store lists its plugins, none installed.
+    let (s, v) = call(app, Method::GET, "/api/v1/plugins", Some(&owner), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let checksums = v["store"].as_array().unwrap().iter().find(|p| p["id"] == "checksums").unwrap().clone();
+    assert!(checksums["installed"].is_null());
+    assert_eq!(checksums["needs"], json!(["read", "add"]));
+
+    // Not installed: nothing to run.
+    let run = "/api/v1/plugins/store/checksums/commands/write";
+    let (s, _) = call(app, Method::POST, run, Some(&owner), Some(json!({"file_id": docs}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // Installed for the first storage location only.
+    let (s, v) = call(app, Method::POST, "/api/v1/plugins/store/checksums", Some(&owner), Some(json!({"roots": [root]}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["installed"]["enabled"], true);
+    let (s, _) = call(app, Method::POST, "/api/v1/plugins/store/nonsense", Some(&owner), Some(json!({}))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    let (_, v) = call(app, Method::GET, &format!("/api/v1/plugins/commands?file_id={docs}"), Some(&owner), None).await;
+    assert!(v.as_array().unwrap().iter().any(|c| c["plugin"] == "checksums" && c["id"] == "write" && c["store"] == true), "{v}");
+    let (_, v) = call(app, Method::GET, &format!("/api/v1/plugins/commands?file_id={elsewhere}"), Some(&owner), None).await;
+    assert!(v.as_array().unwrap().is_empty(), "{v}");
+
+    let (s, v) = call(app, Method::POST, run, Some(&owner), Some(json!({"file_id": docs}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["exit_code"], 0, "{v}");
+    let made: Vec<_> = std::fs::read_dir(base.join("Docs")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert!(made.iter().any(|n| n.starts_with("Checksums ") && n.ends_with(".sha256")), "{made:?}");
+
+    // Not in the storage location it was not given.
+    let (s, _) = call(app, Method::POST, run, Some(&owner), Some(json!({"file_id": elsewhere}))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert_eq!(std::fs::read_dir(other.path().join("Elsewhere")).unwrap().count(), 1);
+
+    // Settings are checked against what the plugin has.
+    let change = "/api/v1/plugins/store/checksums";
+    let (s, _) = call(app, Method::PATCH, change, Some(&owner), Some(json!({"settings": {"nonsense": true}}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(app, Method::PATCH, change, Some(&owner), Some(json!({"settings": {"subfolders": "yes"}}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, v) = call(app, Method::PATCH, change, Some(&owner), Some(json!({"settings": {"subfolders": false}}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["installed"]["settings"]["subfolders"], false);
+
+    // Turned off, it does not run.
+    let (s, _) = call(app, Method::PATCH, change, Some(&owner), Some(json!({"enabled": false}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = call(app, Method::POST, run, Some(&owner), Some(json!({"file_id": docs}))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    // Everywhere, and on again.
+    let (s, v) = call(app, Method::PATCH, change, Some(&owner), Some(json!({"enabled": true, "roots": null}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["installed"]["roots"].is_null(), "{v}");
+
+    // Administrators run plugins but do not install them; others do neither.
+    let (s, v) = call(app, Method::POST, "/api/v1/users", Some(&owner), Some(json!({"username": "ada", "password": "ada password 1", "role": "administrator"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let admin = sign_in(app, "ada", "ada password 1").await;
+    let (s, _) = call(app, Method::POST, "/api/v1/plugins/store/folder-list", Some(&admin), Some(json!({}))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(app, Method::PATCH, change, Some(&admin), Some(json!({"enabled": false}))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, v) = call(app, Method::POST, run, Some(&admin), Some(json!({"file_id": elsewhere}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, editor) = limited_person(app, &owner, "erin", "editor").await;
+    for (method, uri, body) in [
+        (Method::GET, "/api/v1/plugins", None),
+        (Method::POST, "/api/v1/plugins/store/folder-list", Some(json!({}))),
+        (Method::POST, run, Some(json!({"file_id": docs}))),
+    ] {
+        let (s, _) = call(app, method, uri, Some(&editor), body).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{uri}");
+    }
+
+    // Removed: gone from the menu; what it made stays.
+    let (s, v) = call(app, Method::DELETE, change, Some(&owner), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["installed"].is_null());
+    let (_, v) = call(app, Method::GET, &format!("/api/v1/plugins/commands?file_id={docs}"), Some(&owner), None).await;
+    assert!(v.as_array().unwrap().is_empty(), "{v}");
+    assert!(std::fs::read_dir(base.join("Docs")).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".sha256")));
+}

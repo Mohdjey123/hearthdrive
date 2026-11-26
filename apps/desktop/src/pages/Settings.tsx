@@ -3,7 +3,6 @@ import { FolderOpen, HardDrive, Lock, LockOpen, LogOut, Monitor, Moon, Sun, Tras
 import { api, closeAction, connection, fileApi, isMobile, libraryApi, isTauri, peerPrefix, setCloseAction, thisDevice, type CloseAction, type Device, type Person, type Role, type StorageRoot, type User, type VirtualDriveStatus } from '../services/api'
 import { SecurityPanel } from '../components/Security'
 import { ProgramsPanel } from '../components/Programs'
-import { PluginsPanel } from '../components/FolderTools'
 import { toast, toastError } from '../components/Toasts'
 import { useResource } from '../hooks/useResource'
 import { useSession } from '../stores/session'
@@ -860,7 +859,6 @@ export function Settings() {
       {!isMobile() && me && (me.role === 'owner' || me.role === 'administrator') && <VirtualDrivePanel />}
       {me && (me.role === 'owner' || me.role === 'administrator') && <DocumentsPanel />}
       {!isMobile() && me && me.user_id && <ProgramsPanel manage={me.role === 'owner' || me.role === 'administrator'} />}
-      {!isMobile() && me && (me.role === 'owner' || me.role === 'administrator') && <PluginsPanel owner={me.role === 'owner'} />}
 
       <Panel title="Updates" className="mb-4">
         <UpdateSettings />
