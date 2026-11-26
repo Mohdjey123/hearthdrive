@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { FolderOpen, HardDrive, Lock, LockOpen, LogOut, Monitor, Moon, Sun, Trash2, UserPlus } from 'lucide-react'
-import { api, connection, fileApi, isMobile, libraryApi, isTauri, peerPrefix, thisDevice, type Device, type Person, type Role, type StorageRoot, type User, type VirtualDriveStatus } from '../services/api'
+import { api, closeAction, connection, fileApi, isMobile, libraryApi, isTauri, peerPrefix, setCloseAction, thisDevice, type CloseAction, type Device, type Person, type Role, type StorageRoot, type User, type VirtualDriveStatus } from '../services/api'
 import { SecurityPanel } from '../components/Security'
 import { ProgramsPanel } from '../components/Programs'
 import { PluginsPanel } from '../components/FolderTools'
@@ -487,7 +487,7 @@ function AutostartRow() {
     }
   }
   return (
-    <Row label="Start with Windows">
+    <Row label="At sign-in">
       <label className="flex items-start gap-2.5">
         <input
           type="checkbox"
@@ -497,14 +497,115 @@ function AutostartRow() {
           onChange={(e) => void toggle(e.target.checked)}
         />
         <span>
-          Start HearthDrive when I sign in
+          Start HearthDrive when I sign in to Windows
           <span className="mt-0.5 block text-[12px] text-subtle">
-            Opens in the system tray, without this window, so your other devices can reach this computer after a
+            It starts in the system tray, without this window, so your other devices can reach this computer after a
             restart and you get notifications.
           </span>
         </span>
       </label>
     </Row>
+  )
+}
+
+/** What closing the window does: stay in the tray, or quit the app. */
+function CloseRow() {
+  const state = useResource(() => closeAction(), [])
+  const [busy, setBusy] = useState(false)
+  if (!state.data) return null
+  const choose = async (action: CloseAction) => {
+    setBusy(true)
+    try {
+      await setCloseAction(action)
+      state.reload()
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const options: { value: CloseAction; label: string; hint: string }[] = [
+    { value: 'tray', label: 'Keep running in the system tray', hint: 'Notifications keep coming. Open it again from the tray icon.' },
+    { value: 'quit', label: 'Quit the app', hint: 'No tray icon or notifications until you open HearthDrive again.' },
+  ]
+  return (
+    <Row label="Closing the window">
+      <div className="space-y-2">
+        {options.map((o) => (
+          <label key={o.value} className="flex items-start gap-2.5">
+            <input
+              type="radio"
+              name="close-action"
+              className="mt-0.5 accent-[var(--nx-accent)]"
+              checked={state.data === o.value}
+              disabled={busy}
+              onChange={() => void choose(o.value)}
+            />
+            <span>
+              {o.label}
+              <span className="mt-0.5 block text-[12px] text-subtle">{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </Row>
+  )
+}
+
+/** Keeping the computer awake while files move (a transfer setting). */
+function AwakeRow() {
+  const settings = useResource(() => api.transferSettings(), [])
+  const [busy, setBusy] = useState(false)
+  const data = settings.data
+  if (!data) return null
+  const toggle = async (keep_awake: boolean) => {
+    setBusy(true)
+    try {
+      const { can_configure: _, ...current } = data
+      await api.setTransferSettings({ ...current, keep_awake })
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+      settings.reload()
+    }
+  }
+  return (
+    <Row label="Sleep">
+      <label className="flex items-start gap-2.5">
+        <input
+          type="checkbox"
+          className="mt-0.5 accent-[var(--nx-accent)]"
+          checked={data.keep_awake}
+          disabled={busy || !data.can_configure}
+          onChange={(e) => void toggle(e.target.checked)}
+        />
+        <span>
+          Keep this computer awake while files are moving
+          <span className="mt-0.5 block text-[12px] text-subtle">
+            Windows does not go to sleep while transfers run here or another device is copying to or from this computer.
+            The screen can still turn off.
+          </span>
+        </span>
+      </label>
+    </Row>
+  )
+}
+
+/** Everything about HearthDrive running while no window is open. */
+function BackgroundPanel() {
+  return (
+    <Panel title="Running in the background" className="mb-4">
+      <div className="divide-y divide-line">
+        <Row label="Storage service">
+          Always running while Windows is on, even with the app closed, so your other devices can reach this computer.
+          While files are moving, HearthDrive asks Windows 11 not to slow it down with Efficiency mode.
+        </Row>
+        <AutostartRow />
+        <CloseRow />
+        <AwakeRow />
+      </div>
+    </Panel>
   )
 }
 
@@ -705,6 +806,8 @@ export function Settings() {
         </div>
       </Panel>
 
+      {!isMobile() && isTauri() && <BackgroundPanel />}
+
       <Panel title="Account" className="mb-4">
         <div className="divide-y divide-line">
           <Row label="Signed in as">
@@ -743,12 +846,11 @@ export function Settings() {
               <span className="font-mono text-[12px]">{info.data.data_dir}</span>
               <div className="mt-1 text-[12px] text-subtle">Database, logs and runtime state. Your files are never stored here.</div>
             </Row>
-            {!isMobile() && <AutostartRow />}
-            <Row label={isMobile() ? 'While the app is closed' : 'Background service'}>
-              {isMobile()
-                ? 'HearthDrive runs on this phone while the app is open. Your computers keep running on their own and are reachable again as soon as you open the app.'
-                : 'The storage service keeps running when this window is closed.'}
-            </Row>
+            {isMobile() && (
+              <Row label="While the app is closed">
+                HearthDrive runs on this phone while the app is open. Your computers keep running on their own and are reachable again as soon as you open the app.
+              </Row>
+            )}
           </div>
         ) : (
           <Spinner />

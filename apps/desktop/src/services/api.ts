@@ -880,6 +880,20 @@ let unauthorizedHandler: (() => void) | null = null
 
 export const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
+export type CloseAction = 'tray' | 'quit'
+
+/** What closing the window does on a computer, or null outside the desktop app. */
+export async function closeAction(): Promise<CloseAction | null> {
+  if (!isTauri() || isMobile()) return null
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<CloseAction>('close_action')
+}
+
+export async function setCloseAction(action: CloseAction): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('set_close_action', { action })
+}
+
 /** Resolves the service address: from the Tauri shell, or the page origin. */
 export async function initConnection(): Promise<Connection> {
   if (isTauri()) {

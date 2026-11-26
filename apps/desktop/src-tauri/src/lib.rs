@@ -509,6 +509,7 @@ mod tray {
     use serde_json::Value;
     use std::path::PathBuf;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -522,6 +523,44 @@ mod tray {
 
     /// The virtual drive's folder while it runs, for "Open HearthDrive folder".
     static DRIVE_FOLDER: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+    /// Whether closing the window quits the app instead of keeping it in the
+    /// tray. Either way the storage service keeps running.
+    static QUIT_ON_CLOSE: AtomicBool = AtomicBool::new(false);
+
+    /// Where the app keeps its own settings (the service keeps the rest).
+    fn settings_file<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+        app.path().app_config_dir().ok().map(|dir| dir.join("app-settings.json"))
+    }
+
+    fn load_settings<R: Runtime>(app: &AppHandle<R>) {
+        let quit = settings_file(app)
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|v| v["close"] == "quit");
+        QUIT_ON_CLOSE.store(quit, Ordering::Relaxed);
+    }
+
+    /// `tray` or `quit`: what closing the window does.
+    pub fn close_action() -> &'static str {
+        if QUIT_ON_CLOSE.load(Ordering::Relaxed) { "quit" } else { "tray" }
+    }
+
+    pub fn set_close_action<R: Runtime>(app: &AppHandle<R>, action: &str) -> Result<(), String> {
+        let quit = match action {
+            "quit" => true,
+            "tray" => false,
+            _ => return Err(format!("Unknown close action: {action}")),
+        };
+        let path = settings_file(app).ok_or("The app's settings folder was not found")?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::json!({ "close": action });
+        std::fs::write(&path, json.to_string()).map_err(|e| format!("Could not save the setting: {e}"))?;
+        QUIT_ON_CLOSE.store(quit, Ordering::Relaxed);
+        Ok(())
+    }
 
     /// Shows the main window, restored and in front.
     pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
@@ -559,6 +598,7 @@ mod tray {
     }
 
     pub fn setup<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+        load_settings(app.handle());
         // The window is made hidden (see tauri.conf.json), so it never
         // flashes when the app starts in the tray.
         if !std::env::args().any(|a| a == HIDDEN_ARG) {
@@ -680,12 +720,17 @@ mod tray {
         }
     }
 
-    /// Closing the window hides it; the app stays in the tray.
+    /// Closing the window hides it and the app stays in the tray, unless
+    /// the person chose to quit on close. The service keeps running.
     pub fn on_window_event<R: Runtime>(window: &tauri::Window<R>, event: &WindowEvent) {
         if let WindowEvent::CloseRequested { api, .. } = event
             && window.label() == "main"
         {
             api.prevent_close();
+            if QUIT_ON_CLOSE.load(Ordering::Relaxed) {
+                window.app_handle().exit(0);
+                return;
+            }
             let _ = window.hide();
             if let Some(webview) = window.app_handle().get_webview_window("main") {
                 tell_page(&webview);
@@ -722,6 +767,27 @@ mod tray {
     }
 }
 
+/// What closing the window does on computers: `tray` or `quit`. Phones have
+/// no window to close and answer `none`.
+#[tauri::command]
+fn close_action() -> &'static str {
+    #[cfg(desktop)]
+    return tray::close_action();
+    #[cfg(mobile)]
+    return "none";
+}
+
+#[tauri::command]
+fn set_close_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    return tray::set_close_action(&app, &action);
+    #[cfg(mobile)]
+    {
+        let _ = (app, action);
+        Err("Phones have no window to close".into())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -737,7 +803,7 @@ pub fn run() {
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     builder
-        .invoke_handler(tauri::generate_handler![service_connection, save_download, fetch_for_app])
+        .invoke_handler(tauri::generate_handler![service_connection, save_download, fetch_for_app, close_action, set_close_action])
         .run(tauri::generate_context!())
         .expect("error while running HearthDrive");
 }

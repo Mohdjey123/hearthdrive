@@ -381,6 +381,19 @@ impl P2pNode {
         }))
     }
 
+    /// Bytes received and sent over every connection open now, to and from
+    /// any device: rises while anything moves between devices.
+    pub fn total_traffic(&self) -> u64 {
+        let open = |c: &Connection| c.close_reason().is_none();
+        let bytes = |c: &Connection| {
+            let stats = c.stats();
+            stats.udp_rx.bytes + stats.udp_tx.bytes
+        };
+        let outgoing: u64 = self.conns.lock().unwrap_or_else(|e| e.into_inner()).values().filter(|c| open(c)).map(bytes).sum();
+        let incoming: u64 = self.incoming.lock().unwrap_or_else(|e| e.into_inner()).values().filter(|c| open(c)).map(bytes).sum();
+        outgoing + incoming
+    }
+
     /// How traffic to `key` currently flows, if connected.
     pub fn route(&self, key: &PublicKey) -> Option<Route> {
         let conn = self.cached(key)?;

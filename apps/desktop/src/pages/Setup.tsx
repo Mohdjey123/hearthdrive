@@ -144,6 +144,10 @@ function DesktopSetup({ defaultName }: { defaultName: string }) {
   const [mode, setMode] = useState<'create' | 'join'>('create')
   const [joined, setJoined] = useState<JoinState | null>(null)
   const [skippedJoin, setSkippedJoin] = useState(false)
+  // Start at sign-in is on unless unticked: other devices reach this
+  // computer after a restart without anyone opening the app.
+  const [autostart, setAutostart] = useState<boolean | null>(null)
+  const [opening, setOpening] = useState(false)
 
   const createAccount = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -167,6 +171,18 @@ function DesktopSetup({ defaultName }: { defaultName: string }) {
   const finish = async () => {
     setStep(3)
     try { setInfo(await api.systemInfo()) } catch { /* optional */ }
+    try {
+      const state = await api.autostart()
+      if (state.supported) setAutostart(true)
+    } catch { /* optional */ }
+  }
+
+  const open = async () => {
+    setOpening(true)
+    if (autostart !== null) {
+      try { await api.setAutostart(autostart) } catch { /* can be set later in Settings */ }
+    }
+    await reload()
   }
 
   return (
@@ -323,8 +339,24 @@ body="Install the HearthDrive app on an Android phone and scan this computer's p
                   </span>
                 </li>
               </ul>
+              {autostart !== null && (
+                <label className="flex items-start gap-2.5 border-t border-line pt-4">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 accent-[var(--nx-accent)]"
+                    checked={autostart}
+                    onChange={(e) => setAutostart(e.target.checked)}
+                  />
+                  <span>
+                    Start HearthDrive when I sign in to Windows
+                    <span className="mt-0.5 block text-[12px] text-subtle">
+                      It waits in the system tray, so your other devices can reach this computer after a restart. You can change this in Settings.
+                    </span>
+                  </span>
+                </label>
+              )}
               <div className="flex justify-end pt-2">
-                <Button variant="primary" data-autofocus onClick={() => void reload()}>Open HearthDrive</Button>
+                <Button variant="primary" data-autofocus loading={opening} onClick={() => void open()}>Open HearthDrive</Button>
               </div>
             </div>
           )}

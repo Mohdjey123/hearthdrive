@@ -209,7 +209,8 @@ pub struct TransferSettings {
     /// Transfers wait while this computer runs on battery.
     #[serde(default = "yes")]
     pub pause_on_battery: bool,
-    /// This computer does not go to sleep while transfers run.
+    /// This computer does not go to sleep while transfers run, or while
+    /// another device is copying to or from it.
     #[serde(default = "yes")]
     pub keep_awake: bool,
 }
@@ -425,16 +426,19 @@ impl Jobs {
     }
 
     /// Looks at the clock for transfer hours, and at the power supply.
-    fn tick(&self, on_battery: bool) {
+    /// `peers_busy`: files are moving to or from another device right now
+    /// (it may be that device's own transfer, which has no job here).
+    fn tick(&self, on_battery: bool, peers_busy: bool) {
         self.shared.on_battery.store(on_battery, Ordering::Relaxed);
         let settings = self.shared.settings.lock().unwrap().clone();
         let allowed = settings.allows(local_minutes()) && !(on_battery && settings.pause_on_battery);
         if self.shared.in_hours.swap(allowed, Ordering::Relaxed) != allowed {
             self.wake.notify_waiters();
         }
-        // Stay awake while something runs.
-        let busy = *self.running.lock().unwrap() > 0;
+        // Stay awake, and at full speed, while something runs.
+        let busy = *self.running.lock().unwrap() > 0 || peers_busy;
         crate::power::keep_awake(busy && settings.keep_awake);
+        crate::power::full_speed(busy);
     }
 
     /// Whether `job` is first in line among the jobs waiting to run.
@@ -562,6 +566,11 @@ impl Jobs {
     }
 }
 
+const TICK_SECS: u64 = 10;
+/// Traffic with other devices over one tick that counts as files moving
+/// (about 100 KB/s): more than keep-alives and the odd thumbnail.
+const PEERS_BUSY_BYTES: u64 = 100 * 1024 * TICK_SECS;
+
 /// Loads the transfer settings and keeps transfer hours current.
 pub fn spawn(s: SharedState) {
     tokio::spawn(async move {
@@ -570,10 +579,14 @@ pub fn spawn(s: SharedState) {
         {
             s.jobs.apply(settings);
         }
+        let mut traffic = s.net.p2p.total_traffic();
         loop {
             let on_battery = tokio::task::spawn_blocking(crate::power::on_battery).await.unwrap_or(false);
-            s.jobs.tick(on_battery);
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            let now = s.net.p2p.total_traffic();
+            let peers_busy = now.saturating_sub(traffic) >= PEERS_BUSY_BYTES;
+            traffic = now;
+            s.jobs.tick(on_battery, peers_busy);
+            tokio::time::sleep(Duration::from_secs(TICK_SECS)).await;
         }
     });
 }

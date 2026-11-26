@@ -59,7 +59,7 @@ nexus-security = { workspace = true, features = ["soft-authenticator"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Power"] }
+windows-sys = { version = "0.61", features = ["Win32_System_Power", "Win32_System_Threading"] }
 windows = { version = "0.62", features = [
     "Data_Pdf",
     "Foundation",

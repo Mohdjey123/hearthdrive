@@ -170,6 +170,47 @@ pub fn keep_awake(on: bool) {
 #[cfg(not(windows))]
 pub fn keep_awake(_on: bool) {}
 
+/// While `on`, asks Windows 11 not to slow this service down: a program
+/// without a window is otherwise put in Efficiency mode (EcoQoS), which
+/// makes transfers crawl. When idle again, Windows decides as usual.
+#[cfg(windows)]
+pub fn full_speed(on: bool) {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        PROCESS_POWER_THROTTLING_STATE, ProcessPowerThrottling, SetProcessInformation,
+    };
+    // 0: not set yet, 1: Windows decides, 2: full speed.
+    static CURRENT: AtomicU8 = AtomicU8::new(0);
+    let wanted = if on { 2 } else { 1 };
+    if CURRENT.swap(wanted, Ordering::Relaxed) == wanted {
+        return;
+    }
+    let state = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        // Taking control of execution speed with the bit off means "never
+        // throttle"; giving up control hands the choice back to Windows.
+        ControlMask: if on { PROCESS_POWER_THROTTLING_EXECUTION_SPEED } else { 0 },
+        StateMask: 0,
+    };
+    // SAFETY: a correctly sized, initialised struct for this information class.
+    let ok = unsafe {
+        SetProcessInformation(
+            GetCurrentProcess(),
+            ProcessPowerThrottling,
+            (&state as *const PROCESS_POWER_THROTTLING_STATE).cast(),
+            size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        )
+    };
+    if ok == 0 {
+        CURRENT.store(0, Ordering::Relaxed);
+        tracing::debug!("could not change power throttling");
+    }
+}
+
+#[cfg(not(windows))]
+pub fn full_speed(_on: bool) {}
+
 /// Puts this computer to sleep (not hibernation).
 #[cfg(windows)]
 pub fn sleep_now() {
@@ -207,5 +248,33 @@ mod tests {
         .cleaned();
         assert_eq!(info.macs, ["aa:bb:cc:00:11:22"]);
         assert_eq!(info.broadcasts, ["192.168.1.255"]);
+    }
+
+    /// Windows reports the throttling state this process asked for.
+    #[cfg(windows)]
+    #[test]
+    fn full_speed_switches_efficiency_mode_off_and_back() {
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcess, GetProcessInformation, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+            PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE, ProcessPowerThrottling,
+        };
+        let read = || {
+            let mut state = PROCESS_POWER_THROTTLING_STATE { Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION, ControlMask: 0, StateMask: 0 };
+            // SAFETY: a correctly sized struct for this information class.
+            let ok = unsafe {
+                GetProcessInformation(
+                    GetCurrentProcess(),
+                    ProcessPowerThrottling,
+                    (&mut state as *mut PROCESS_POWER_THROTTLING_STATE).cast(),
+                    size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+                )
+            };
+            assert_ne!(ok, 0, "GetProcessInformation failed");
+            (state.ControlMask, state.StateMask)
+        };
+        super::full_speed(true);
+        assert_eq!(read(), (PROCESS_POWER_THROTTLING_EXECUTION_SPEED, 0));
+        super::full_speed(false);
+        assert_eq!(read(), (0, 0));
     }
 }
