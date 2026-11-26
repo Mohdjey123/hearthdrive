@@ -542,6 +542,11 @@ pub async fn proxy(
         None => return Err(NexusError::Unauthorized.into()),
     };
     caller.require_person()?;
+    // The other device trusts this one to have checked who is running a
+    // command: its own rule is only about this device's role there.
+    if segments[0] == "commands" && !matches!(caller.role, Role::Owner | Role::Administrator) {
+        return Err(NexusError::PermissionDenied("Only an owner or administrator can run commands on other devices".into()).into());
+    }
 
     let device = s.db.get_device(&device_id).await?;
     if device.is_local || device.public_key.is_none() {

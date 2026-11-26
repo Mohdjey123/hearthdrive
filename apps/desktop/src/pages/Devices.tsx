@@ -404,6 +404,7 @@ function CommandsButton({ d }: { d: Device }) {
   const [error, setError] = useState('')
   useEffect(() => {
     if (!open || list) return
+    setError('')
     api.deviceCommands(d.id).then(setList).catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [open])
   const run = async (name: string) => {

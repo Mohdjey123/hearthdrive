@@ -1,6 +1,7 @@
 //! Remote commands: a fixed set of actions a person may run on this node
 //! from another device (through the peer proxy) or from here. Nothing here
-//! runs programs or arbitrary commands.
+//! runs programs or arbitrary commands. Computers and phones both answer
+//! them; putting the device to sleep is for Windows only.
 
 use super::audit;
 use crate::auth::AuthUser;
@@ -34,9 +35,18 @@ pub async fn list(user: AuthUser) -> ApiResult<Json<Vec<&'static CommandInfo>>> 
     Ok(Json(COMMANDS.iter().filter(|c| c.name != "sleep" || sleep).collect()))
 }
 
+/// People here need to be an owner or administrator. A paired device needs a
+/// role here that lets it change files (Editor, the role devices are paired
+/// with, or higher); its own node already checked that the person using it is
+/// an owner or administrator there before sending the command.
 fn allowed(user: &AuthUser) -> Result<(), NexusError> {
-    user.require_person().map_err(|e| e.0)?;
-    if !matches!(user.role, Role::Owner | Role::Administrator) {
+    if user.device_id.is_some() {
+        if !matches!(user.role, Role::Owner | Role::Administrator | Role::Editor) {
+            return Err(NexusError::PermissionDenied(
+                "This device's role here does not allow commands. On the other device, open Devices and give this one the Editor role or higher".into(),
+            ));
+        }
+    } else if !matches!(user.role, Role::Owner | Role::Administrator) {
         return Err(NexusError::PermissionDenied("Only an owner or administrator can run commands on this device".into()));
     }
     Ok(())
@@ -54,7 +64,11 @@ pub async fn run(State(s): State<SharedState>, user: AuthUser, Path(name): Path<
         "rescan" => {
             let mut started = 0;
             for root in s.db.list_roots().await? {
-                if root.device_id != s.node.device_id || s.storage.ensure_online(&root).is_err() || s.indexer.is_scanning(&root.id) {
+                if root.device_id != s.node.device_id
+                    || !user.sees_root(&root.id)
+                    || s.storage.ensure_online(&root).is_err()
+                    || s.indexer.is_scanning(&root.id)
+                {
                     continue;
                 }
                 s.indexer.spawn_scan(root);
@@ -90,4 +104,34 @@ pub async fn run(State(s): State<SharedState>, user: AuthUser, Path(name): Path<
     };
     audit(&s, &user, "command.run", Some(&name)).await;
     Ok(Json(CommandResult { message }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn caller(role: Role, device: bool) -> AuthUser {
+        AuthUser {
+            user_id: None,
+            username: "someone".into(),
+            role,
+            local: false,
+            device_id: device.then(|| "phone".into()),
+            allowed_roots: None,
+            shared: Vec::new(),
+            via_token: false,
+        }
+    }
+
+    #[test]
+    fn people_need_to_manage_and_devices_need_to_edit() {
+        assert!(allowed(&caller(Role::Owner, false)).is_ok());
+        assert!(allowed(&caller(Role::Administrator, false)).is_ok());
+        assert!(allowed(&caller(Role::Editor, false)).is_err());
+        // Paired devices, with the role they are paired with or higher.
+        assert!(allowed(&caller(Role::Editor, true)).is_ok());
+        assert!(allowed(&caller(Role::Administrator, true)).is_ok());
+        assert!(allowed(&caller(Role::Contributor, true)).is_err());
+        assert!(allowed(&caller(Role::Viewer, true)).is_err());
+    }
 }

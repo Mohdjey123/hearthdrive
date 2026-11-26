@@ -30,9 +30,11 @@ pub struct P2pPeer(pub String);
 /// (sign-in, setup, device management, the event stream, relaying to other
 /// nodes) is for people on this computer only. Photos, albums, music,
 /// films and documents apply the same per-device storage limits as files.
+/// Commands are the fixed set in `routes::commands`, for devices whose role
+/// here lets them change files.
 const AREAS: &[&str] = &[
     "files", "search", "recent", "storage", "trash", "system", "shares", "peer", "pairing", "photos", "albums", "library",
-    "playback", "tags", "documents",
+    "playback", "tags", "documents", "commands",
 ];
 
 /// Paths inside those areas that change the computer itself, not files.
@@ -159,6 +161,9 @@ mod tests {
         assert!(admissible(&req("PUT", "/api/v1/playback/abc", true, false)));
         assert!(admissible(&req("GET", "/api/v1/documents?tag=receipt", true, false)));
         assert!(admissible(&req("PATCH", "/api/v1/documents/abc", true, false)));
+        // The fixed commands on the Devices page.
+        assert!(admissible(&req("GET", "/api/v1/commands", true, false)));
+        assert!(admissible(&req("POST", "/api/v1/commands/rescan", true, false)));
         // Settings that change the computer stay local.
         assert!(!admissible(&req("PUT", "/api/v1/documents/settings", true, false)));
         // Unsigned calls other than the pairing request.
