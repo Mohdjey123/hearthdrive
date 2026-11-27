@@ -81,7 +81,7 @@ const UI_CSP: &str = "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws
 
 /// The API's routes, under `/api/v1`.
 pub(crate) fn api_routes(state: SharedState) -> Router {
-    use routes::{backup, commands, devices, library, photos, files, health, introductions, network, security, shares, sharing, snapshots, storage, sync, system, tools, transfers, updates, uploads, users, vdrive};
+    use routes::{backup, commands, devices, library, photos, files, health, introductions, network, security, shares, sharing, snapshots, storage, sync, system, terminal, tools, transfers, updates, uploads, users, vdrive};
     Router::new()
         .route("/health", get(system::health))
         .route("/setup/status", get(system::setup_status))
@@ -147,6 +147,13 @@ pub(crate) fn api_routes(state: SharedState) -> Router {
         .route("/rules/{id}/preview", get(routes::rules::preview))
         .route("/storage/suggestions", get(routes::rules::suggestions))
         .route("/commands/{name}", post(commands::run))
+        .route("/terminal", get(terminal::info))
+        .route("/terminal/settings", axum::routing::put(terminal::set_settings))
+        .route("/terminal/settings/test", post(terminal::test_ssh))
+        .route("/terminal/sessions", post(terminal::open))
+        .route("/terminal/sessions/{id}", get(terminal::read).delete(terminal::close))
+        .route("/terminal/sessions/{id}/input", post(terminal::input))
+        .route("/terminal/sessions/{id}/stop", post(terminal::stop))
         .route("/devices/{id}/wake", post(devices::wake))
         .route("/power/wake", post(devices::wake_for_peer))
         .route("/devices/pair/{id}", delete(devices::cancel_invite))

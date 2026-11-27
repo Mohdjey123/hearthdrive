@@ -473,7 +473,7 @@ pub fn explain_unreachable(error: &str, here_online: bool) -> String {
 // Proxy
 
 /// API areas another node's files can be browsed through.
-const PROXY_AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "shared-folders", "commands", "photos", "albums", "library", "playback", "tags", "documents"];
+const PROXY_AREAS: &[&str] = &["files", "search", "recent", "storage", "trash", "system", "shares", "shared-folders", "commands", "terminal", "photos", "albums", "library", "playback", "tags", "documents"];
 
 const REQUEST_HEADERS: &[HeaderName] = &[
     header::CONTENT_TYPE,
@@ -546,6 +546,9 @@ pub async fn proxy(
     // command: its own rule is only about this device's role there.
     if segments[0] == "commands" && !matches!(caller.role, Role::Owner | Role::Administrator) {
         return Err(NexusError::PermissionDenied("Only an owner or administrator can run commands on other devices".into()).into());
+    }
+    if segments[0] == "terminal" && (caller.role != Role::Owner || caller.is_limited() || caller.via_token) {
+        return Err(NexusError::PermissionDenied("Only the owner can open a terminal on other devices".into()).into());
     }
 
     let device = s.db.get_device(&device_id).await?;

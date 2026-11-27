@@ -20,6 +20,7 @@ nexus-vdrive = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 blake3 = { workspace = true }
+russh = { version = "0.65", default-features = false, features = ["ring"] }
 # Share links: encrypting files for Send, and talking to the link services.
 reqwest = { workspace = true, features = ["rustls-no-provider", "multipart"] }
 ring = "0.17"

@@ -1006,3 +1006,75 @@ async fn plugin_store_installs_runs_and_keeps_to_what_was_allowed() {
     assert!(v.as_array().unwrap().is_empty(), "{v}");
     assert!(std::fs::read_dir(base.join("Docs")).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".sha256")));
 }
+
+#[tokio::test]
+async fn the_owner_runs_commands_in_a_terminal_that_keeps_its_folder() {
+    let h = harness([127, 0, 0, 1]).await;
+    let app = &h.app;
+    let (s, _) = call(app, Method::POST, "/api/v1/setup", None,
+        Some(json!({"node_name": "Desk", "username": "owner", "password": "correct horse"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let owner = sign_in(app, "owner", "correct horse").await;
+    let place = tempfile::tempdir().unwrap();
+    std::fs::create_dir(place.path().join("inner")).unwrap();
+
+    let (s, v) = call(app, Method::POST, "/api/v1/terminal/sessions", Some(&owner), Some(json!({"cwd": place.path().to_string_lossy()}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+
+    // Reads until the shell is idle again, gathering what it printed.
+    async fn settle(app: &Router, token: &str, id: &str, after: &mut u64) -> (String, Value) {
+        let mut text = String::new();
+        for _ in 0..40 {
+            let (s, v) = call(app, Method::GET, &format!("/api/v1/terminal/sessions/{id}?after={after}"), Some(token), None).await;
+            assert_eq!(s, StatusCode::OK, "{v}");
+            for c in v["chunks"].as_array().unwrap() {
+                if c["kind"] == "out" || c["kind"] == "err" {
+                    text.push_str(c["text"].as_str().unwrap());
+                }
+            }
+            *after = v["next"].as_u64().unwrap();
+            if !v["busy"].as_bool().unwrap() {
+                return (text, v);
+            }
+        }
+        panic!("the shell did not finish: {text}");
+    }
+    let mut after = 0;
+    let (_, v) = settle(app, &owner, &id, &mut after).await;
+    assert!(v["cwd"].as_str().unwrap().ends_with(place.path().file_name().unwrap().to_str().unwrap()), "{v}");
+
+    let (s, _) = call(app, Method::POST, &format!("/api/v1/terminal/sessions/{id}/input"), Some(&owner), Some(json!({"text": "cd inner"}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (_, v) = settle(app, &owner, &id, &mut after).await;
+    assert!(v["cwd"].as_str().unwrap().ends_with("inner"), "the folder carries over: {v}");
+    call(app, Method::POST, &format!("/api/v1/terminal/sessions/{id}/input"), Some(&owner), Some(json!({"text": "echo hello-terminal"}))).await;
+    let (text, _) = settle(app, &owner, &id, &mut after).await;
+    assert!(text.contains("hello-terminal"), "{text}");
+    assert!(!text.contains("__hearthdrive_"), "markers stay hidden: {text}");
+
+    // Someone else's session is not theirs to read; another person cannot open one.
+    let (_, adm) = call(app, Method::POST, "/api/v1/users", Some(&owner),
+        Some(json!({"username": "ada", "password": "ada password 1", "role": "administrator"}))).await;
+    assert!(adm.is_object());
+    let ada = sign_in(app, "ada", "ada password 1").await;
+    let (s, _) = call(app, Method::POST, "/api/v1/terminal/sessions", Some(&ada), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(app, Method::GET, &format!("/api/v1/terminal/sessions/{id}"), Some(&ada), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    let (s, _) = call(app, Method::POST, &format!("/api/v1/terminal/sessions/{id}/stop"), Some(&owner), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let mut closed = Value::Null;
+    for _ in 0..10 {
+        let (_, v) = call(app, Method::GET, &format!("/api/v1/terminal/sessions/{id}?after={after}"), Some(&owner), None).await;
+        if !v["closed"].is_null() {
+            closed = v;
+            break;
+        }
+    }
+    assert!(!closed.is_null(), "stopping ends the shell");
+    assert_eq!(closed["closed"], "The terminal was stopped.");
+    let (s, _) = call(app, Method::DELETE, &format!("/api/v1/terminal/sessions/{id}"), Some(&owner), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+}

@@ -28,6 +28,7 @@ import { ScanInbox } from './components/ScanInbox'
 import { UpdateBanner } from './components/Updates'
 import { TitleBar, hasTitleBar } from './components/TitleBar'
 import { Settings } from './pages/Settings'
+import { Terminal } from './pages/Terminal'
 import { Setup } from './pages/Setup'
 import { Login } from './pages/Login'
 
@@ -75,6 +76,7 @@ function Shell() {
         {page === 'shares' && <Shares />}
         {page === 'transfers' && <Transfers />}
         {page === 'settings' && <Settings />}
+        {page === 'terminal' && <Terminal route={route} />}
       </main>
       <BottomNav current={page} />
       {isMobile() && <ShareInbox />}

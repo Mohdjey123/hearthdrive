@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { FolderOpen, HardDrive, Lock, LockOpen, LogOut, Monitor, Moon, Sun, Trash2, UserPlus } from 'lucide-react'
-import { api, closeAction, connection, fileApi, isMobile, libraryApi, isTauri, peerPrefix, setCloseAction, thisDevice, type CloseAction, type Device, type Person, type Role, type StorageRoot, type User, type VirtualDriveStatus } from '../services/api'
+import { api, closeAction, connection, fileApi, isMobile, libraryApi, isTauri, peerPrefix, setCloseAction, setTerminalEnabled, setTerminalShell, terminalApi, testTerminalShell, type TerminalInfo, thisDevice, type CloseAction, type Device, type Person, type Role, type StorageRoot, type User, type VirtualDriveStatus } from '../services/api'
 import { SecurityPanel } from '../components/Security'
 import { ProgramsPanel } from '../components/Programs'
 import { toast, toastError } from '../components/Toasts'
@@ -767,6 +767,163 @@ function VirtualDrivePanel() {
   )
 }
 
+function TerminalPanel() {
+  const info = useResource(() => terminalApi('').info(), [])
+  const [busy, setBusy] = useState(false)
+  if (!info.data) return null
+  const here = isMobile() ? 'phone' : 'computer'
+  const toggle = async (on: boolean) => {
+    setBusy(true)
+    try {
+      await setTerminalEnabled(on)
+      info.reload()
+      toast(on ? `Your other devices can open a terminal on this ${here}` : `Terminals from other devices are closed and turned off`)
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Panel title="Terminal" className="mb-4">
+      <div className="divide-y divide-line">
+        <Row label="From other devices">
+          <label className="flex items-start gap-2 text-[13px]">
+            <input type="checkbox" className="mt-0.5 accent-[var(--nx-accent)]" checked={info.data.enabled} disabled={busy} onChange={(e) => void toggle(e.target.checked)} />
+            <span>
+              Let my other devices open a terminal on this {here}
+              <span className="block text-[12px] text-subtle">
+                Open it from Devices › Terminal on another computer or your phone. Only you can use it, and only from a device with Editor access or higher here.
+                It runs {info.data.shell} with your rights on this {here}, so it can do anything you can: turn it off if you don't use it.
+              </span>
+            </span>
+          </label>
+        </Row>
+        {isMobile() && info.data.ssh && <TermuxRow ssh={info.data.ssh} onChanged={info.reload} />}
+      </div>
+    </Panel>
+  )
+}
+
+/** The command that lets HearthDrive into Termux, and starts its SSH server. */
+function termuxSetup(publicKey: string) {
+  return [
+    'pkg install -y openssh',
+    'mkdir -p ~/.ssh',
+    `grep -qxF '${publicKey}' ~/.ssh/authorized_keys 2>/dev/null || echo '${publicKey}' >> ~/.ssh/authorized_keys`,
+    'chmod 600 ~/.ssh/authorized_keys',
+    "grep -q 'pgrep -x sshd' ~/.bashrc 2>/dev/null || echo 'pgrep -x sshd >/dev/null || sshd' >> ~/.bashrc",
+    'sshd',
+  ].join(' && ')
+}
+
+/** Termux instead of Android's basic shell (phones). */
+function TermuxRow({ ssh, onChanged }: { ssh: NonNullable<TerminalInfo['ssh']>; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+  const [port, setPort] = useState(String(ssh.port))
+  const [user, setUser] = useState(ssh.user)
+  const command = termuxSetup(ssh.public_key)
+
+  const change = async (c: Parameters<typeof setTerminalShell>[0]) => {
+    setBusy(true)
+    setResult(null)
+    try {
+      await setTerminalShell(c)
+      onChanged()
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const check = async () => {
+    setChecking(true)
+    setResult(null)
+    try {
+      const r = await testTerminalShell()
+      setResult({ ok: true, text: r.message })
+      onChanged()
+    } catch (e) {
+      setResult({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setChecking(false)
+    }
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command)
+      toast('Copied. Paste it in Termux and press Enter')
+    } catch {
+      toast('Select the command and copy it')
+    }
+  }
+
+  return (
+    <Row label="Shell">
+      <div className="space-y-2 text-[13px]">
+        {([false, true] as const).map((on) => (
+          <label key={String(on)} className="flex items-start gap-2">
+            <input type="radio" name="terminal-shell" className="mt-0.5 accent-[var(--nx-accent)]" checked={ssh.on === on} disabled={busy} onChange={() => void change({ on })} />
+            <span>
+              {on ? 'Termux' : 'Android’s basic shell'}
+              <span className="block text-[12px] text-subtle">
+                {on
+                  ? 'A full Linux shell with packages (pkg, python, git…). HearthDrive signs in to Termux on this phone with its own key.'
+                  : 'Built in, and only reaches HearthDrive’s own folders and a few commands.'}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {ssh.on && (
+        <div className="mt-3 space-y-3 rounded-md border border-line bg-elevated p-3 text-[12.5px]">
+          <ol className="list-decimal space-y-2 pl-4">
+            <li>Install Termux from F-Droid or its GitHub page (the Play Store version is out of date) and open it.</li>
+            <li>
+              Paste this in Termux and press Enter. It lets HearthDrive in and starts Termux’s SSH server, also each time you open Termux from now on.
+              <pre className="mt-1.5 max-h-28 overflow-auto rounded border border-line bg-panel p-2 font-mono text-[11px] leading-snug whitespace-pre-wrap [overflow-wrap:anywhere] select-all">{command}</pre>
+              <Button size="sm" className="mt-1.5" onClick={() => void copy()}>Copy command</Button>
+            </li>
+            <li>
+              Come back and check the connection. After the phone restarts, open Termux once so its SSH server runs again.
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <Button size="sm" loading={checking} onClick={() => void check()}>Check connection</Button>
+                {ssh.trusted && !result && <span className="text-subtle">Connected before</span>}
+              </div>
+              {result && <div className={cx('mt-1.5', result.ok ? 'text-success' : 'text-danger')}>{result.text}</div>}
+            </li>
+          </ol>
+          <details>
+            <summary className="cursor-pointer text-muted">Other SSH server</summary>
+            <div className="mt-2 space-y-2">
+              <p className="text-subtle">
+                Termux’s SSH server uses port 8022 and any user name. For Android’s Linux terminal, run an SSH server in it, forward its port to the phone, and enter the port and user name here.
+              </p>
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label="Port">
+                  <Input className="w-24" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value.replace(/\D/g, ''))} />
+                </Field>
+                <Field label="User">
+                  <Input className="w-36" autoCapitalize="off" value={user} onChange={(e) => setUser(e.target.value)} />
+                </Field>
+                <Button size="sm" disabled={busy || (port === String(ssh.port) && user === ssh.user)} onClick={() => void change({ port: Number(port), user })}>Save</Button>
+              </div>
+              {ssh.trusted && (
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => void change({ forget_host: true })}>
+                  Forget the server
+                </Button>
+              )}
+              <p className="text-subtle">Forget the server after reinstalling Termux, when HearthDrive says the server’s key has changed.</p>
+            </div>
+          </details>
+        </div>
+      )}
+    </Row>
+  )
+}
+
 export function Settings() {
   const { phase, signOut } = useSession()
   const [theme, setTheme] = useTheme()
@@ -858,6 +1015,7 @@ export function Settings() {
 
       {!isMobile() && me && (me.role === 'owner' || me.role === 'administrator') && <VirtualDrivePanel />}
       {me && (me.role === 'owner' || me.role === 'administrator') && <DocumentsPanel />}
+      {me && me.role === 'owner' && !me.device_id && <TerminalPanel />}
       {!isMobile() && me && me.user_id && <ProgramsPanel manage={me.role === 'owner' || me.role === 'administrator'} />}
 
       <Panel title="Updates" className="mb-4">

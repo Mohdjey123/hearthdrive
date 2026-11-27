@@ -31,14 +31,15 @@ pub struct P2pPeer(pub String);
 /// nodes) is for people on this computer only. Photos, albums, music,
 /// films and documents apply the same per-device storage limits as files.
 /// Commands are the fixed set in `routes::commands`, for devices whose role
-/// here lets them change files.
+/// here lets them change files; the terminal (`routes::terminal`) is for the
+/// same devices, unless it is turned off here.
 const AREAS: &[&str] = &[
     "files", "search", "recent", "storage", "trash", "system", "shares", "peer", "pairing", "photos", "albums", "library",
-    "playback", "tags", "documents", "commands",
+    "playback", "tags", "documents", "commands", "terminal",
 ];
 
 /// Paths inside those areas that change the computer itself, not files.
-const LOCAL_ONLY: &[&str] = &["/api/v1/documents/settings"];
+const LOCAL_ONLY: &[&str] = &["/api/v1/documents/settings", "/api/v1/terminal/settings"];
 
 /// The one unsigned call: a device that is not paired yet asking to pair.
 const PAIRING_REQUEST: &str = "/api/v1/pairing/request";
@@ -164,6 +165,10 @@ mod tests {
         // The fixed commands on the Devices page.
         assert!(admissible(&req("GET", "/api/v1/commands", true, false)));
         assert!(admissible(&req("POST", "/api/v1/commands/rescan", true, false)));
+        // The terminal, but not its switch.
+        assert!(admissible(&req("POST", "/api/v1/terminal/sessions", true, false)));
+        assert!(admissible(&req("GET", "/api/v1/terminal/sessions/abc?after=3", true, false)));
+        assert!(!admissible(&req("PUT", "/api/v1/terminal/settings", true, false)));
         // Settings that change the computer stay local.
         assert!(!admissible(&req("PUT", "/api/v1/documents/settings", true, false)));
         // Unsigned calls other than the pairing request.

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
-export type Page = 'overview' | 'files' | 'photos' | 'media' | 'documents' | 'duplicates' | 'automation' | 'plugins' | 'storage' | 'health' | 'devices' | 'sync' | 'copies' | 'backups' | 'backup' | 'shares' | 'transfers' | 'settings'
-const PAGES: Page[] = ['overview', 'files', 'photos', 'media', 'documents', 'duplicates', 'automation', 'plugins', 'storage', 'health', 'devices', 'sync', 'copies', 'backups', 'backup', 'shares', 'transfers', 'settings']
+export type Page = 'overview' | 'files' | 'photos' | 'media' | 'documents' | 'duplicates' | 'automation' | 'plugins' | 'storage' | 'health' | 'devices' | 'sync' | 'copies' | 'backups' | 'backup' | 'shares' | 'transfers' | 'settings' | 'terminal'
+const PAGES: Page[] = ['overview', 'files', 'photos', 'media', 'documents', 'duplicates', 'automation', 'plugins', 'storage', 'health', 'devices', 'sync', 'copies', 'backups', 'backup', 'shares', 'transfers', 'settings', 'terminal']
 
 export interface Route {
   page: Page

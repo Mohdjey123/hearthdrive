@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, Ban, FolderOpen, Laptop, Link2, Monitor, Network, Power, QrCode, TerminalSquare, RefreshCw, ShieldCheck, Smartphone, Trash2, Wifi,
+  ArrowDown, ArrowUp, Ban, FolderOpen, Laptop, Link2, Monitor, Network, Power, QrCode, TerminalSquare, Zap, RefreshCw, ShieldCheck, Smartphone, Trash2, Wifi,
 } from 'lucide-react'
 import { api, isMobile, thisDevice, type Device, type NearbyDevice, type NetworkInfo, type Role, type StorageRoot } from '../services/api'
 import { useResource } from '../hooks/useResource'
@@ -374,6 +374,9 @@ function DeviceCard({ d, introducer, onRemove, onBlock }: {
             <>
               <Button size="sm" icon={<FolderOpen className="size-3.5" />} onClick={() => navigate('files', { device: d.id })}>Browse files</Button>
               {d.online && <CommandsButton d={d} />}
+              {d.online && (
+                <Button size="sm" variant="ghost" icon={<TerminalSquare className="size-3.5" />} onClick={() => navigate('terminal', { device: d.id })}>Terminal</Button>
+              )}
               {!d.online && d.can_wake && <WakeButton d={d} />}
             </>
           ) : (
@@ -421,7 +424,7 @@ function CommandsButton({ d }: { d: Device }) {
   }
   return (
     <>
-      <Button size="sm" variant="ghost" icon={<TerminalSquare className="size-3.5" />} onClick={() => setOpen(true)}>Commands</Button>
+      <Button size="sm" variant="ghost" icon={<Zap className="size-3.5" />} onClick={() => setOpen(true)}>Commands</Button>
       <Modal open={open} onClose={() => setOpen(false)} title={`Run on ${d.name}`}>
         {error ? (
           <ErrorNote>{error}</ErrorNote>

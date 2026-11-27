@@ -19,6 +19,7 @@ pub mod rules;
 pub mod storage;
 pub mod sync;
 pub mod system;
+pub mod terminal;
 pub mod tools;
 pub mod transfers;
 pub mod updates;

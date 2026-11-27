@@ -1586,3 +1586,56 @@ export const uploadLinksApi = {
     request<UploadLink>('POST', '/upload-links', b),
   remove: (id: string) => request<void>('DELETE', `/upload-links/${encodeURIComponent(id)}`),
 }
+
+// ---------------------------------------------------------------------------
+// Terminal
+
+export interface TerminalChunk {
+  seq: number
+  /** `in` is what was typed, `info` comes from HearthDrive. */
+  kind: 'out' | 'err' | 'in' | 'info'
+  text: string
+}
+
+export interface TerminalSession {
+  id: string
+  shell: string
+  cwd: string
+  busy: boolean
+  closed: string | null
+  /** Pass as `after` to read only what comes next. */
+  next: number
+  chunks: TerminalChunk[]
+}
+
+/** A shell on a device ('' for this one). */
+export const terminalApi = (deviceId: string) => {
+  const p = deviceId ? peerPrefix(deviceId) : ''
+  return {
+    info: () => request<TerminalInfo>('GET', `${p}/terminal`),
+    open: (cwd?: string) => request<TerminalSession>('POST', `${p}/terminal/sessions`, { cwd }),
+    /** Waits a few seconds on the device for new output. */
+    read: (id: string, after: number) => request<TerminalSession>('GET', `${p}/terminal/sessions/${encodeURIComponent(id)}?after=${after}`),
+    input: (id: string, text: string) => request<void>('POST', `${p}/terminal/sessions/${encodeURIComponent(id)}/input`, { text }),
+    stop: (id: string) => request<void>('POST', `${p}/terminal/sessions/${encodeURIComponent(id)}/stop`),
+    close: (id: string) => request<void>('DELETE', `${p}/terminal/sessions/${encodeURIComponent(id)}`),
+  }
+}
+
+export interface TerminalInfo {
+  enabled: boolean
+  shell: string
+  can_configure: boolean
+  /** The Termux (SSH) shell, for whoever can change it. */
+  ssh: { on: boolean; port: number; user: string; public_key: string; trusted: boolean } | null
+}
+
+/** Whether paired devices may open a terminal on this device. */
+export const setTerminalEnabled = (enabled: boolean) => request<void>('PUT', '/terminal/settings', { enabled })
+
+/** Termux instead of the built-in shell, and how to reach it. */
+export const setTerminalShell = (ssh: { on?: boolean; port?: number; user?: string; forget_host?: boolean }) =>
+  request<void>('PUT', '/terminal/settings', { ssh })
+
+/** Connects to Termux with the saved settings. */
+export const testTerminalShell = () => request<{ message: string }>('POST', '/terminal/settings/test')
